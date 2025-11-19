@@ -101,9 +101,9 @@ export class AiAssessmentController {
   @ApiResponse({ status: 400, description: 'Invalid assessment data.' })
   takeAssessment(@Body() submitAssessmentDto: SubmitAssessmentDto, @Req() req) {
     try {
-      const studentId = req.user[0]?.id;
+      const userId = req.user?.sub;
       return this.aiAssessmentService.submitLlmAssessment(
-        studentId,
+        userId,
         submitAssessmentDto,
       );
     } catch (error) {

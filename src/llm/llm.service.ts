@@ -30,38 +30,42 @@ export class LlmService {
   }
 
   async generateCompletion(prompt: string) {
-    if (!this.primaryBreaker.isOpen()) {
-      try {
-        const result = await this.executeWithRetry(
-          () => this.primary.completion(prompt),
-          'primary'
-        );
-        this.primaryBreaker.recordSuccess();
-        return { ...result, provider: 'openai' };
-      } catch (error) {
-        this.primaryBreaker.recordFailure();
-        this.logger.warn(`Primary provider failed: ${error.message}`);
+    try {
+      if (!this.primaryBreaker.isOpen()) {
+        try {
+          const result = await this.executeWithRetry(
+            () => this.primary.completion(prompt),
+            'primary'
+          );
+          this.primaryBreaker.recordSuccess();
+          return { ...result, provider: 'openai' };
+        } catch (error) {
+          this.primaryBreaker.recordFailure();
+          this.logger.warn(`Primary provider failed: ${error.message}`);
+        }
+      } else {
+        this.logger.warn('Primary circuit breaker is OPEN, skipping to fallback');
       }
-    } else {
-      this.logger.warn('Primary circuit breaker is OPEN, skipping to fallback');
-    }
 
-    if (!this.fallbackBreaker.isOpen()) {
-      try {
-        const result = await this.executeWithRetry(
-          () => this.fallback.completion(prompt),
-          'fallback'
-        );
-        this.fallbackBreaker.recordSuccess();
-        return { ...result, provider: 'genai' };
-      } catch (error) {
-        this.fallbackBreaker.recordFailure();
-        this.logger.error(`Fallback provider failed: ${error.message}`);
-        throw new Error('All LLM providers are unavailable');
+      if (!this.fallbackBreaker.isOpen()) {
+        try {
+          const result = await this.executeWithRetry(
+            () => this.fallback.completion(prompt),
+            'fallback'
+          );
+          this.fallbackBreaker.recordSuccess();
+          return { ...result, provider: 'genai' };
+        } catch (error) {
+          this.fallbackBreaker.recordFailure();
+          this.logger.error(`Fallback provider failed: ${error.message}`);
+          throw new Error('All LLM providers are unavailable');
+        }
       }
-    }
 
-    throw new Error('All providers circuit breakers are open');
+      throw new Error('All providers circuit breakers are open');
+    } catch (error) {
+      this.logger.error("Error generating response from llm: ", error);
+    }
   }
 
   private async executeWithRetry(

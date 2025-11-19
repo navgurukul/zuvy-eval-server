@@ -148,7 +148,7 @@ export class AiAssessmentService {
       provider: response?.provider ?? "openai",
       prompt: response?.request?.messages?.map(m => m.content).join("\n") ?? "",
       responseText: response?.message?.content ?? "",
-      latencyMs: response?.latency ?? 0,
+      latencyMs: response?.latencyMs ?? 0,
       usage: response?.usage ?? null,
       createdAt: new Date()
     };
@@ -187,7 +187,7 @@ export class AiAssessmentService {
 
       const aiResponse = await this.llmService.generateCompletion(prompt);
       const aiUsage = await this.saveTokenUsage(aiAssessmentId, aiResponse);
-      const parsedAiResponse = await parseLlmMcq(aiResponse);
+      const parsedAiResponse = await parseLlmMcq(aiResponse.text);
       await this.questionByLlmService.create(
         { questions: parsedAiResponse.evaluations, levelId: null },
         aiAssessmentId,
@@ -218,7 +218,7 @@ export class AiAssessmentService {
 
       const aiResponse = await this.llmService.generateCompletion(prompt);
       const aiUsage = await this.saveTokenUsage(aiAssessmentId, aiResponse);
-      const parsedAiResponse = await parseLlmMcq(aiResponse);
+      const parsedAiResponse = await parseLlmMcq(aiResponse.text);
       await this.questionByLlmService.create(
         { questions: parsedAiResponse.evaluations, levelId: level.id },
         aiAssessmentId,

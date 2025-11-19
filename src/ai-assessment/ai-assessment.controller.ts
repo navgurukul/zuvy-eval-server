@@ -58,7 +58,7 @@ export class AiAssessmentController {
   })
   @ApiResponse({ status: 400, description: 'Invalid input data.' })
   create(@Body() createAiAssessmentDto: CreateAiAssessmentDto, @Req() req) {
-    const userId = req.user[0]?.id;
+    const userId = req.user?.sub;
     return this.aiAssessmentService.create(userId, createAiAssessmentDto);
   }
 
@@ -79,7 +79,7 @@ export class AiAssessmentController {
   })
   @ApiResponse({ status: 400, description: 'Invalid assessment data.' })
   generate(@Body() generateAssessmentDto: GenerateAssessmentDto, @Req() req) {
-    const userId = req.user[0]?.id;
+    const userId = req.user?.sub;
     return this.aiAssessmentService.generate(userId, generateAssessmentDto);
   }
 
@@ -118,7 +118,7 @@ export class AiAssessmentController {
   @ApiQuery({ name: 'bootcampId', required: false, type: Number })
   @ApiResponse({ status: 200, description: 'List of AI assessments.' })
   findAll(@Req() req, @Query('bootcampId') bootcampId?: number) {
-    const userId = req.user[0]?.id;
+    const userId = req.user?.sub;
     return this.aiAssessmentService.findAll(userId, bootcampId);
   }
 
@@ -135,7 +135,7 @@ export class AiAssessmentController {
     @Query('bootcampId') bootcampId: number,
     @Req() req,
   ) {
-    const userId = req.user[0]?.id;
+    const userId = req.user?.sub;
     return this.aiAssessmentService.findAllAssessmentOfAStudent(
       userId,
       bootcampId,

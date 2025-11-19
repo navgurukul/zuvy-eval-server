@@ -1,0 +1,24 @@
+services:
+  api:
+    container_name: zuvy-eval-server
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: production
+      args:
+        NODE_VERSION: ${NODE_VERSION:-20.18.0}
+    image: ${DOCKER_IMAGE:-zuvy-eval-server}:${DOCKER_TAG:-latest}
+    restart: unless-stopped
+    env_file:
+      - .env.docker
+    environment:
+      NODE_ENV: ${NODE_ENV:-production}
+    ports:
+      - "${PORT:-5000}:5000"
+    expose:
+      - "5000"
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "5"

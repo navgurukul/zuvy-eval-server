@@ -44,6 +44,27 @@ $ npm run start:dev
 $ npm run start:prod
 ```
 
+## Docker
+
+Use the production-ready container defined in `Dockerfile`/`docker-compose.yml`:
+
+```bash
+cp .env.docker.example .env.docker
+docker compose --env-file .env.docker build
+docker compose --env-file .env.docker up -d
+```
+
+To include the optional Postgres container for local development run:
+
+```bash
+docker compose --env-file .env.docker \
+  -f docker-compose.yml \
+  -f docker-compose.local.yml \
+  up -d
+```
+
+See `docs/DEPLOYMENT.md` for EC2/ECR deployment instructions.
+
 ## Run tests
 
 ```bash

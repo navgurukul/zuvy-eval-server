@@ -33,13 +33,17 @@ import {
   createAiAssessment,
   submitAssessmentExample,
 } from './swagger_examples/examples';
+import { AiAssessmentCrudService } from './ai-assessment.crud.service';
 
 @ApiTags('AI Assessment')
 @ApiBearerAuth('JWT-auth')
 @UseGuards(JwtAuthGuard)
 @Controller('ai-assessment')
 export class AiAssessmentController {
-  constructor(private readonly aiAssessmentService: AiAssessmentService) {}
+  constructor(
+    private readonly aiAssessmentService: AiAssessmentService,
+    private readonly aiAssessmentCrudService: AiAssessmentCrudService
+  ) {}
 
   @Post()
   @ApiOperation({ summary: 'Create a new AI assessment' })
@@ -59,7 +63,7 @@ export class AiAssessmentController {
   @ApiResponse({ status: 400, description: 'Invalid input data.' })
   create(@Body() createAiAssessmentDto: CreateAiAssessmentDto, @Req() req) {
     const userId = req.user?.sub;
-    return this.aiAssessmentService.create(userId, createAiAssessmentDto);
+    return this.aiAssessmentCrudService.create(userId, createAiAssessmentDto);
   }
 
   @Post('/generate/all')
@@ -80,7 +84,7 @@ export class AiAssessmentController {
   @ApiResponse({ status: 400, description: 'Invalid assessment data.' })
   generate(@Body() generateAssessmentDto: GenerateAssessmentDto, @Req() req) {
     const userId = req.user?.sub;
-    return this.aiAssessmentService.generate(userId, generateAssessmentDto);
+    return this.aiAssessmentCrudService.generate(userId, generateAssessmentDto);
   }
 
   @Post('/submit')
@@ -119,7 +123,7 @@ export class AiAssessmentController {
   @ApiResponse({ status: 200, description: 'List of AI assessments.' })
   findAll(@Req() req, @Query('bootcampId') bootcampId?: number) {
     const userId = req.user?.sub;
-    return this.aiAssessmentService.findAll(userId, bootcampId);
+    return this.aiAssessmentCrudService.findAll(userId, bootcampId);
   }
 
   @Get('/by/studentId')

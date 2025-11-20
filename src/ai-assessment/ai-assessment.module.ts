@@ -6,10 +6,11 @@ import { LlmModule } from 'src/llm/llm.module';
 import { QuestionsByLlmModule } from 'src/questions-by-llm/questions-by-llm.module';
 import { DbModule } from 'src/db/db.module';
 import { StorageModule } from 'src/storage/storage.module';
+import { AiAssessmentCrudService } from './ai-assessment.crud.service';
 
 @Module({
   imports: [AuthModule, LlmModule, QuestionsByLlmModule, DbModule, StorageModule],
   controllers: [AiAssessmentController],
-  providers: [AiAssessmentService],
+  providers: [AiAssessmentService, AiAssessmentCrudService],
 })
 export class AiAssessmentModule {}

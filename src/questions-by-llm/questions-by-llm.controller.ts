@@ -9,6 +9,7 @@ import {
   ParseIntPipe,
   Query,
   UseGuards,
+  Req,
 } from '@nestjs/common';
 import {
   ApiTags,
@@ -57,8 +58,9 @@ export class QuestionsByLlmController {
     description: 'List retrieved',
     type: [CreateQuestionsByLlmDto],
   })
-  findAll(@Query('aiAssessmentId') id: number) {
-    return this.questionsByLlmService.getAllLlmQuestions(id);
+  findAll(@Query('aiAssessmentId') id: number, @Req() req) {
+    const userId = req.user?.sub;
+    return this.questionsByLlmService.getAllLlmQuestions(id, userId);
   }
 
   // @Get(':id')

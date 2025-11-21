@@ -15,11 +15,12 @@ import { questionsByLLM } from 'src/db/schema/questionByLLm';
 import { mcqQuestionOptions } from 'src/db/schema/mcqQuestionOpt';
 import { questionLevelRelation } from 'src/db/schema/questionLevel';
 import { correctAnswers } from 'src/db/schema/correctAns';
-import { asc, inArray } from 'drizzle-orm';
+import { asc, inArray, and } from 'drizzle-orm';
 import { eq } from 'drizzle-orm';
 import { DRIZZLE_DB } from 'src/db/constant';
 import { NodePgDatabase } from 'drizzle-orm/node-postgres';
 import { randomizeAssessmentQuestions } from 'src/global-utils';
+import { studentAssessment } from 'src/db/schema/stdAssessment';
 
 @Injectable()
 export class QuestionsByLlmService {
@@ -164,67 +165,87 @@ export class QuestionsByLlmService {
   }
 
 
-  async getAllLlmQuestions(aiAssessmentId: number) {
-    try {
-      // fetch questions by aiAssessmentId
-      const questions = await this.db
-        .select()
-        .from(questionsByLLM)
-        .where(eq(questionsByLLM.aiAssessmentId, aiAssessmentId));
+  async getAllLlmQuestions(aiAssessmentId: number, userId: number) {
+  try {
 
-      if (!questions || questions.length === 0) {
-        return [];
-      }
+    // ⭐ ADD THIS BLOCK — nothing else changed
+    const assessmentStatus = await this.db
+      .select()
+      .from(studentAssessment)
+      .where(
+        and(
+          eq(studentAssessment.studentId, userId),
+          eq(studentAssessment.aiAssessmentId, aiAssessmentId)
+        )
+      )
+      .limit(1);
 
-      // populate options and correctOption for each question
-      const populated = await Promise.all(
-        questions.map(async (q) => {
-          // get options for this question (ordered by optionNumber)
-          const options = await this.db
+    const isCompleted =
+      assessmentStatus.length > 0 && assessmentStatus[0].status === 1;
+    // ⭐ END OF ADDED BLOCK
+
+
+    // fetch questions by aiAssessmentId  (YOUR CODE)
+    const questions = await this.db
+      .select()
+      .from(questionsByLLM)
+      .where(eq(questionsByLLM.aiAssessmentId, aiAssessmentId));
+
+    if (!questions || questions.length === 0) {
+      return { isCompleted, questions: [] };   // ⭐ only wrapped in object
+    }
+
+    // (YOUR EXISTING LOGIC — unchanged)
+    const populated = await Promise.all(
+      questions.map(async (q) => {
+        const options = await this.db
+          .select()
+          .from(mcqQuestionOptions)
+          .where(eq(mcqQuestionOptions.questionId, q.id))
+          .orderBy(asc(mcqQuestionOptions.optionNumber));
+
+        const correctRow = await this.db
+          .select()
+          .from(correctAnswers)
+          .where(eq(correctAnswers.questionId, q.id))
+          .limit(1);
+
+        let correctOption: CreateMcqQuestionOptionDto | null = null;
+        if (correctRow && correctRow.length > 0) {
+          const correctOptionRows = await this.db
             .select()
             .from(mcqQuestionOptions)
-            .where(eq(mcqQuestionOptions.questionId, q.id))
-            .orderBy(asc(mcqQuestionOptions.optionNumber));
-
-          // get correct answer row (if exists)
-          const correctRow = await this.db
-            .select()
-            .from(correctAnswers)
-            .where(eq(correctAnswers.questionId, q.id))
+            .where(eq(mcqQuestionOptions.id, correctRow[0].correctOptionId))
             .limit(1);
 
-          let correctOption: CreateMcqQuestionOptionDto | null = null;
-          if (correctRow && correctRow.length > 0) {
-            // fetch the option referenced by correct_option_id
-            const correctOptionRows = await this.db
-              .select()
-              .from(mcqQuestionOptions)
-              .where(eq(mcqQuestionOptions.id, correctRow[0].correctOptionId))
-              .limit(1);
+          correctOption =
+            correctOptionRows && correctOptionRows.length > 0
+              ? correctOptionRows[0]
+              : null;
+        }
 
-            correctOption =
-              correctOptionRows && correctOptionRows.length > 0
-                ? correctOptionRows[0]
-                : null;
-          }
+        return {
+          ...q,
+          options,
+          correctOption,
+        };
+      }),
+    );
 
-          // return original question + TWO additional fields: options & correctOption
-          return {
-            ...q,
-            options,
-            correctOption,
-          };
-        }),
-      );
+    const randomizedAssessment = randomizeAssessmentQuestions(populated);
 
-      // call randomization before returning
-      const randomizedAssessment = randomizeAssessmentQuestions(populated);
-      return randomizedAssessment;
-    } catch (error) {
-      this.logger.error('Error fetching LLM questions:', error);
-      throw new InternalServerErrorException('Failed to fetch LLM questions');
-    }
+    // ⭐ Just add isCompleted to your final response
+    return {
+      isCompleted,
+      questions: randomizedAssessment,
+    };
+
+  } catch (error) {
+    this.logger.error('Error fetching LLM questions:', error);
+    throw new InternalServerErrorException('Failed to fetch LLM questions');
   }
+}
+
 
   async getAllLlmQuestionsOfAllAssessments(aiAssessmentIds: number[]) {
     try {

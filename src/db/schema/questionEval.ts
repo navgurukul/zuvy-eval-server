@@ -39,7 +39,7 @@ export const questionEvaluation = main.table('question_evaluation', {
   difficulty: varchar('difficulty', { length: 50 }),
   options: jsonb('options').notNull(), // { "1": "A", "2": "B", "3": "C", "4": "D" }
   // correctOption: integer('correct_option').notNull(),
-  selectedAnswerByStudent: integer('selected_answer_by_student').notNull(),
+  selectedAnswerByStudent: integer('selected_answer_by_student'),
   language: varchar('language', { length: 50 }),
   status: varchar('status', { length: 50 }),
   explanation: text('explanation'),

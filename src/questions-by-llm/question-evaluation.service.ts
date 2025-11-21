@@ -29,7 +29,7 @@ export class QuestionEvaluationService {
         topic: item.topic,
         difficulty: item.difficulty,
         options: item.options,
-        selectedAnswerByStudent: item.selectedAnswerByStudent.id,
+        selectedAnswerByStudent: item.selectedAnswerByStudent?.id ?? null,
         language: item.language,
         explanation: item.explanation,
         questionId: item.id,

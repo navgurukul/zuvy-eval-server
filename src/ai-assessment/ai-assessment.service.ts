@@ -143,12 +143,13 @@ export class AiAssessmentService {
 
         const evaluationPrompt = answerEvaluationPrompt(answers);
         const llmResponse = await this.llmService.generateCompletion(evaluationPrompt);
+        const responseText = llmResponse.text;
         const aiUsage = await this.saveTokenUsage(aiAssessmentId, llmResponse);
 
         let rawEvaluationText: string | null = null;
-        if (!llmResponse) rawEvaluationText = null;
-        else if (typeof llmResponse === 'string')
-          rawEvaluationText = llmResponse;
+        if (!responseText) rawEvaluationText = null;
+        else if (typeof responseText === 'string')
+          rawEvaluationText = responseText;
         else if (typeof llmResponse === 'object') {
           rawEvaluationText =
             (llmResponse as any).text ??
@@ -157,7 +158,7 @@ export class AiAssessmentService {
             (llmResponse as any).output ??
             JSON.stringify(llmResponse);
         } else {
-          rawEvaluationText = String(llmResponse);
+          rawEvaluationText = String(responseText);
         }
 
         // Parse & validate BEFORE returning to client

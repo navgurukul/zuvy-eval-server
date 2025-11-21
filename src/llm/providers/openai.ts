@@ -17,7 +17,7 @@ export class OpenAIProvider implements LLMProvider {
     try {
       const start = Date.now();
       const res = await this.client.responses.create({
-        model: 'gpt-4-turbo',
+        model: 'gpt-4.1',
         input: prompt,
         temperature: 0.7,
       });

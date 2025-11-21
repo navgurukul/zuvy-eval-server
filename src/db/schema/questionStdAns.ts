@@ -34,7 +34,8 @@ export const questionStudentAnswerRelation = main.table("question_student_answer
   id: serial("id").primaryKey().notNull(),
   studentId: integer("student_id").notNull().references(() => users.id),
   questionId: integer("question_id").notNull().references(() => questionsByLLM.id),
-  answer: integer("answer").notNull().references(() => correctAnswers.id),
+  answer: integer("answer")
+      .references(() => correctAnswers.id), 
   answeredAt: timestamp("answered_at", { withTimezone: true, mode: "string" }).defaultNow(),
   createdAt: timestamp("created_at", { withTimezone: true, mode: "string" }).defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true, mode: "string" }).defaultNow(),

@@ -91,8 +91,9 @@ class QuestionAnswerDto {
   options: SelectedAnswerByStudentDto;
 
   @ValidateNested()
+  @IsOptional()
   @Type(() => SelectedAnswerByStudentDto)
-  selectedAnswerByStudent: SelectedAnswerByStudentDto;
+  selectedAnswerByStudent: SelectedAnswerByStudentDto | null;
 
   @IsString()
   @IsOptional()

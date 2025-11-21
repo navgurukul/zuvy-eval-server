@@ -66,6 +66,7 @@ export class AiAssessmentService {
     let score = 0;
 
     for (const q of answers) {
+      if (!q.selectedAnswerByStudent) continue;
       const correct = await this.db
         .select()
         .from(correctAnswers)
@@ -101,7 +102,7 @@ export class AiAssessmentService {
         const answerPayloads = answers.map((q) => ({
           studentId,
           questionId: q.id,
-          answer: q.selectedAnswerByStudent.id,
+          answer: q.selectedAnswerByStudent?.id ?? null,
           answeredAt: new Date().toISOString(),
         }));
 

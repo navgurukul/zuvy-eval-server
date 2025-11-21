@@ -23,7 +23,7 @@ const EvaluationItemSchema = z.object({
   topic: z.string().optional(),
   difficulty: z.string().optional(),
   options: z.array(OptionSchema),
-  selectedAnswerByStudent: OptionSchema,
+  selectedAnswerByStudent: OptionSchema.nullable(),
   language: z.string().optional(),
   status: z.enum(['correct', 'incorrect']),
   explanation: z.string().min(1),

@@ -18,20 +18,21 @@ export function answerEvaluationPrompt(answers: any) {
     - topic
     - difficulty
     - options
-    - selectedAnswerByStudent
+    - selectedAnswerByStudent (null means student did not attempt the question)
     - language
     - explanation
 
     Evaluation rules:
     1. Mark "status" as "correct" if the student's selected answer is correct.
     2. Mark "status" as "incorrect" otherwise.
-    3. For incorrect answers, explain briefly *why* (conceptual, procedural, or factual error) and mention the correct answer clearly.
-    4. For each incorrect answer, include a "practiceLink" field suggesting ONE relevant LeetCode problem URL.
+    3. If selectedAnswerByStudent is null than it means the student did not attempt the question.
+    4. For incorrect answers, explain briefly *why* (conceptual, procedural, or factual error) and mention the correct answer clearly.
+    5. For each incorrect answer, include a "practiceLink" field suggesting ONE relevant LeetCode problem URL.
       - Choose dynamically based on the question's topic and difficulty.
       - Use realistic existing LeetCode URLs only; do not invent or fabricate problems.
       - If no relevant match can be inferred, set "practiceLink": null.
-    5. Never hallucinate — use only the provided data above.
-    6. The output must be **valid JSON only** (no markdown, comments, or text outside JSON).
+    6. Never hallucinate — use only the provided data above.
+    7. The output must be **valid JSON only** (no markdown, comments, or text outside JSON).
 
     Output format (strict JSON):
 

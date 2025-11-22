@@ -15,7 +15,7 @@ import { questionsByLLM } from 'src/db/schema/questionByLLm';
 import { mcqQuestionOptions } from 'src/db/schema/mcqQuestionOpt';
 import { questionLevelRelation } from 'src/db/schema/questionLevel';
 import { correctAnswers } from 'src/db/schema/correctAns';
-import { asc, inArray, and } from 'drizzle-orm';
+import { asc, inArray, and, desc } from 'drizzle-orm';
 import { eq } from 'drizzle-orm';
 import { DRIZZLE_DB } from 'src/db/constant';
 import { NodePgDatabase } from 'drizzle-orm/node-postgres';
@@ -186,15 +186,24 @@ export class QuestionsByLlmService {
     // ⭐ END OF ADDED BLOCK
 
     const studentLevel = await this.db
-      .select({ levelId: studentLevelRelation.levelId })
-      .from(studentLevelRelation)
-      .where(
-        and(
-          eq(studentLevelRelation.studentId, userId),
-          eq(studentLevelRelation.aiAssessmentId, aiAssessmentId)
-        )
-      )
-      .limit(1);
+    .select({
+      levelId: studentLevelRelation.levelId,
+    })
+    .from(studentLevelRelation)
+    .where(eq(studentLevelRelation.studentId, userId))
+    .orderBy(desc(studentLevelRelation.createdAt))
+    .limit(1);
+
+    // const studentLevel = await this.db
+    //   .select({ levelId: studentLevelRelation.levelId })
+    //   .from(studentLevelRelation)
+    //   .where(
+    //     and(
+    //       eq(studentLevelRelation.studentId, userId),
+    //       eq(studentLevelRelation.aiAssessmentId, aiAssessmentId)
+    //     )
+    //   )
+    //   .limit(1);
 
     const levelId = studentLevel?.[0]?.levelId;
 

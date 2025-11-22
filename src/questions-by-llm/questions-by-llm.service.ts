@@ -188,25 +188,40 @@ export class QuestionsByLlmService {
     const studentLevel = await this.db
       .select({ levelId: studentLevelRelation.levelId })
       .from(studentLevelRelation)
-      .where(eq(studentLevelRelation.studentId, userId))
+      .where(
+        and(
+          eq(studentLevelRelation.studentId, userId),
+          eq(studentLevelRelation.aiAssessmentId, aiAssessmentId)
+        )
+      )
       .limit(1);
+
     const levelId = studentLevel?.[0]?.levelId;
 
     // fetch questions by aiAssessmentId  (YOUR CODE)
-    const questions = await this.db
-      .select()
-      .from(questionsByLLM)
-      .innerJoin(
-        questionLevelRelation,
-        eq(questionsByLLM.id, questionLevelRelation.questionId)
-      )
-      .where(
-        and(
-          eq(questionsByLLM.aiAssessmentId, aiAssessmentId),
-          eq(questionLevelRelation.levelId, levelId)
+    let questions;
+
+    if (!levelId) {
+      questions = await this.db
+        .select()
+        .from(questionsByLLM)
+        .where(eq(questionsByLLM.aiAssessmentId, aiAssessmentId));
+    } else {
+      questions = await this.db
+        .select()
+        .from(questionsByLLM)
+        .innerJoin(
+          questionLevelRelation,
+          eq(questionsByLLM.id, questionLevelRelation.questionId)
         )
-      )
-      .then(rows => rows.map(r => r.questions_by_llm)); // ⭐ unwrap joined rows
+        .where(
+          and(
+            eq(questionsByLLM.aiAssessmentId, aiAssessmentId),
+            eq(questionLevelRelation.levelId, levelId)
+          )
+        )
+        .then(rows => rows.map(r => r.questions_by_llm));
+    }
 
 
     if (!questions || questions.length === 0) {

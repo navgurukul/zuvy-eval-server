@@ -22,6 +22,7 @@ import { NodePgDatabase } from 'drizzle-orm/node-postgres';
 import { randomizeAssessmentQuestions } from 'src/global-utils';
 import { studentAssessment } from 'src/db/schema/stdAssessment';
 import { studentLevelRelation } from 'src/db/schema/studentLevel';
+import { aiAssessment } from 'src/db/schema/ai-assessment';
 
 @Injectable()
 export class QuestionsByLlmService {
@@ -185,25 +186,31 @@ export class QuestionsByLlmService {
       assessmentStatus.length > 0 && assessmentStatus[0].status === 1;
     // ⭐ END OF ADDED BLOCK
 
-    const studentLevel = await this.db
-    .select({
-      levelId: studentLevelRelation.levelId,
-    })
-    .from(studentLevelRelation)
-    .where(eq(studentLevelRelation.studentId, userId))
-    .orderBy(desc(studentLevelRelation.createdAt))
-    .limit(1);
+    const bootcamp = await this.db
+      .select({ bootcampId: aiAssessment.bootcampId })
+      .from(aiAssessment)
+      .where(eq(aiAssessment.id, aiAssessmentId))
+      .limit(1);
 
-    // const studentLevel = await this.db
-    //   .select({ levelId: studentLevelRelation.levelId })
-    //   .from(studentLevelRelation)
-    //   .where(
-    //     and(
-    //       eq(studentLevelRelation.studentId, userId),
-    //       eq(studentLevelRelation.aiAssessmentId, aiAssessmentId)
-    //     )
-    //   )
-    //   .limit(1);
+    const bootcampId = bootcamp?.[0]?.bootcampId;
+
+    const studentLevel = await this.db
+      .select({
+        levelId: studentLevelRelation.levelId,
+      })
+      .from(studentLevelRelation)
+      .innerJoin(
+        aiAssessment,
+        eq(studentLevelRelation.aiAssessmentId, aiAssessment.id)
+      )
+      .where(
+        and(
+          eq(studentLevelRelation.studentId, userId),
+          eq(aiAssessment.bootcampId, bootcampId)
+        )
+      )
+      .orderBy(desc(studentLevelRelation.createdAt)) // optional: if multiple entries exist
+      .limit(1);
 
     const levelId = studentLevel?.[0]?.levelId;
 

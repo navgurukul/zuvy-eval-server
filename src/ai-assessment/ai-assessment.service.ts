@@ -113,11 +113,19 @@ export class AiAssessmentService {
         );
 
         const level = await this.calculateStudentLevel(totalScore);
+        const bootcamp = await this.db
+          .select({ bootcampId: aiAssessment.bootcampId })
+          .from(aiAssessment)
+          .where(eq(aiAssessment.id, aiAssessmentId))
+          .limit(1);
+
+        const bootcampId = bootcamp?.[0]?.bootcampId;
 
         const levelPayload = {
           studentId,
           levelId: level.id,
           aiAssessmentId,
+          bootcampId,
           assignedAt: new Date().toISOString(),
         };
 

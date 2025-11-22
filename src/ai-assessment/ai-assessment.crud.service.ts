@@ -83,7 +83,7 @@ export class AiAssessmentCrudService {
     return results;
   }
 
-  async getDistinctLevelsByAssessment(aiAssessmentId: number) {
+  async getDistinctLevelsByAssessment(aiAssessmentId: number, bootcampId: number) {
     const results = await this.db
       .select({
         id: levels.id,
@@ -98,7 +98,7 @@ export class AiAssessmentCrudService {
       })
       .from(studentLevelRelation)
       .innerJoin(levels, eq(levels.id, studentLevelRelation.levelId))
-      .where(eq(studentLevelRelation.aiAssessmentId, aiAssessmentId))
+      .where(eq(studentLevelRelation.bootcampId, bootcampId))
       .groupBy(levels.id);
 
     return results;
@@ -201,9 +201,9 @@ export class AiAssessmentCrudService {
   }
 
   async generate(userId, generateAssessmentDto: GenerateAssessmentDto) {
-    const { aiAssessmentId } = generateAssessmentDto;
+    const { aiAssessmentId, bootcampId } = generateAssessmentDto;
     const distinctLevels =
-      await this.getDistinctLevelsByAssessment(aiAssessmentId);
+      await this.getDistinctLevelsByAssessment(aiAssessmentId, bootcampId);
     const allAssessmentOfABootcamp = await this.findAll(
       userId,
       generateAssessmentDto.bootcampId,

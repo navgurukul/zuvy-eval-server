@@ -21,6 +21,7 @@ import { DRIZZLE_DB } from 'src/db/constant';
 import { NodePgDatabase } from 'drizzle-orm/node-postgres';
 import { randomizeAssessmentQuestions } from 'src/global-utils';
 import { studentAssessment } from 'src/db/schema/stdAssessment';
+import { studentLevelRelation } from 'src/db/schema/studentLevel';
 
 @Injectable()
 export class QuestionsByLlmService {
@@ -184,12 +185,29 @@ export class QuestionsByLlmService {
       assessmentStatus.length > 0 && assessmentStatus[0].status === 1;
     // ⭐ END OF ADDED BLOCK
 
+    const studentLevel = await this.db
+      .select({ levelId: studentLevelRelation.levelId })
+      .from(studentLevelRelation)
+      .where(eq(studentLevelRelation.studentId, userId))
+      .limit(1);
+    const levelId = studentLevel?.[0]?.levelId;
 
     // fetch questions by aiAssessmentId  (YOUR CODE)
     const questions = await this.db
       .select()
       .from(questionsByLLM)
-      .where(eq(questionsByLLM.aiAssessmentId, aiAssessmentId));
+      .innerJoin(
+        questionLevelRelation,
+        eq(questionsByLLM.id, questionLevelRelation.questionId)
+      )
+      .where(
+        and(
+          eq(questionsByLLM.aiAssessmentId, aiAssessmentId),
+          eq(questionLevelRelation.levelId, levelId)
+        )
+      )
+      .then(rows => rows.map(r => r.questions_by_llm)); // ⭐ unwrap joined rows
+
 
     if (!questions || questions.length === 0) {
       return { isCompleted, questions: [] };   // ⭐ only wrapped in object

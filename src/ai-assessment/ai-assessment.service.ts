@@ -270,14 +270,14 @@ export class AiAssessmentService {
         ),
       );
 
-    if (assessments.length === 0) {
-      const defaultAssessment = await this.db
-        .select()
-        .from(aiAssessment)
-        .where(eq(aiAssessment.id, 1))
-        .limit(1);
-      return defaultAssessment;
-    }
+    // if (assessments.length === 0) {
+    //   const defaultAssessment = await this.db
+    //     .select()
+    //     .from(aiAssessment)
+    //     .where(eq(aiAssessment.id, 1))
+    //     .limit(1);
+    //   return defaultAssessment;
+    // }
 
     return assessments;
   }

@@ -9,6 +9,7 @@ import { AuthModule } from './auth/auth.module';
 import { ConfigModule } from '@nestjs/config';
 import { DbModule } from './db/db.module';
 import { StorageModule } from './storage/storage.module';
+import { BullModule } from '@nestjs/bullmq';
 
 @Module({
   imports: [
@@ -17,6 +18,12 @@ import { StorageModule } from './storage/storage.module';
         isGlobal: true,
       }
     ),
+    BullModule.forRoot({
+      connection: {
+        host: process.env.REDIS_HOST,
+        port: Number(process.env.REDIS_PORT)
+      }
+    }),
     AiAssessmentModule, 
     LlmModule, 
     LevelModule, 

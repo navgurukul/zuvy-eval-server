@@ -33,7 +33,6 @@ export const questionsByLLM = main.table("questions_by_llm", {
   id: serial("id").primaryKey().notNull(),
   topic: varchar("topic", { length: 100 }),
   difficulty: varchar("difficulty", { length: 50 }),
-  aiAssessmentId: integer('ai_assessment_id').references(() => aiAssessment.id, { onDelete: "cascade" }).notNull(),
   question: text("question").notNull(),
   language: varchar("language", { length: 255 }),
   createdAt: timestamp("created_at", { withTimezone: true, mode: "string" }).defaultNow(),

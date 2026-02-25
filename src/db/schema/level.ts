@@ -31,11 +31,11 @@ import { main } from "./parentSchema";
 
 export const levels = main.table("levels", {
   id: serial("id").primaryKey().notNull(),
-  grade: varchar("grade", { length: 5 }).notNull(), // e.g. A+, A, B...
-  scoreRange: varchar("score_range", { length: 50 }).notNull(), // e.g. ">= 90", "80-89"
-  scoreMin: integer("score_min"), // optional numeric range start
-  scoreMax: integer("score_max"), // optional numeric range end
-  hardship: varchar("hardship", { length: 20 }), // "+20%", etc.
+  grade: varchar("grade", { length: 5 }).notNull(),
+  scoreRange: varchar("score_range", { length: 50 }).notNull(),
+  scoreMin: integer("score_min"),
+  scoreMax: integer("score_max"),
+  hardship: varchar("hardship", { length: 20 }),
   meaning: text("meaning"),
   createdAt: timestamp("created_at", { withTimezone: true, mode: "string" }).defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true, mode: "string" }).defaultNow(),

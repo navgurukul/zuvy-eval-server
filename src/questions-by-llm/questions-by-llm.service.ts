@@ -49,7 +49,6 @@ export class QuestionsByLlmService {
       difficulty: q.difficulty ?? null,
       question: q.question,
       language: q.language,
-      aiAssessmentId,
     }));
 
     try {
@@ -221,7 +220,7 @@ export class QuestionsByLlmService {
       questions = await this.db
         .select()
         .from(questionsByLLM)
-        .where(eq(questionsByLLM.aiAssessmentId, aiAssessmentId));
+        // .where(eq(questionsByLLM.aiAssessmentId, aiAssessmentId));
     } else {
       questions = await this.db
         .select()
@@ -232,7 +231,7 @@ export class QuestionsByLlmService {
         )
         .where(
           and(
-            eq(questionsByLLM.aiAssessmentId, aiAssessmentId),
+            // eq(questionsByLLM.aiAssessmentId, aiAssessmentId),
             eq(questionLevelRelation.levelId, levelId)
           )
         )
@@ -306,7 +305,7 @@ export class QuestionsByLlmService {
       const questions = await this.db
         .select()
         .from(questionsByLLM)
-        .where(inArray(questionsByLLM.aiAssessmentId, aiAssessmentIds));
+        // .where(inArray(questionsByLLM.aiAssessmentId, aiAssessmentIds));
 
       if (questions.length === 0) {
         return [];

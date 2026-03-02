@@ -1,5 +1,10 @@
 # Zuvy Evaluation Server
 
+<p align="center">
+  <img src="public/zuvyfaviconLight.ico" alt="Zuvy Light Icon" width="64" />
+  <img src="public/zuvyfavicondark.ico" alt="Zuvy Dark Icon" width="64" />
+</p>
+
 Backend for **question generation** (LLM) and **live exam / assessment** flows. Built with NestJS, Postgres (Drizzle ORM), BullMQ, and Qdrant.
 
 ## What it does

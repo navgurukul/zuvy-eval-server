@@ -8,11 +8,6 @@ import {
 } from 'drizzle-orm/pg-core';
 import { main } from 'src/db/schema/parentSchema';
 
-/**
- * Question pool owned by the `questions` resource.
- * Uses its own table name `zuvy_questions` to avoid clashing
- * with any existing `questions` table.
- */
 export const zuvyQuestions = main.table('zuvy_questions', {
   id: serial('id').primaryKey().notNull(),
 

@@ -1,119 +1,54 @@
-<p align="center">
-  <a href="http://nestjs.com/" target="blank"><img src="https://nestjs.com/img/logo-small.svg" width="120" alt="Nest Logo" /></a>
-</p>
+# Zuvy Evaluation Server
 
-[circleci-image]: https://img.shields.io/circleci/build/github/nestjs/nest/master?token=abc123def456
-[circleci-url]: https://circleci.com/gh/nestjs/nest
+Backend for **question generation** (LLM) and **live exam / assessment** flows. Built with NestJS, Postgres (Drizzle ORM), BullMQ, and Qdrant.
 
-  <p align="center">A progressive <a href="http://nodejs.org" target="_blank">Node.js</a> framework for building efficient and scalable server-side applications.</p>
-    <p align="center">
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/v/@nestjs/core.svg" alt="NPM Version" /></a>
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/l/@nestjs/core.svg" alt="Package License" /></a>
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/dm/@nestjs/common.svg" alt="NPM Downloads" /></a>
-<a href="https://circleci.com/gh/nestjs/nest" target="_blank"><img src="https://img.shields.io/circleci/build/github/nestjs/nest/master" alt="CircleCI" /></a>
-<a href="https://discord.gg/G7Qnnhy" target="_blank"><img src="https://img.shields.io/badge/discord-online-brightgreen.svg" alt="Discord"/></a>
-<a href="https://opencollective.com/nest#backer" target="_blank"><img src="https://opencollective.com/nest/backers/badge.svg" alt="Backers on Open Collective" /></a>
-<a href="https://opencollective.com/nest#sponsor" target="_blank"><img src="https://opencollective.com/nest/sponsors/badge.svg" alt="Sponsors on Open Collective" /></a>
-  <a href="https://paypal.me/kamilmysliwiec" target="_blank"><img src="https://img.shields.io/badge/Donate-PayPal-ff3f59.svg" alt="Donate us"/></a>
-    <a href="https://opencollective.com/nest#sponsor"  target="_blank"><img src="https://img.shields.io/badge/Support%20us-Open%20Collective-41B883.svg" alt="Support us"></a>
-  <a href="https://twitter.com/nestframework" target="_blank"><img src="https://img.shields.io/twitter/follow/nestframework.svg?style=social&label=Follow" alt="Follow us on Twitter"></a>
-</p>
-  <!--[![Backers on Open Collective](https://opencollective.com/nest/backers/badge.svg)](https://opencollective.com/nest#backer)
-  [![Sponsors on Open Collective](https://opencollective.com/nest/sponsors/badge.svg)](https://opencollective.com/nest#sponsor)-->
+## What it does
 
-## Description
+- **Question generation**  
+  Instructors trigger generation with a payload (domain, topic, Bloom’s level, difficulty, etc.). Jobs are enqueued (BullMQ); each job calls the LLM, parses MCQs, and saves them into the question pool (`main.zuvy_questions`). The UI is not blocked.
 
-[Nest](https://github.com/nestjs/nest) framework TypeScript starter repository.
+- **AI assessments**  
+  Assessments can be created and assigned to students. MCQs are generated per level (or pulled from a vector store). Students submit answers; the system scores, assigns levels, and can evaluate with the LLM.
 
-## Project setup
+- **Vector store (pluggable)**  
+  Strategy interface for Qdrant (default) or Pinecone. Used to store question embeddings and run semantic search when building assessments from the pool.
 
-```bash
-$ npm install
-```
+## Tech stack
 
-## Compile and run the project
+- **Runtime**: Node.js, NestJS  
+- **Database**: Postgres, Drizzle ORM  
+- **Queue**: BullMQ (Redis)  
+- **LLM**: OpenAI, Google GenAI (pluggable via `LlmService`)  
+- **Vector DB**: Qdrant (default), swappable
+
+## Project layout (main areas)
+
+- `src/questions` – Question generation API, job expansion (topics × batches of 10), processor (LLM → parse → save to `zuvy_questions`), schema + SQL for `main.zuvy_questions`.
+- `src/ai-assessment` – Assessment CRUD, level-based MCQ generation, submit/evaluate, prompts.
+- `src/vector` – `IVectorStore` + Qdrant/Pinecone strategies, controller for collection/upsert/search.
+- `src/llm` – `LlmService`, providers, `mcqParser` / `evaluationParser`.
+- `src/db/schema` – Drizzle schemas (assessments, levels, questions_by_llm, etc.).
+
+## Setup
 
 ```bash
-# development
-$ npm run start
-
-# watch mode
-$ npm run start:dev
-
-# production mode
-$ npm run start:prod
+npm install
 ```
 
-## Docker
+Environment: `DB_*`, `REDIS_HOST`, `REDIS_PORT`, `OPENAI_KEY` or `GOOGLE_GENAI_API_KEY`, `QDRANT_URL` (optional). Create `main.zuvy_questions` using `src/questions/schema/zuvy-questions.sql` if needed.
 
-Use the production-ready container defined in `Dockerfile`/`docker-compose.yml`:
+## Run
 
 ```bash
-cp .env.docker.example .env.docker
-docker compose --env-file .env.docker build
-docker compose --env-file .env.docker up -d
+npm run start:dev
 ```
 
-To include the optional Postgres container for local development run:
+## Key endpoints
 
-```bash
-docker compose --env-file .env.docker \
-  -f docker-compose.yml \
-  -f docker-compose.local.yml \
-  up -d
-```
-
-See `docs/DEPLOYMENT.md` for EC2/ECR deployment instructions.
-
-## Run tests
-
-```bash
-# unit tests
-$ npm run test
-
-# e2e tests
-$ npm run test:e2e
-
-# test coverage
-$ npm run test:cov
-```
-
-## Deployment
-
-When you're ready to deploy your NestJS application to production, there are some key steps you can take to ensure it runs as efficiently as possible. Check out the [deployment documentation](https://docs.nestjs.com/deployment) for more information.
-
-If you are looking for a cloud-based platform to deploy your NestJS application, check out [Mau](https://mau.nestjs.com), our official platform for deploying NestJS applications on AWS. Mau makes deployment straightforward and fast, requiring just a few simple steps:
-
-```bash
-$ npm install -g @nestjs/mau
-$ mau deploy
-```
-
-With Mau, you can deploy your application in just a few clicks, allowing you to focus on building features rather than managing infrastructure.
-
-## Resources
-
-Check out a few resources that may come in handy when working with NestJS:
-
-- Visit the [NestJS Documentation](https://docs.nestjs.com) to learn more about the framework.
-- For questions and support, please visit our [Discord channel](https://discord.gg/G7Qnnhy).
-- To dive deeper and get more hands-on experience, check out our official video [courses](https://courses.nestjs.com/).
-- Deploy your application to AWS with the help of [NestJS Mau](https://mau.nestjs.com) in just a few clicks.
-- Visualize your application graph and interact with the NestJS application in real-time using [NestJS Devtools](https://devtools.nestjs.com).
-- Need help with your project (part-time to full-time)? Check out our official [enterprise support](https://enterprise.nestjs.com).
-- To stay in the loop and get updates, follow us on [X](https://x.com/nestframework) and [LinkedIn](https://linkedin.com/company/nestjs).
-- Looking for a job, or have a job to offer? Check out our official [Jobs board](https://jobs.nestjs.com).
-
-## Support
-
-Nest is an MIT-licensed open source project. It can grow thanks to the sponsors and support by the amazing backers. If you'd like to join them, please [read more here](https://docs.nestjs.com/support).
-
-## Stay in touch
-
-- Author - [Kamil Myśliwiec](https://twitter.com/kammysliwiec)
-- Website - [https://nestjs.com](https://nestjs.com/)
-- Twitter - [@nestframework](https://twitter.com/nestframework)
+- **Questions**: `POST /questions/generate` – enqueue generation jobs (body: domain, topic, counts, etc.).
+- **Assessments**: `POST /ai-assessment`, `POST /ai-assessment/generate/all`, `POST /ai-assessment/submit`.
+- **Vector**: `POST /vector/collection`, `POST /vector/upsert`, `POST /vector/search`.
 
 ## License
 
-Nest is [MIT licensed](https://github.com/nestjs/nest/blob/master/LICENSE).
+AGPL-3.0 license.

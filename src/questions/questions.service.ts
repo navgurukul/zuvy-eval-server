@@ -1,12 +1,16 @@
 import { BadRequestException, Injectable } from '@nestjs/common';
 import { InjectQueue } from '@nestjs/bullmq';
 import { Queue } from 'bullmq';
+import { Inject } from '@nestjs/common';
+import { DRIZZLE_DB } from 'src/db/constant';
+import { NodePgDatabase } from 'drizzle-orm/node-postgres';
 import { CreateQuestionDto } from './dto/create-question.dto';
 import { UpdateQuestionDto } from './dto/update-question.dto';
 import {
   GenerateQuestionsDto,
   GenerateTopicBatchJobPayload,
 } from './dto/generate-questions.dto';
+import { zuvyQuestions } from './schema/zuvy-questions.schema';
 
 const BATCH_SIZE = 10;
 const JOB_NAME = 'generate-topic-batch';
@@ -23,15 +27,43 @@ const JOB_OPTS = {
 export class QuestionsService {
   constructor(
     @InjectQueue('llm-generation') private readonly queue: Queue,
+    @Inject(DRIZZLE_DB) private readonly db: NodePgDatabase,
   ) {}
 
   expandPayloadToJobs(payload: GenerateQuestionsDto): GenerateTopicBatchJobPayload[] {
     const jobs: GenerateTopicBatchJobPayload[] = [];
-    const { topics, levelId } = payload;
+    const {
+      topics,
+      levelId,
+      domainName,
+      topicName,
+      topicDescription,
+      learningObjectives,
+      targetAudience,
+      focusAreas,
+      bloomsLevel,
+      questionStyle,
+      difficultyDistribution,
+      questionCounts,
+    } = payload;
 
     if (!topics || typeof topics !== 'object' || Object.keys(topics).length === 0) {
       throw new BadRequestException('topics must be a non-empty object (topic name -> count)');
     }
+
+    const baseContext: Omit<GenerateTopicBatchJobPayload, 'topic' | 'count'> = {
+      levelId: levelId ?? null,
+      domainName,
+      topicName,
+      topicDescription,
+      learningObjectives,
+      targetAudience,
+      focusAreas,
+      bloomsLevel,
+      questionStyle,
+      difficultyDistribution,
+      questionCounts,
+    };
 
     for (const [topic, totalCount] of Object.entries(topics)) {
       const count = Number(totalCount);
@@ -45,7 +77,7 @@ export class QuestionsService {
         jobs.push({
           topic,
           count: countForThisJob,
-          levelId: levelId ?? null,
+          ...baseContext,
         });
       }
     }
@@ -82,8 +114,57 @@ export class QuestionsService {
     };
   }
 
-  create(createQuestionDto: CreateQuestionDto) {
-    return 'This action adds a new question';
+  async create(createQuestionDto: CreateQuestionDto) {
+    const [row] = await this.db
+      .insert(zuvyQuestions)
+      .values({
+        domainName: createQuestionDto.domainName,
+        topicName: createQuestionDto.topicName,
+        topicDescription: createQuestionDto.topicDescription,
+        learningObjectives: createQuestionDto.learningObjectives ?? null,
+        targetAudience: createQuestionDto.targetAudience ?? null,
+        focusAreas: createQuestionDto.focusAreas ?? null,
+        bloomsLevel: createQuestionDto.bloomsLevel ?? null,
+        questionStyle: createQuestionDto.questionStyle ?? null,
+        question: createQuestionDto.question,
+        difficulty: createQuestionDto.difficulty ?? null,
+        language: createQuestionDto.language ?? null,
+        options: createQuestionDto.options,
+        correctOption: createQuestionDto.correctOption,
+        difficultyDistribution: createQuestionDto.difficultyDistribution ?? null,
+        questionCounts: createQuestionDto.questionCounts ?? null,
+        levelId: createQuestionDto.levelId ?? null,
+      })
+      .returning();
+
+    return row;
+  }
+
+  async createMany(rows: CreateQuestionDto[]) {
+    if (!rows || rows.length === 0) return [];
+    return this.db
+      .insert(zuvyQuestions)
+      .values(
+        rows.map((r) => ({
+          domainName: r.domainName,
+          topicName: r.topicName,
+          topicDescription: r.topicDescription,
+          learningObjectives: r.learningObjectives ?? null,
+          targetAudience: r.targetAudience ?? null,
+          focusAreas: r.focusAreas ?? null,
+          bloomsLevel: r.bloomsLevel ?? null,
+          questionStyle: r.questionStyle ?? null,
+          question: r.question,
+          difficulty: r.difficulty ?? null,
+          language: r.language ?? null,
+          options: r.options,
+          correctOption: r.correctOption,
+          difficultyDistribution: r.difficultyDistribution ?? null,
+          questionCounts: r.questionCounts ?? null,
+          levelId: r.levelId ?? null,
+        })),
+      )
+      .returning();
   }
 
   findAll() {

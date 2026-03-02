@@ -1,11 +1,11 @@
 import { Processor, WorkerHost } from '@nestjs/bullmq';
 import { Logger } from '@nestjs/common';
 import { Job } from 'bullmq';
-import { generateMcqPrompt } from 'src/ai-assessment/system_prompts/system_prompts';
+import { generateMcqPromptFromSpec } from 'src/ai-assessment/system_prompts/system_prompts';
 import { parseLlmMcq } from 'src/llm/llm_response_parsers/mcqParser';
 import { LlmService } from 'src/llm/llm.service';
-import { QuestionsByLlmService } from 'src/questions-by-llm/questions-by-llm.service';
 import { GenerateTopicBatchJobPayload } from './dto/generate-questions.dto';
+import { QuestionsService } from './questions.service';
 
 const JOB_NAME = 'generate-topic-batch';
 
@@ -15,7 +15,7 @@ export class QuestionsProcessor extends WorkerHost {
 
   constructor(
     private readonly llmService: LlmService,
-    private readonly questionByLlmService: QuestionsByLlmService,
+    private readonly questionsService: QuestionsService,
   ) {
     super();
   }
@@ -43,14 +43,7 @@ export class QuestionsProcessor extends WorkerHost {
       `Processing job ${job.id}: topic=${topic}, count=${count}, levelId=${levelId ?? 'null'}`,
     );
 
-    const topicOfCurrentAssessment = { [topic]: count };
-    const prompt = generateMcqPrompt(
-      'Beginners Level.',
-      'Base Level.',
-      '[]',
-      topicOfCurrentAssessment,
-      count,
-    );
+    const prompt = generateMcqPromptFromSpec(job.data);
 
     const aiResponse = await this.llmService.generateCompletion(prompt);
     if (!aiResponse?.text) {
@@ -60,12 +53,29 @@ export class QuestionsProcessor extends WorkerHost {
     }
     const parsed = await parseLlmMcq(aiResponse.text);
 
-    await this.questionByLlmService.create(
-      {
-        questions: parsed.evaluations,
-        levelId: levelId != null ? String(levelId) : null,
-      },
-      null as any,
+    const domainName = job.data.domainName ?? 'Unknown';
+    const topicName = job.data.topicName ?? topic;
+    const topicDescription = job.data.topicDescription ?? '';
+
+    await this.questionsService.createMany(
+      (parsed.evaluations ?? []).map((q) => ({
+        domainName,
+        topicName,
+        topicDescription,
+        learningObjectives: job.data.learningObjectives,
+        targetAudience: job.data.targetAudience,
+        focusAreas: job.data.focusAreas,
+        bloomsLevel: job.data.bloomsLevel,
+        questionStyle: job.data.questionStyle,
+        difficultyDistribution: job.data.difficultyDistribution,
+        questionCounts: job.data.questionCounts,
+        levelId: levelId ?? null,
+        question: q.question,
+        difficulty: q.difficulty,
+        language: q.language,
+        options: q.options as any,
+        correctOption: Number(q.correctOption),
+      })),
     );
 
     this.logger.log(

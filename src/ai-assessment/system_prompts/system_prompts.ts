@@ -112,3 +112,72 @@ export function generateMcqPrompt(
   """
   `.trim();
 }
+
+export interface McqGenerationSpec {
+  topic: string;
+  count: number;
+  domainName?: string;
+  topicName?: string;
+  topicDescription?: string;
+  learningObjectives?: string;
+  targetAudience?: string;
+  focusAreas?: string;
+  bloomsLevel?: string;
+  questionStyle?: string;
+  difficultyDistribution?: { easy?: number; medium?: number; hard?: number };
+  questionCounts?: { easy?: number; medium?: number; hard?: number };
+}
+
+export function generateMcqPromptFromSpec(spec: McqGenerationSpec): string {
+  const {
+    topic,
+    count,
+    domainName,
+    topicName,
+    topicDescription,
+    learningObjectives,
+    targetAudience,
+    focusAreas,
+    bloomsLevel,
+    questionStyle,
+    difficultyDistribution,
+    questionCounts,
+  } = spec;
+
+  const sections: string[] = [];
+
+  sections.push(`You are an expert assessment author. Generate EXACTLY ${count} multiple-choice questions (MCQs) in strict JSON format.`);
+  sections.push('');
+  sections.push('CONTEXT:');
+  if (domainName) sections.push(`- Domain: ${domainName}`);
+  if (topicName) sections.push(`- Topic name: ${topicName}`);
+  if (topicDescription) sections.push(`- Topic description: ${topicDescription}`);
+  sections.push(`- Primary topic for this batch: ${topic}`);
+  if (learningObjectives) sections.push(`- Learning objectives: ${learningObjectives}`);
+  if (targetAudience) sections.push(`- Target audience: ${targetAudience}`);
+  if (focusAreas) sections.push(`- Focus areas: ${focusAreas}`);
+  if (bloomsLevel) sections.push(`- Bloom's taxonomy level: ${bloomsLevel}`);
+  if (questionStyle) sections.push(`- Question style: ${questionStyle}`);
+  if (difficultyDistribution && Object.keys(difficultyDistribution).length > 0) {
+    sections.push(`- Difficulty distribution (percent): ${JSON.stringify(difficultyDistribution)}`);
+  }
+  if (questionCounts && Object.keys(questionCounts).length > 0) {
+    sections.push(`- Question counts by difficulty for this batch: ${JSON.stringify(questionCounts)}. Respect these counts where possible.`);
+  }
+
+  sections.push('');
+  sections.push('OUTPUT REQUIREMENTS:');
+  sections.push('1. Output ONLY a single valid JSON object (no markdown, no code fence, no surrounding text).');
+  sections.push(`2. Generate exactly ${count} MCQs. All questions must align with the topic and context above.`);
+  sections.push('3. Top-level JSON MUST be: { "evaluations": [ /* array of question objects */ ] }');
+  sections.push(`4. There MUST be exactly ${count} objects in "evaluations".`);
+  sections.push('5. Each question object MUST have:');
+  sections.push('   { "question": "<string>", "topic": "<string>", "difficulty": "<easy|medium|hard>", "options": { "1": "<A>", "2": "<B>", "3": "<C>", "4": "<D>" }, "correctOption": <1|2|3|4>, "language": "<string>" }');
+  sections.push('6. Options: exactly 4 entries. correctOption must be 1, 2, 3, or 4.');
+  sections.push('7. Do NOT include explanations, ids, or extra keys.');
+  sections.push('8. If you cannot produce valid JSON, return: { "error": "INVALID_JSON", "reason": "<short reason>" }');
+  sections.push('');
+  sections.push('Produce the JSON only.');
+
+  return sections.join('\n');
+}

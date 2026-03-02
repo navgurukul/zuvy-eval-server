@@ -69,4 +69,22 @@ export interface GenerateTopicBatchJobPayload {
   topic: string;
   count: number;
   levelId?: number | null;
+  domainName?: string;
+  topicName?: string;
+  topicDescription?: string;
+  learningObjectives?: string;
+  targetAudience?: string;
+  focusAreas?: string;
+  bloomsLevel?: string;
+  questionStyle?: string;
+  difficultyDistribution?: {
+    easy?: number;
+    medium?: number;
+    hard?: number;
+  };
+  questionCounts?: {
+    easy?: number;
+    medium?: number;
+    hard?: number;
+  };
 }

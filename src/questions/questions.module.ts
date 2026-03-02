@@ -5,12 +5,14 @@ import { QuestionsController } from './questions.controller';
 import { QuestionsProcessor } from './questions.processor';
 import { LlmModule } from 'src/llm/llm.module';
 import { QuestionsByLlmModule } from 'src/questions-by-llm/questions-by-llm.module';
+import { DbModule } from 'src/db/db.module';
 
 @Module({
   imports: [
     BullModule.registerQueue({ name: 'llm-generation' }),
     LlmModule,
     QuestionsByLlmModule,
+    DbModule,
   ],
   controllers: [QuestionsController],
   providers: [QuestionsService, QuestionsProcessor],

@@ -3,6 +3,7 @@ import { LlmService } from './llm.service';
 import { LlmController } from './llm.controller';
 import { DbModule } from 'src/db/db.module';
 import { LLMUsageService } from './llmUsage.service';
+import { EmbeddingsService } from './embeddings.service';
 import { BullModule } from '@nestjs/bullmq';
 
 @Module({
@@ -13,7 +14,7 @@ import { BullModule } from '@nestjs/bullmq';
     })
   ],
   controllers: [LlmController],
-  providers: [LlmService, LLMUsageService],
-  exports: [LlmService, LLMUsageService],
+  providers: [LlmService, LLMUsageService, EmbeddingsService],
+  exports: [LlmService, LLMUsageService, EmbeddingsService],
 })
 export class LlmModule {}

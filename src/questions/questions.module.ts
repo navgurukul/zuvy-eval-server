@@ -5,6 +5,7 @@ import { QuestionsController } from './questions.controller';
 import { QuestionsProcessor } from './questions.processor';
 import { LlmModule } from 'src/llm/llm.module';
 import { QuestionsByLlmModule } from 'src/questions-by-llm/questions-by-llm.module';
+import { VectorModule } from 'src/vector/vector.module';
 import { DbModule } from 'src/db/db.module';
 
 @Module({
@@ -12,6 +13,7 @@ import { DbModule } from 'src/db/db.module';
     BullModule.registerQueue({ name: 'llm-generation' }),
     LlmModule,
     QuestionsByLlmModule,
+    VectorModule,
     DbModule,
   ],
   controllers: [QuestionsController],

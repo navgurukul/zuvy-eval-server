@@ -4,10 +4,13 @@ import { Job } from 'bullmq';
 import { generateMcqPromptFromSpec } from 'src/ai-assessment/system_prompts/system_prompts';
 import { parseLlmMcq } from 'src/llm/llm_response_parsers/mcqParser';
 import { LlmService } from 'src/llm/llm.service';
+import { EmbeddingsService } from 'src/llm/embeddings.service';
+import { VectorService } from 'src/vector/vector.service';
 import { GenerateTopicBatchJobPayload } from './dto/generate-questions.dto';
 import { QuestionsService } from './questions.service';
 
 const JOB_NAME = 'generate-topic-batch';
+const QDRANT_QUESTIONS_COLLECTION = 'QUESTIONS';
 
 @Processor('llm-generation')
 export class QuestionsProcessor extends WorkerHost {
@@ -16,6 +19,8 @@ export class QuestionsProcessor extends WorkerHost {
   constructor(
     private readonly llmService: LlmService,
     private readonly questionsService: QuestionsService,
+    private readonly embeddingsService: EmbeddingsService,
+    private readonly vectorService: VectorService,
   ) {
     super();
   }
@@ -57,7 +62,7 @@ export class QuestionsProcessor extends WorkerHost {
     const topicName = job.data.topicName ?? topic;
     const topicDescription = job.data.topicDescription ?? '';
 
-    await this.questionsService.createMany(
+    const inserted = await this.questionsService.createMany(
       (parsed.evaluations ?? []).map((q) => ({
         domainName,
         topicName,
@@ -78,8 +83,58 @@ export class QuestionsProcessor extends WorkerHost {
       })),
     );
 
+    if (inserted.length > 0) {
+      await this.indexQuestionsInQdrant(inserted);
+    }
+
     this.logger.log(
       `Job ${job.id} completed: inserted ${parsed.evaluations?.length ?? 0} questions for topic ${topic}`,
+    );
+  }
+
+  private async indexQuestionsInQdrant(
+    rows: Array<{
+      id: number;
+      question: string;
+      topicName: string | null;
+      difficulty: string | null;
+      levelId: number | null;
+    }>,
+  ): Promise<void> {
+    await this.vectorService.ensureCollection(
+      QDRANT_QUESTIONS_COLLECTION,
+      this.embeddingsService.dimension,
+    );
+
+    const texts = rows.map((r) =>
+      [r.question, r.topicName ?? '', r.difficulty ?? ''].filter(Boolean).join(' '),
+    );
+    const vectors = await this.embeddingsService.embedMany(texts);
+
+    const points = rows
+      .map((row, i) => ({
+        id: String(row.id),
+        vector: vectors[i] ?? [],
+        payload: {
+          questionId: row.id,
+          levelId: row.levelId ?? null,
+          topic: row.topicName ?? '',
+        },
+      }))
+      .filter((p) => p.vector.length > 0);
+
+    if (points.length === 0) {
+      this.logger.warn('No valid embeddings; skipping Qdrant upsert.');
+      return;
+    }
+
+    await this.vectorService.upsert({
+      collectionName: QDRANT_QUESTIONS_COLLECTION,
+      points,
+    });
+
+    this.logger.log(
+      `Indexed ${points.length} questions into Qdrant collection "${QDRANT_QUESTIONS_COLLECTION}"`,
     );
   }
 }

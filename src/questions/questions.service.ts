@@ -11,7 +11,7 @@ import {
   GenerateQuestionsDto,
   GenerateTopicBatchJobPayload,
 } from './dto/generate-questions.dto';
-import { zuvyQuestions } from './schema/zuvy-questions.schema';
+import { questionIndexOutbox, zuvyQuestions } from './schema/zuvy-questions.schema';
 
 const BATCH_SIZE = 10;
 const JOB_NAME = 'generate-topic-batch';
@@ -175,6 +175,52 @@ export class QuestionsService {
         })),
       )
       .returning();
+  }
+
+  /**
+   * Create many questions and enqueue outbox events for indexing,
+   * all in a single transaction so we never index a question that wasn't saved.
+   */
+  async createManyWithOutbox(rows: CreateQuestionDto[]) {
+    if (!rows || rows.length === 0) return [];
+
+    return this.db.transaction(async (tx) => {
+      const inserted = await tx
+        .insert(zuvyQuestions)
+        .values(
+          rows.map((r) => ({
+            orgId: r.orgId ?? null,
+            domainName: r.domainName,
+            topicName: r.topicName,
+            topicDescription: r.topicDescription,
+            learningObjectives: r.learningObjectives ?? null,
+            targetAudience: r.targetAudience ?? null,
+            focusAreas: r.focusAreas ?? null,
+            bloomsLevel: r.bloomsLevel ?? null,
+            questionStyle: r.questionStyle ?? null,
+            question: r.question,
+            difficulty: r.difficulty ?? null,
+            language: r.language ?? null,
+            options: r.options,
+            correctOption: r.correctOption,
+            difficultyDistribution: r.difficultyDistribution ?? null,
+            questionCounts: r.questionCounts ?? null,
+            levelId: r.levelId ?? null,
+          })),
+        )
+        .returning();
+
+      if (inserted.length > 0) {
+        await tx.insert(questionIndexOutbox).values(
+          inserted.map((q) => ({
+            questionId: q.id,
+            status: 'pending',
+          })),
+        );
+      }
+
+      return inserted;
+    });
   }
 
   /**

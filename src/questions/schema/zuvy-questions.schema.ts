@@ -38,3 +38,23 @@ export const zuvyQuestions = main.table('zuvy_questions', {
     mode: 'string',
   }).defaultNow(),
 });
+
+/**
+ * Outbox for question indexing in Qdrant.
+ * Each event represents "questionId needs (re)indexing".
+ */
+export const questionIndexOutbox = main.table('question_index_outbox', {
+  id: serial('id').primaryKey().notNull(),
+  questionId: integer('question_id').notNull(),
+  status: varchar('status', { length: 20 }).notNull().default('pending'),
+  attempts: integer('attempts').notNull().default(0),
+  lastError: text('last_error'),
+  createdAt: timestamp('created_at', {
+    withTimezone: true,
+    mode: 'string',
+  }).defaultNow(),
+  updatedAt: timestamp('updated_at', {
+    withTimezone: true,
+    mode: 'string',
+  }).defaultNow(),
+});

@@ -12,6 +12,8 @@ import { StorageModule } from './storage/storage.module';
 import { BullModule } from '@nestjs/bullmq';
 import { QuestionsModule } from './questions/questions.module';
 import { VectorModule } from './vector/vector.module';
+import { InjectQueue } from '@nestjs/bullmq';
+import { Queue } from 'bullmq';
 
 @Module({
   imports: [

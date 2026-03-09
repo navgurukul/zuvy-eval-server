@@ -1,11 +1,4 @@
-import {
-  serial,
-  varchar,
-  text,
-  integer,
-  jsonb,
-  timestamp,
-} from 'drizzle-orm/pg-core';
+import { integer, jsonb, serial, text, timestamp, varchar } from 'drizzle-orm/pg-core';
 import { main } from 'src/db/schema/parentSchema';
 
 export const zuvyQuestions = main.table('zuvy_questions', {
@@ -33,7 +26,8 @@ export const zuvyQuestions = main.table('zuvy_questions', {
   difficultyDistribution: jsonb('difficulty_distribution'),
   questionCounts: jsonb('question_counts'),
 
-  levelId: integer('level_id'),
+  // Per-question conceptual level band: A (most advanced) ... E (most basic).
+  levelId: varchar('level_id', { length: 1 }),
 
   createdAt: timestamp('created_at', {
     withTimezone: true,

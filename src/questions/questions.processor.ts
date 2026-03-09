@@ -36,7 +36,7 @@ export class QuestionsProcessor extends WorkerHost {
     job: Job<GenerateTopicBatchJobPayload, void, string>,
   ) {
     try {
-      const { topic, count, levelId, orgId } = job.data;
+    const { topic, count, levelId, orgId } = job.data;
     const attempt = (job.attemptsMade ?? 0) + 1;
 
     if (attempt > 1) {
@@ -64,29 +64,49 @@ export class QuestionsProcessor extends WorkerHost {
     const topicDescription = job.data.topicDescription ?? '';
 
     const inserted = await this.questionsService.createMany(
-      (parsed.evaluations ?? []).map((q) => ({
-        orgId: orgId ?? undefined,
-        domainName,
-        topicName,
-        topicDescription,
-        learningObjectives: job.data.learningObjectives,
-        targetAudience: job.data.targetAudience,
-        focusAreas: job.data.focusAreas,
-        bloomsLevel: job.data.bloomsLevel,
-        questionStyle: job.data.questionStyle,
-        difficultyDistribution: job.data.difficultyDistribution,
-        questionCounts: job.data.questionCounts,
-        levelId: levelId ?? null,
-        question: q.question,
-        difficulty: q.difficulty,
-        language: q.language,
-        options: q.options as any,
-        correctOption: Number(q.correctOption),
-      })),
+      (parsed.evaluations ?? []).map((q) => {
+        const rawLevel = (q as any).level;
+        const normalizedLevel =
+          typeof rawLevel === 'string'
+            ? rawLevel.trim().toUpperCase()
+            : null;
+        const levelBand: 'A' | 'B' | 'C' | 'D' | 'E' | null =
+          normalizedLevel && ['A', 'B', 'C', 'D', 'E'].includes(normalizedLevel)
+            ? (normalizedLevel as 'A' | 'B' | 'C' | 'D' | 'E')
+            : (levelId ?? null) ?? null;
+
+        return {
+          orgId: orgId ?? undefined,
+          domainName,
+          topicName,
+          topicDescription,
+          learningObjectives: job.data.learningObjectives,
+          targetAudience: job.data.targetAudience,
+          focusAreas: job.data.focusAreas,
+          bloomsLevel: job.data.bloomsLevel,
+          questionStyle: job.data.questionStyle,
+          difficultyDistribution: job.data.difficultyDistribution,
+          questionCounts: job.data.questionCounts,
+          levelId: levelBand,
+          question: q.question,
+          difficulty: q.difficulty,
+          language: q.language,
+          options: q.options as any,
+          correctOption: Number(q.correctOption),
+        };
+      }),
     );
 
     if (inserted.length > 0) {
-      await this.indexQuestionsInQdrant(inserted);
+      // Narrow type for indexer: only fields it actually uses.
+      const rowsForIndex = inserted.map((row) => ({
+        id: row.id,
+        question: row.question,
+        topicName: row.topicName,
+        difficulty: row.difficulty,
+        levelId: row.levelId as 'A' | 'B' | 'C' | 'D' | 'E' | null,
+      }));
+      await this.indexQuestionsInQdrant(rowsForIndex);
     }
 
     this.logger.log(
@@ -104,7 +124,7 @@ export class QuestionsProcessor extends WorkerHost {
       question: string;
       topicName: string | null;
       difficulty: string | null;
-      levelId: number | null;
+      levelId: 'A' | 'B' | 'C' | 'D' | 'E' | null;
     }>,
   ): Promise<void> {
     try {

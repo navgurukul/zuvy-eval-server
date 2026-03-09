@@ -1,4 +1,4 @@
-import { IsInt, IsObject, IsOptional, IsString, Min } from 'class-validator';
+import { IsIn, IsInt, IsObject, IsOptional, IsString, Min } from 'class-validator';
 
 export class CreateQuestionDto {
   @IsOptional()
@@ -69,6 +69,7 @@ export class CreateQuestionDto {
   };
 
   @IsOptional()
-  @IsInt()
-  levelId?: number | null;
+  @IsString()
+  @IsIn(['A', 'B', 'C', 'D', 'E'])
+  levelId?: 'A' | 'B' | 'C' | 'D' | 'E' | null;
 }

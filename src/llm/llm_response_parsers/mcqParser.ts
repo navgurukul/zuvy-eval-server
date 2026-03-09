@@ -8,6 +8,9 @@ const McqItemSchema = z.object({
   difficulty: z.string().optional(),
   topic: z.string().optional(),
   language: z.string().optional(),
+  // Per-question level band: A (most advanced) ... E (most basic).
+  // Optional for robustness; we normalize/validate when saving.
+  level: z.string().optional(),
 });
 
 export const LlmMcqSchema = z.object({

@@ -1,11 +1,4 @@
-import {
-  IsObject,
-  IsOptional,
-  IsNumber,
-  IsString,
-  IsInt,
-  Min,
-} from 'class-validator';
+import { IsIn, IsInt, IsNumber, IsObject, IsOptional, IsString, Min } from 'class-validator';
 
 export class GenerateQuestionsDto {
   @IsString()
@@ -61,15 +54,16 @@ export class GenerateQuestionsDto {
   topics: Record<string, number>;
 
   @IsOptional()
-  @IsNumber()
-  levelId?: number | null;
+  @IsString()
+  @IsIn(['A', 'B', 'C', 'D', 'E'])
+  levelId?: 'A' | 'B' | 'C' | 'D' | 'E' | null;
 }
 
 export interface GenerateTopicBatchJobPayload {
   topic: string;
   count: number;
   orgId?: string;
-  levelId?: number | null;
+  levelId?: 'A' | 'B' | 'C' | 'D' | 'E' | null;
   domainName?: string;
   topicName?: string;
   topicDescription?: string;

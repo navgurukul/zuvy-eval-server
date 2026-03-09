@@ -1,5 +1,5 @@
 /**
- * Payload stored with a vector (e.g. questionId, levelId for questions).
+ * Payload stored with a vector (e.g. questionId, level band for questions).
  * All values should be JSON-serializable.
  */
 export type VectorPayload = Record<string, string | number | boolean | null>;

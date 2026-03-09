@@ -11,7 +11,7 @@ import { main } from 'src/db/schema/parentSchema';
 export const zuvyQuestions = main.table('zuvy_questions', {
   id: serial('id').primaryKey().notNull(),
 
-  orgId: varchar('org_id', { length: 255 }),
+  orgId: varchar('orgId', { length: 255 }),
 
   domainName: varchar('domain_name', { length: 255 }).notNull(),
   topicName: varchar('topic_name', { length: 255 }).notNull(),

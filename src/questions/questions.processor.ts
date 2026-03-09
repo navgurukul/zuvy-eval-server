@@ -35,7 +35,8 @@ export class QuestionsProcessor extends WorkerHost {
   private async handleGenerateTopicBatch(
     job: Job<GenerateTopicBatchJobPayload, void, string>,
   ) {
-    const { topic, count, levelId, orgId } = job.data;
+    try {
+      const { topic, count, levelId, orgId } = job.data;
     const attempt = (job.attemptsMade ?? 0) + 1;
 
     if (attempt > 1) {
@@ -91,6 +92,10 @@ export class QuestionsProcessor extends WorkerHost {
     this.logger.log(
       `Job ${job.id} completed: inserted ${parsed.evaluations?.length ?? 0} questions for topic ${topic}`,
     );
+    } catch (error) {
+      this.logger.error('Error processing job:', error);
+      throw error;
+    }
   }
 
   private async indexQuestionsInQdrant(
@@ -102,40 +107,45 @@ export class QuestionsProcessor extends WorkerHost {
       levelId: number | null;
     }>,
   ): Promise<void> {
-    await this.vectorService.ensureCollection(
-      QDRANT_QUESTIONS_COLLECTION,
-      this.embeddingsService.dimension,
-    );
-
-    const texts = rows.map((r) =>
-      [r.question, r.topicName ?? '', r.difficulty ?? ''].filter(Boolean).join(' '),
-    );
-    const vectors = await this.embeddingsService.embedMany(texts);
-
-    const points = rows
-      .map((row, i) => ({
-        id: String(row.id),
-        vector: vectors[i] ?? [],
-        payload: {
-          questionId: row.id,
-          levelId: row.levelId ?? null,
-          topic: row.topicName ?? '',
-        },
-      }))
-      .filter((p) => p.vector.length > 0);
-
-    if (points.length === 0) {
-      this.logger.warn('No valid embeddings; skipping Qdrant upsert.');
-      return;
+    try {
+      await this.vectorService.ensureCollection(
+        QDRANT_QUESTIONS_COLLECTION,
+        this.embeddingsService.dimension || 1536,
+      );
+  
+      const texts = rows.map((r) =>
+        [r.question, r.topicName ?? '', r.difficulty ?? ''].filter(Boolean).join(' '),
+      );
+      const vectors = await this.embeddingsService.embedMany(texts);
+  
+      const points = rows
+        .map((row, i) => ({
+          id: String(row.id),
+          vector: vectors[i] ?? [],
+          payload: {
+            questionId: row.id,
+            levelId: row.levelId ?? null,
+            topic: row.topicName ?? '',
+          },
+        }))
+        .filter((p) => p.vector.length > 0);
+  
+      if (points.length === 0) {
+        this.logger.warn('No valid embeddings; skipping Qdrant upsert.');
+        return;
+      }
+  
+      await this.vectorService.upsert({
+        collectionName: QDRANT_QUESTIONS_COLLECTION,
+        points,
+      });
+  
+      this.logger.log(
+        `Indexed ${points.length} questions into Qdrant collection "${QDRANT_QUESTIONS_COLLECTION}"`,
+      );
+    } catch (error) {
+      this.logger.error('Error indexing questions in Qdrant:', error);
+      throw error;
     }
-
-    await this.vectorService.upsert({
-      collectionName: QDRANT_QUESTIONS_COLLECTION,
-      points,
-    });
-
-    this.logger.log(
-      `Indexed ${points.length} questions into Qdrant collection "${QDRANT_QUESTIONS_COLLECTION}"`,
-    );
   }
 }

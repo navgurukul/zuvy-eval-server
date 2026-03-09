@@ -20,7 +20,8 @@ export class QdrantVectorStore implements IVectorStore {
       process.env.QDRANT_URL ||
       process.env.VECTOR_QDRANT_URL ||
       'http://127.0.0.1:6333';
-    this.client = new QdrantClient({ url });
+    const apiKey = this.config.get<string>('QDRANT_ADMIN_KEY') || process.env.QDRANT_ADMIN_KEY;
+    this.client = new QdrantClient({ url, apiKey });
     this.logger.log(`QdrantVectorStore initialized with url=${url}`);
   }
 
@@ -28,18 +29,25 @@ export class QdrantVectorStore implements IVectorStore {
     collectionName: string,
     vectorSize: number,
   ): Promise<void> {
-    const exists = await this.client.collectionExists(collectionName);
-    if (exists) return;
-    await this.client.createCollection(collectionName, {
-      vectors: { size: vectorSize, distance: 'Cosine' },
-    });
-    this.logger.log(`Created collection ${collectionName} (size=${vectorSize})`);
+    try {
+      const exists = await this.client.collectionExists(collectionName);
+      if (exists) return;
+      await this.client.createCollection(collectionName, {
+        vectors: { size: vectorSize, distance: 'Cosine' },
+      });
+      this.logger.log(`Created collection ${collectionName} (size=${vectorSize})`);
+    } catch (error) {
+      this.logger.error('Error ensuring collection:', error);
+    }
   }
 
   async upsert(collectionName: string, points: VectorPoint[]): Promise<void> {
     if (points.length === 0) return;
     const qdrantPoints = points.map((p) => ({
-      id: p.id,
+      id:
+        typeof p.id === 'string' && /^[0-9]+$/.test(p.id)
+          ? Number(p.id)
+          : p.id,
       vector: p.vector,
       payload: p.payload ?? {},
     }));

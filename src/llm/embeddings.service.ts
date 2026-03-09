@@ -36,17 +36,22 @@ export class EmbeddingsService {
   }
 
   async embedMany(texts: string[]): Promise<number[][]> {
-    const trimmed = texts.map((t) => (t ?? '').trim()).filter(Boolean);
-    if (trimmed.length === 0) {
-      return [];
+    try {
+      const trimmed = texts.map((t) => (t ?? '').trim()).filter(Boolean);
+      if (trimmed.length === 0) {
+        return [];
+      }
+      const res = await this.client.embeddings.create({
+        model: EMBEDDING_MODEL,
+        input: trimmed,
+        encoding_format: 'float',
+      });
+      const byIndex = (res.data ?? []).sort((a, b) => (a.index ?? 0) - (b.index ?? 0));
+      return byIndex.map((d) => d.embedding ?? []);
+    } catch (error) {
+      this.logger.error('Error embedding texts:', error);
+      throw error;
     }
-    const res = await this.client.embeddings.create({
-      model: EMBEDDING_MODEL,
-      input: trimmed,
-      encoding_format: 'float',
-    });
-    const byIndex = (res.data ?? []).sort((a, b) => (a.index ?? 0) - (b.index ?? 0));
-    return byIndex.map((d) => d.embedding ?? []);
   }
 
   get dimension(): number {

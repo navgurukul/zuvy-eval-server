@@ -1,24 +1,43 @@
 import {
-  Controller,
-  Get,
-  Post,
   Body,
-  Patch,
-  Param,
+  Controller,
   Delete,
+  Get,
+  Param,
+  Patch,
+  Post,
 } from '@nestjs/common';
+import { ApiBody, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { VectorService } from './vector.service';
 import { UpsertVectorsDto, EnsureCollectionDto } from './dto/create-vector.dto';
 import { UpdateVectorDto } from './dto/update-vector.dto';
 import { SearchVectorsDto, DeleteVectorsDto } from './dto/search-vector.dto';
+import { QdrantVectorStore } from './strategies';
 
+@ApiTags('Vector')
 @Controller('vector')
 export class VectorController {
-  constructor(private readonly vectorService: VectorService) {}
+  constructor(
+    private readonly vectorService: VectorService,
+    private readonly qdrantVectorStore: QdrantVectorStore,
+  ) {}
 
   @Post('collection')
+  @ApiOperation({ summary: 'Ensure a vector collection exists' })
+  @ApiBody({
+    type: EnsureCollectionDto,
+    examples: {
+      default: {
+        summary: 'Ensure QUESTIONS collection for embeddings',
+        value: {
+          collectionName: 'QUESTIONS',
+          vectorSize: 1536,
+        },
+      },
+    },
+  })
   ensureCollection(@Body() dto: EnsureCollectionDto) {
-    return this.vectorService.ensureCollection(
+    return this.qdrantVectorStore.ensureCollection(
       dto.collectionName,
       dto.vectorSize,
     );

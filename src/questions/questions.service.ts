@@ -4,6 +4,7 @@ import { Queue } from 'bullmq';
 import { Inject } from '@nestjs/common';
 import { DRIZZLE_DB } from 'src/db/constant';
 import { NodePgDatabase } from 'drizzle-orm/node-postgres';
+import { eq } from 'drizzle-orm';
 import { CreateQuestionDto } from './dto/create-question.dto';
 import { UpdateQuestionDto } from './dto/update-question.dto';
 import {
@@ -174,6 +175,23 @@ export class QuestionsService {
         })),
       )
       .returning();
+  }
+
+  /**
+   * Fetch question texts for a given domain so we can include them in the LLM prompt
+   * and avoid generating exact duplicates.
+   */
+  async getQuestionTextsByDomain(
+    domainName: string,
+    limit = 200,
+  ): Promise<string[]> {
+    if (!domainName?.trim()) return [];
+    const rows = await this.db
+      .select({ question: zuvyQuestions.question })
+      .from(zuvyQuestions)
+      .where(eq(zuvyQuestions.domainName, domainName.trim()))
+      .limit(limit);
+    return rows.map((r) => r.question).filter(Boolean);
   }
 
   findAll() {

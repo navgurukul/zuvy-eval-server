@@ -49,7 +49,29 @@ export class QuestionsProcessor extends WorkerHost {
       `Processing job ${job.id}: topic=${topic}, count=${count}, levelId=${levelId ?? 'null'}`,
     );
 
-    const prompt = generateMcqPromptFromSpec(job.data);
+    const domainName = job.data.domainName ?? '';
+    let existingTexts: string[] = [];
+    if (domainName) {
+      try {
+        existingTexts = await this.questionsService.getQuestionTextsByDomain(
+          domainName,
+          200,
+        );
+      } catch (err) {
+        this.logger.warn(
+          `Job ${job.id}: could not load existing questions for domain "${domainName}", continuing without them: ${
+            err instanceof Error ? err.message : String(err)
+          }`,
+        );
+      }
+    }
+    if (existingTexts.length > 0) {
+      this.logger.log(
+        `Job ${job.id}: including ${existingTexts.length} existing questions for domain "${domainName}" in prompt to avoid duplicates.`,
+      );
+    }
+
+    const prompt = generateMcqPromptFromSpec(job.data, existingTexts);
 
     const aiResponse = await this.llmService.generateCompletion(prompt);
     if (!aiResponse?.text) {
@@ -59,7 +81,7 @@ export class QuestionsProcessor extends WorkerHost {
     }
     const parsed = await parseLlmMcq(aiResponse.text);
 
-    const domainName = job.data.domainName ?? 'Unknown';
+    const domainNameForInsert = job.data.domainName ?? 'Unknown';
     const topicName = job.data.topicName ?? topic;
     const topicDescription = job.data.topicDescription ?? '';
 
@@ -77,7 +99,7 @@ export class QuestionsProcessor extends WorkerHost {
 
         return {
           orgId: orgId ?? undefined,
-          domainName,
+          domainName: domainNameForInsert,
           topicName,
           topicDescription,
           learningObjectives: job.data.learningObjectives,
@@ -98,13 +120,15 @@ export class QuestionsProcessor extends WorkerHost {
     );
 
     if (inserted.length > 0) {
-      // Narrow type for indexer: only fields it actually uses.
+      // Narrow type for indexer: only fields it actually uses for embeddings and payload.
       const rowsForIndex = inserted.map((row) => ({
         id: row.id,
         question: row.question,
         topicName: row.topicName,
+        topicDescription: row.topicDescription,
         difficulty: row.difficulty,
         levelId: row.levelId as 'A' | 'B' | 'C' | 'D' | 'E' | null,
+        domainName: row.domainName,
       }));
       await this.indexQuestionsInQdrant(rowsForIndex);
     }
@@ -123,8 +147,10 @@ export class QuestionsProcessor extends WorkerHost {
       id: number;
       question: string;
       topicName: string | null;
+      topicDescription: string | null;
       difficulty: string | null;
       levelId: 'A' | 'B' | 'C' | 'D' | 'E' | null;
+      domainName: string | null;
     }>,
   ): Promise<void> {
     try {
@@ -134,7 +160,14 @@ export class QuestionsProcessor extends WorkerHost {
       );
   
       const texts = rows.map((r) =>
-        [r.question, r.topicName ?? '', r.difficulty ?? ''].filter(Boolean).join(' '),
+        [
+          r.question,
+          r.topicName ?? '',
+          r.topicDescription ?? '',
+          r.difficulty ?? '',
+        ]
+          .filter(Boolean)
+          .join(' '),
       );
       const vectors = await this.embeddingsService.embedMany(texts);
   
@@ -146,6 +179,9 @@ export class QuestionsProcessor extends WorkerHost {
             questionId: row.id,
             levelId: row.levelId ?? null,
             topic: row.topicName ?? '',
+            difficulty: row.difficulty ?? null,
+            topicDescription: row.topicDescription ?? '',
+            domainName: row.domainName ?? '',
           },
         }))
         .filter((p) => p.vector.length > 0);

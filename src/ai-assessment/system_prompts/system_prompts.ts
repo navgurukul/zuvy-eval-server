@@ -128,7 +128,10 @@ export interface McqGenerationSpec {
   questionCounts?: { easy?: number; medium?: number; hard?: number };
 }
 
-export function generateMcqPromptFromSpec(spec: McqGenerationSpec): string {
+export function generateMcqPromptFromSpec(
+  spec: McqGenerationSpec,
+  existingQuestionTexts?: string[],
+): string {
   const {
     topic,
     count,
@@ -163,6 +166,16 @@ export function generateMcqPromptFromSpec(spec: McqGenerationSpec): string {
   }
   if (questionCounts && Object.keys(questionCounts).length > 0) {
     sections.push(`- Question counts by difficulty for this batch: ${JSON.stringify(questionCounts)}. Respect these counts where possible.`);
+  }
+
+  if (existingQuestionTexts && existingQuestionTexts.length > 0) {
+    sections.push('');
+    sections.push(
+      'EXISTING QUESTIONS IN THIS DOMAIN (do NOT repeat or closely rephrase these; generate new, distinct questions):',
+    );
+    existingQuestionTexts.forEach((q, i) => {
+      sections.push(`${i + 1}. ${q.trim()}`);
+    });
   }
 
   sections.push('');

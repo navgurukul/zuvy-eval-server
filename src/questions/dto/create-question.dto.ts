@@ -1,6 +1,10 @@
 import { IsInt, IsObject, IsOptional, IsString, Min } from 'class-validator';
 
 export class CreateQuestionDto {
+  @IsOptional()
+  @IsString()
+  orgId?: string;
+
   @IsString()
   domainName: string;
 

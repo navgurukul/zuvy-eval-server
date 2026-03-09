@@ -1,5 +1,5 @@
-import { Controller, Get, Post, Body, Patch, Param, Delete } from '@nestjs/common';
-import { ApiBody, ApiOperation, ApiTags } from '@nestjs/swagger';
+import { BadRequestException, Body, Controller, Delete, Get, Param, Patch, Post, Query } from '@nestjs/common';
+import { ApiBody, ApiOperation, ApiQuery, ApiTags } from '@nestjs/swagger';
 import { QuestionsService } from './questions.service';
 import { CreateQuestionDto } from './dto/create-question.dto';
 import { UpdateQuestionDto } from './dto/update-question.dto';
@@ -17,8 +17,15 @@ export class QuestionsController {
     type: GenerateQuestionsDto,
     examples: generateQuestionsExample,
   })
-  async enqueueGeneration(@Body() payload: GenerateQuestionsDto) {
-    return this.questionsService.enqueueGeneration(payload);
+  @ApiQuery({ name: 'orgId', required: true, type: String })
+  async enqueueGeneration(
+    @Query('orgId') orgId: string,
+    @Body() payload: GenerateQuestionsDto,
+  ) {
+    if (!orgId?.trim()) {
+      throw new BadRequestException('orgId (query param) is required');
+    }
+    return this.questionsService.enqueueGeneration(payload, orgId.trim());
   }
 
   @Post()

@@ -35,7 +35,7 @@ export class QuestionsProcessor extends WorkerHost {
   private async handleGenerateTopicBatch(
     job: Job<GenerateTopicBatchJobPayload, void, string>,
   ) {
-    const { topic, count, levelId } = job.data;
+    const { topic, count, levelId, orgId } = job.data;
     const attempt = (job.attemptsMade ?? 0) + 1;
 
     if (attempt > 1) {
@@ -64,6 +64,7 @@ export class QuestionsProcessor extends WorkerHost {
 
     const inserted = await this.questionsService.createMany(
       (parsed.evaluations ?? []).map((q) => ({
+        orgId: orgId ?? undefined,
         domainName,
         topicName,
         topicDescription,

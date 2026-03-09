@@ -68,6 +68,7 @@ export class GenerateQuestionsDto {
 export interface GenerateTopicBatchJobPayload {
   topic: string;
   count: number;
+  orgId?: string;
   levelId?: number | null;
   domainName?: string;
   topicName?: string;

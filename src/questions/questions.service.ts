@@ -30,7 +30,10 @@ export class QuestionsService {
     @Inject(DRIZZLE_DB) private readonly db: NodePgDatabase,
   ) {}
 
-  expandPayloadToJobs(payload: GenerateQuestionsDto): GenerateTopicBatchJobPayload[] {
+  expandPayloadToJobs(
+    payload: GenerateQuestionsDto,
+    orgId: string,
+  ): GenerateTopicBatchJobPayload[] {
     const jobs: GenerateTopicBatchJobPayload[] = [];
     const {
       topics,
@@ -52,6 +55,7 @@ export class QuestionsService {
     }
 
     const baseContext: Omit<GenerateTopicBatchJobPayload, 'topic' | 'count'> = {
+      orgId,
       levelId: levelId ?? null,
       domainName,
       topicName,
@@ -91,12 +95,15 @@ export class QuestionsService {
     return jobs;
   }
 
-  async enqueueGeneration(payload: GenerateQuestionsDto): Promise<{
+  async enqueueGeneration(
+    payload: GenerateQuestionsDto,
+    orgId: string,
+  ): Promise<{
     message: string;
     totalJobs: number;
     jobIds: string[];
   }> {
-    const jobs = this.expandPayloadToJobs(payload);
+    const jobs = this.expandPayloadToJobs(payload, orgId);
     const jobIds: string[] = [];
 
     for (let i = 0; i < jobs.length; i++) {
@@ -118,6 +125,7 @@ export class QuestionsService {
     const [row] = await this.db
       .insert(zuvyQuestions)
       .values({
+        orgId: createQuestionDto.orgId ?? null,
         domainName: createQuestionDto.domainName,
         topicName: createQuestionDto.topicName,
         topicDescription: createQuestionDto.topicDescription,
@@ -146,6 +154,7 @@ export class QuestionsService {
       .insert(zuvyQuestions)
       .values(
         rows.map((r) => ({
+          orgId: r.orgId ?? null,
           domainName: r.domainName,
           topicName: r.topicName,
           topicDescription: r.topicDescription,

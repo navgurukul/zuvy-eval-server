@@ -37,11 +37,9 @@ export class QuestionsService {
   ): GenerateTopicBatchJobPayload[] {
     const jobs: GenerateTopicBatchJobPayload[] = [];
     const {
-      topics,
+      topicConfigurations,
       levelId,
       domainName,
-      topicName,
-      topicDescription,
       learningObjectives,
       targetAudience,
       focusAreas,
@@ -51,16 +49,20 @@ export class QuestionsService {
       questionCounts,
     } = payload;
 
-    if (!topics || typeof topics !== 'object' || Object.keys(topics).length === 0) {
-      throw new BadRequestException('topics must be a non-empty object (topic name -> count)');
+    if (
+      !topicConfigurations ||
+      !Array.isArray(topicConfigurations) ||
+      topicConfigurations.length === 0
+    ) {
+      throw new BadRequestException(
+        'topicConfigurations must be a non-empty array',
+      );
     }
 
     const baseContext: Omit<GenerateTopicBatchJobPayload, 'topic' | 'count'> = {
       orgId,
       levelId: levelId ?? null,
       domainName,
-      topicName,
-      topicDescription,
       learningObjectives,
       targetAudience,
       focusAreas,
@@ -70,9 +72,21 @@ export class QuestionsService {
       questionCounts,
     };
 
-    for (const [topic, totalCount] of Object.entries(topics)) {
-      const count = Number(totalCount);
+    for (const cfg of topicConfigurations) {
+      const topic = cfg.topicName;
+      const count = cfg.totalQuestions;
       if (!topic || !Number.isInteger(count) || count <= 0) continue;
+
+      const perTopicCtx: Omit<GenerateTopicBatchJobPayload, 'topic' | 'count'> =
+        {
+          ...baseContext,
+          topicName: cfg.topicName,
+          topicDescription: cfg.topicDescription,
+          difficultyDistribution:
+            cfg.difficultyDistribution ?? difficultyDistribution,
+          questionCounts: cfg.questionCounts ?? questionCounts,
+        };
+
       const numBatches = Math.ceil(count / BATCH_SIZE);
       for (let i = 0; i < numBatches; i++) {
         const countForThisJob =
@@ -82,7 +96,7 @@ export class QuestionsService {
         jobs.push({
           topic,
           count: countForThisJob,
-          ...baseContext,
+          ...perTopicCtx,
         });
       }
     }

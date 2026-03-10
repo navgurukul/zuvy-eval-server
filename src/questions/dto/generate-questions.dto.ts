@@ -1,14 +1,57 @@
-import { IsIn, IsInt, IsNumber, IsObject, IsOptional, IsString, Min } from 'class-validator';
+import { Type } from 'class-transformer';
+import {
+  IsArray,
+  IsIn,
+  IsInt,
+  IsObject,
+  IsOptional,
+  IsString,
+  Min,
+  ValidateNested,
+} from 'class-validator';
 
-export class GenerateQuestionsDto {
-  @IsString()
-  domainName: string;
+export class PerTopicCountsDto {
+  @IsOptional()
+  @IsInt()
+  easy?: number;
 
+  @IsOptional()
+  @IsInt()
+  medium?: number;
+
+  @IsOptional()
+  @IsInt()
+  hard?: number;
+}
+
+export class TopicConfigurationDto {
   @IsString()
   topicName: string;
 
   @IsString()
   topicDescription: string;
+
+  @IsInt()
+  @Min(1)
+  totalQuestions: number;
+
+  @IsOptional()
+  @IsObject()
+  difficultyDistribution?: PerTopicCountsDto;
+
+  @IsOptional()
+  @IsObject()
+  questionCounts?: PerTopicCountsDto;
+}
+
+export class GenerateQuestionsDto {
+  @IsString()
+  domainName: string;
+
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  topicNames?: string[];
 
   @IsInt()
   @Min(1)
@@ -50,8 +93,15 @@ export class GenerateQuestionsDto {
     hard?: number;
   };
 
+  // Legacy simple map of topic -> totalQuestions; accepted but not used for logic.
+  @IsOptional()
   @IsObject()
-  topics: Record<string, number>;
+  topics?: Record<string, number>;
+
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => TopicConfigurationDto)
+  topicConfigurations: TopicConfigurationDto[];
 
   @IsOptional()
   @IsString()

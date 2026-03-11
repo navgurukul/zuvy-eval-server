@@ -1,5 +1,7 @@
-import { BadRequestException, Body, Controller, Delete, Get, Param, Patch, Post, Query } from '@nestjs/common';
+import { BadRequestException, Body, Controller, Delete, Get, Param, Patch, Post, Query, Req, UseGuards } from '@nestjs/common';
 import { ApiBody, ApiOperation, ApiQuery, ApiTags } from '@nestjs/swagger';
+import { Request } from 'express';
+import { JwtAuthGuard } from 'src/auth/guards/jwt-auth.guard';
 import { QuestionsService } from './questions.service';
 import { CreateQuestionDto } from './dto/create-question.dto';
 import { UpdateQuestionDto } from './dto/update-question.dto';
@@ -12,6 +14,7 @@ export class QuestionsController {
   constructor(private readonly questionsService: QuestionsService) {}
 
   @Post('generate')
+  @UseGuards(JwtAuthGuard)
   @ApiOperation({ summary: 'Enqueue background question generation jobs' })
   @ApiBody({
     type: GenerateQuestionsDto,
@@ -19,13 +22,15 @@ export class QuestionsController {
   })
   @ApiQuery({ name: 'orgId', required: true, type: String })
   async enqueueGeneration(
+    @Req() req: Request & { user?: { sub?: string } },
     @Query('orgId') orgId: string,
     @Body() payload: GenerateQuestionsDto,
   ) {
     if (!orgId?.trim()) {
       throw new BadRequestException('orgId (query param) is required');
     }
-    return this.questionsService.enqueueGeneration(payload, orgId.trim());
+    const requestedByUserId = req.user?.sub != null ? String(req.user.sub) : undefined;
+    return this.questionsService.enqueueGeneration(payload, orgId.trim(), requestedByUserId);
   }
 
   @Post()

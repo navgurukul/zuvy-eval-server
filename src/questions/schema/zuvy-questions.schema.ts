@@ -46,6 +46,8 @@ export const zuvyQuestions = main.table('zuvy_questions', {
 export const questionIndexOutbox = main.table('question_index_outbox', {
   id: serial('id').primaryKey().notNull(),
   questionId: integer('question_id').notNull(),
+  /** User id (e.g. JWT sub) who requested this generation; used to send WS notification only to that user. */
+  requestedByUserId: varchar('requested_by_user_id', { length: 255 }),
   status: varchar('status', { length: 20 }).notNull().default('pending'),
   attempts: integer('attempts').notNull().default(0),
   lastError: text('last_error'),

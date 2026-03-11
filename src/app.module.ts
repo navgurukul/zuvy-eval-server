@@ -14,6 +14,7 @@ import { QuestionsModule } from './questions/questions.module';
 import { VectorModule } from './vector/vector.module';
 import { InjectQueue } from '@nestjs/bullmq';
 import { Queue } from 'bullmq';
+import { NotificationzModule } from './notificationz/notificationz.module';
 
 @Module({
   imports: [
@@ -36,7 +37,8 @@ import { Queue } from 'bullmq';
     DbModule,
     StorageModule,
     QuestionsModule,
-    VectorModule
+    VectorModule,
+    NotificationzModule,
   ],
   controllers: [AppController],
   providers: [AppService],

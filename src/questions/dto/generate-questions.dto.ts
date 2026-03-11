@@ -112,6 +112,8 @@ export class GenerateQuestionsDto {
 export interface GenerateTopicBatchJobPayload {
   topic: string;
   count: number;
+  /** User id (e.g. JWT sub) who triggered generation; propagated to outbox for per-user WS notification. */
+  requestedByUserId?: string;
   orgId?: string;
   levelId?: 'A' | 'B' | 'C' | 'D' | 'E' | null;
   domainName?: string;

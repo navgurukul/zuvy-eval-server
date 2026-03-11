@@ -113,6 +113,7 @@ export class QuestionsService {
   async enqueueGeneration(
     payload: GenerateQuestionsDto,
     orgId: string,
+    requestedByUserId?: string,
   ): Promise<{
     message: string;
     totalJobs: number;
@@ -122,7 +123,8 @@ export class QuestionsService {
     const jobIds: string[] = [];
 
     for (let i = 0; i < jobs.length; i++) {
-      const job = await this.queue.add(JOB_NAME, jobs[i], {
+      const jobPayload = { ...jobs[i], requestedByUserId };
+      const job = await this.queue.add(JOB_NAME, jobPayload, {
         jobId: `gen-${Date.now()}-${i}-${jobs[i].topic}-${jobs[i].count}`,
         ...JOB_OPTS,
       });
@@ -194,8 +196,9 @@ export class QuestionsService {
   /**
    * Create many questions and enqueue outbox events for indexing,
    * all in a single transaction so we never index a question that wasn't saved.
+   * @param requestedByUserId Optional user id (e.g. JWT sub) for per-user WS notification when indexing completes.
    */
-  async createManyWithOutbox(rows: CreateQuestionDto[]) {
+  async createManyWithOutbox(rows: CreateQuestionDto[], requestedByUserId?: string) {
     if (!rows || rows.length === 0) return [];
 
     return this.db.transaction(async (tx) => {
@@ -228,6 +231,7 @@ export class QuestionsService {
         await tx.insert(questionIndexOutbox).values(
           inserted.map((q) => ({
             questionId: q.id,
+            requestedByUserId: requestedByUserId ?? null,
             status: 'pending',
           })),
         );

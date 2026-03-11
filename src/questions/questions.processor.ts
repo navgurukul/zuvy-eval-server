@@ -85,6 +85,7 @@ export class QuestionsProcessor extends WorkerHost {
     const topicName = job.data.topicName ?? topic;
     const topicDescription = job.data.topicDescription ?? '';
 
+    const requestedByUserId = job.data.requestedByUserId;
     const inserted = await this.questionsService.createManyWithOutbox(
       (parsed.evaluations ?? []).map((q) => {
         const rawLevel = (q as any).level;
@@ -117,6 +118,7 @@ export class QuestionsProcessor extends WorkerHost {
           correctOption: Number(q.correctOption),
         };
       }),
+      requestedByUserId,
     );
 
     this.logger.log(

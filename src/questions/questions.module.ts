@@ -10,6 +10,7 @@ import { LlmModule } from 'src/llm/llm.module';
 import { QuestionsByLlmModule } from 'src/questions-by-llm/questions-by-llm.module';
 import { VectorModule } from 'src/vector/vector.module';
 import { DbModule } from 'src/db/db.module';
+import { NotificationzModule } from 'src/notificationz/notificationz.module';
 
 @Module({
   imports: [
@@ -22,6 +23,7 @@ import { DbModule } from 'src/db/db.module';
     QuestionsByLlmModule,
     VectorModule,
     DbModule,
+    NotificationzModule,
   ],
   controllers: [QuestionsController],
   providers: [

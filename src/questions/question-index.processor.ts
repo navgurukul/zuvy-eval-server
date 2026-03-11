@@ -9,12 +9,15 @@ import { zuvyQuestions, questionIndexOutbox } from './schema/zuvy-questions.sche
 import { inArray, eq } from 'drizzle-orm';
 import { EmbeddingsService } from 'src/llm/embeddings.service';
 import { VectorService } from 'src/vector/vector.service';
+import { NotificationzGateway } from 'src/notificationz/notificationz.gateway';
 
 const INDEX_QUEUE = 'question-index';
 const QDRANT_QUESTIONS_COLLECTION = 'QUESTIONS';
 
 interface IndexQuestionsJobData {
   questionIds: number[];
+  /** User ids to notify when indexing completes (each gets a WS event). */
+  requestedByUserIds?: string[];
 }
 
 @Processor(INDEX_QUEUE)
@@ -26,6 +29,7 @@ export class QuestionIndexProcessor extends WorkerHost {
     private readonly embeddingsService: EmbeddingsService,
     private readonly vectorService: VectorService,
     @InjectQueue('question-index-outbox') private readonly outboxQueue: Queue,
+    private readonly notificationzGateway: NotificationzGateway,
   ) {
     super();
   }
@@ -114,7 +118,18 @@ export class QuestionIndexProcessor extends WorkerHost {
         `Indexed ${points.length} questions into Qdrant collection "${QDRANT_QUESTIONS_COLLECTION}"`,
       );
 
-      // 6) Mark outbox events as done.
+      // 6) Notify only the user(s) who requested this batch (one event per user).
+      const requestedByUserIds = job.data.requestedByUserIds ?? [];
+      const payload = { count: points.length, questionIds };
+      for (const userId of requestedByUserIds) {
+        if (userId) {
+          this.notificationzGateway.server
+            .to(`user:${userId}`)
+            .emit('questions:ready', payload);
+        }
+      }
+
+      // 7) Mark outbox events as done.
       const now = new Date().toISOString();
       await this.db
         .update(questionIndexOutbox)

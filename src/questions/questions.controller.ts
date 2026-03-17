@@ -39,8 +39,25 @@ export class QuestionsController {
   }
 
   @Get()
-  findAll() {
-    return this.questionsService.findAll();
+  @ApiQuery({ name: 'page', required: false, type: Number, example: 1 })
+  @ApiQuery({ name: 'limit', required: false, type: Number, example: 20 })
+  @ApiQuery({ name: 'domainName', required: false, type: String })
+  @ApiQuery({ name: 'difficulty', required: false, type: String })
+  @ApiQuery({ name: 'topicName', required: false, type: String })
+  findAll(
+    @Query('page') page?: string,
+    @Query('limit') limit?: string,
+    @Query('domainName') domainName?: string,
+    @Query('difficulty') difficulty?: string,
+    @Query('topicName') topicName?: string,
+  ) {
+    return this.questionsService.findAll({
+      page,
+      limit,
+      domainName,
+      difficulty,
+      topicName,
+    });
   }
 
   @Get(':id')

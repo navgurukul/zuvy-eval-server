@@ -4,7 +4,7 @@ import { Queue } from 'bullmq';
 import { Inject } from '@nestjs/common';
 import { DRIZZLE_DB } from 'src/db/constant';
 import { NodePgDatabase } from 'drizzle-orm/node-postgres';
-import { eq } from 'drizzle-orm';
+import { and, desc, eq, sql } from 'drizzle-orm';
 import { CreateQuestionDto } from './dto/create-question.dto';
 import { UpdateQuestionDto } from './dto/update-question.dto';
 import {
@@ -258,8 +258,74 @@ export class QuestionsService {
     return rows.map((r) => r.question).filter(Boolean);
   }
 
-  findAll() {
-    return `This action returns all questions`;
+  async findAll(params?: {
+    page?: number | string;
+    limit?: number | string;
+    domainName?: string;
+    difficulty?: string;
+    topicName?: string;
+  }): Promise<{
+    data: unknown[];
+    page: number;
+    limit: number;
+    total: number;
+    totalPages: number;
+  }> {
+    const pageRaw = params?.page ?? 1;
+    const limitRaw = params?.limit ?? 20;
+
+    const page =
+      typeof pageRaw === 'string' ? Number.parseInt(pageRaw, 10) : pageRaw;
+    const limit =
+      typeof limitRaw === 'string' ? Number.parseInt(limitRaw, 10) : limitRaw;
+
+    if (!Number.isFinite(page) || page < 1) {
+      throw new BadRequestException('page must be a positive integer');
+    }
+    if (!Number.isFinite(limit) || limit < 1) {
+      throw new BadRequestException('limit must be a positive integer');
+    }
+
+    const safeLimit = Math.min(100, Math.floor(limit));
+    const safePage = Math.floor(page);
+    const offset = (safePage - 1) * safeLimit;
+
+    const domainName = params?.domainName?.trim();
+    const difficulty = params?.difficulty?.trim();
+    const topicName = params?.topicName?.trim();
+
+    const conditions = [
+      domainName ? eq(zuvyQuestions.domainName, domainName) : undefined,
+      difficulty ? eq(zuvyQuestions.difficulty, difficulty) : undefined,
+      topicName ? eq(zuvyQuestions.topicName, topicName) : undefined,
+    ].filter(Boolean);
+
+    const whereClause =
+      conditions.length > 0 ? and(...(conditions as any)) : undefined;
+
+    const [{ count }] = await this.db
+      .select({ count: sql<number>`count(*)` })
+      .from(zuvyQuestions)
+      .where(whereClause as any);
+
+    const total = Number(count ?? 0);
+    const totalPages = Math.max(1, Math.ceil(total / safeLimit));
+
+    const data = await this.db
+      .select()
+      .from(zuvyQuestions)
+      .where(whereClause as any)
+      .orderBy(desc(zuvyQuestions.createdAt))
+      .limit(safeLimit)
+      .offset(offset);
+
+    return {
+      data,
+      page: safePage,
+      limit: safeLimit,
+      total,
+      totalPages,
+    };
   }
 
   findOne(id: number) {

@@ -2,8 +2,15 @@ import { bigserial, integer, pgSchema, serial, unique, varchar } from "drizzle-o
 
 export const main = pgSchema("main");
 
+export const zuvyOrganizations = main.table('zuvy_organizations', {
+  id: serial('id').primaryKey().notNull(),
+});
+
 export const zuvyBootcamps = main.table("zuvy_bootcamps", {
   id: varchar("id").primaryKey(),
+  organizationId: integer('organization_id').notNull().references(() => zuvyOrganizations.id, {
+    onDelete: 'cascade'
+  }),
 });
 
 export const users = main.table("users", {

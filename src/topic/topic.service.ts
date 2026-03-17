@@ -190,4 +190,22 @@ export class TopicService {
 
     return { id: deleted.id, deleted: true };
   }
+
+  async findByModule(
+    bootcampId: string,
+    orgId: string | number,
+    moduleId: number,
+  ) {
+    this.validateBootcampId(bootcampId);
+    await this.ensureModuleInBootcamp(moduleId, bootcampId, orgId);
+
+    return this.db
+      .select({
+        id: topic.id,
+        name: topic.name,
+        description: topic.description,
+      })
+      .from(topic)
+      .where(eq(topic.moduleId, moduleId));
+  }
 }

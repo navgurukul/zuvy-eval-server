@@ -160,4 +160,26 @@ export class TopicController {
     const orgId = req.user?.orgId;
     return this.topicService.remove(this.parseBootcampId(bootcampId), orgId ?? '', +id);
   }
+
+  @Get('by-module/:moduleId')
+  @ApiOperation({ summary: 'List topics for a domain/module (for dropdowns)' })
+  @ApiQuery({
+    name: 'bootcampId',
+    required: true,
+    type: String,
+    example: '803',
+    description: 'Bootcamp id that owns the domain/module',
+  })
+  findByModule(
+    @Req() req: Request & { user?: { orgId?: string | number } },
+    @Query('bootcampId') bootcampId: string,
+    @Param('moduleId') moduleId: string,
+  ) {
+    const orgId = req.user?.orgId;
+    return this.topicService.findByModule(
+      this.parseBootcampId(bootcampId),
+      orgId ?? '',
+      Number(moduleId),
+    );
+  }
 }

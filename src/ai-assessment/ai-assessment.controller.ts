@@ -34,6 +34,7 @@ import {
   submitAssessmentExample,
 } from './swagger_examples/examples';
 import { AiAssessmentCrudService } from './ai-assessment.crud.service';
+import { AiAssessmentMappingService } from './ai-assessment.mapping.service';
 
 @ApiTags('AI Assessment')
 @ApiBearerAuth('JWT-auth')
@@ -42,7 +43,8 @@ import { AiAssessmentCrudService } from './ai-assessment.crud.service';
 export class AiAssessmentController {
   constructor(
     private readonly aiAssessmentService: AiAssessmentService,
-    private readonly aiAssessmentCrudService: AiAssessmentCrudService
+    private readonly aiAssessmentCrudService: AiAssessmentCrudService,
+    private readonly aiAssessmentMappingService: AiAssessmentMappingService,
   ) {}
 
   @Post()
@@ -189,5 +191,26 @@ export class AiAssessmentController {
         error.status || HttpStatus.INTERNAL_SERVER_ERROR,
       );
     }
+  }
+
+  @Post(':id/map-questions')
+  @ApiOperation({
+    summary:
+      'Map (generate) question sets for an assessment into ai_assessment_question_sets + ai_assessment_questions',
+  })
+  @ApiParam({ name: 'id', type: Number })
+  @ApiResponse({
+    status: 200,
+    description:
+      'Question sets generated and mapped successfully for the given assessment.',
+  })
+  async mapQuestions(@Param('id') id: string) {
+    const aiAssessmentId = Number(id);
+    if (Number.isNaN(aiAssessmentId)) {
+      throw new HttpException('Invalid assessment id', HttpStatus.BAD_REQUEST);
+    }
+    return this.aiAssessmentMappingService.mapQuestionsForAssessment(
+      aiAssessmentId,
+    );
   }
 }

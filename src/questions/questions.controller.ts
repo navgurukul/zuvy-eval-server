@@ -3,6 +3,7 @@ import { ApiBody, ApiOperation, ApiQuery, ApiTags } from '@nestjs/swagger';
 import { Request } from 'express';
 import { JwtAuthGuard } from 'src/auth/guards/jwt-auth.guard';
 import { QuestionsService } from './questions.service';
+import { QuestionsCrudService } from './questions.crud.service';
 import { CreateQuestionDto } from './dto/create-question.dto';
 import { UpdateQuestionDto } from './dto/update-question.dto';
 import { GenerateQuestionsDto } from './dto/generate-questions.dto';
@@ -11,7 +12,10 @@ import { generateQuestionsExample } from './swagger_examples/examples';
 @ApiTags('Questions')
 @Controller('questions')
 export class QuestionsController {
-  constructor(private readonly questionsService: QuestionsService) {}
+  constructor(
+    private readonly questionsService: QuestionsService,
+    private readonly questionsCrudService: QuestionsCrudService,
+  ) {}
 
   @Post('generate')
   @UseGuards(JwtAuthGuard)
@@ -34,8 +38,13 @@ export class QuestionsController {
   }
 
   @Post()
-  create(@Body() createQuestionDto: CreateQuestionDto) {
-    return this.questionsService.create(createQuestionDto);
+  @UseGuards(JwtAuthGuard)
+  create(
+    @Req() req: Request & { user?: { orgId?: number | string } },
+    @Body() createQuestionDto: CreateQuestionDto,
+  ) {
+    const orgId = req.user?.orgId != null ? String(req.user.orgId) : undefined;
+    return this.questionsCrudService.create(orgId ?? '', createQuestionDto);
   }
 
   @Get()
@@ -44,14 +53,18 @@ export class QuestionsController {
   @ApiQuery({ name: 'domainName', required: false, type: String })
   @ApiQuery({ name: 'difficulty', required: false, type: String })
   @ApiQuery({ name: 'topicName', required: false, type: String })
+  @UseGuards(JwtAuthGuard)
   findAll(
+    @Req() req: Request & { user?: { orgId?: number | string } },
     @Query('page') page?: string,
     @Query('limit') limit?: string,
     @Query('domainName') domainName?: string,
     @Query('difficulty') difficulty?: string,
     @Query('topicName') topicName?: string,
   ) {
-    return this.questionsService.findAll({
+    const orgId = req.user?.orgId != null ? String(req.user.orgId) : undefined;
+    return this.questionsCrudService.findAll({
+      orgId: orgId ?? '',
       page,
       limit,
       domainName,
@@ -61,17 +74,33 @@ export class QuestionsController {
   }
 
   @Get(':id')
-  findOne(@Param('id') id: string) {
-    return this.questionsService.findOne(+id);
+  @UseGuards(JwtAuthGuard)
+  findOne(
+    @Req() req: Request & { user?: { orgId?: number | string } },
+    @Param('id') id: string,
+  ) {
+    const orgId = req.user?.orgId != null ? String(req.user.orgId) : undefined;
+    return this.questionsCrudService.findOne(orgId ?? '', Number(id));
   }
 
   @Patch(':id')
-  update(@Param('id') id: string, @Body() updateQuestionDto: UpdateQuestionDto) {
-    return this.questionsService.update(+id, updateQuestionDto);
+  @UseGuards(JwtAuthGuard)
+  update(
+    @Req() req: Request & { user?: { orgId?: number | string } },
+    @Param('id') id: string,
+    @Body() updateQuestionDto: UpdateQuestionDto,
+  ) {
+    const orgId = req.user?.orgId != null ? String(req.user.orgId) : undefined;
+    return this.questionsCrudService.update(orgId ?? '', Number(id), updateQuestionDto);
   }
 
   @Delete(':id')
-  remove(@Param('id') id: string) {
-    return this.questionsService.remove(+id);
+  @UseGuards(JwtAuthGuard)
+  remove(
+    @Req() req: Request & { user?: { orgId?: number | string } },
+    @Param('id') id: string,
+  ) {
+    const orgId = req.user?.orgId != null ? String(req.user.orgId) : undefined;
+    return this.questionsCrudService.remove(orgId ?? '', Number(id));
   }
 }

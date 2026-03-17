@@ -4,9 +4,8 @@ import { Queue } from 'bullmq';
 import { Inject } from '@nestjs/common';
 import { DRIZZLE_DB } from 'src/db/constant';
 import { NodePgDatabase } from 'drizzle-orm/node-postgres';
-import { and, desc, eq, sql } from 'drizzle-orm';
+import { eq } from 'drizzle-orm';
 import { CreateQuestionDto } from './dto/create-question.dto';
-import { UpdateQuestionDto } from './dto/update-question.dto';
 import {
   GenerateQuestionsDto,
   GenerateTopicBatchJobPayload,
@@ -138,27 +137,31 @@ export class QuestionsService {
     };
   }
 
-  async create(createQuestionDto: CreateQuestionDto) {
+  async create(orgId: string, dto: CreateQuestionDto) {
+    if (!orgId?.trim()) {
+      throw new BadRequestException('orgId is required');
+    }
+
     const [row] = await this.db
       .insert(zuvyQuestions)
       .values({
-        orgId: createQuestionDto.orgId ?? null,
-        domainName: createQuestionDto.domainName,
-        topicName: createQuestionDto.topicName,
-        topicDescription: createQuestionDto.topicDescription,
-        learningObjectives: createQuestionDto.learningObjectives ?? null,
-        targetAudience: createQuestionDto.targetAudience ?? null,
-        focusAreas: createQuestionDto.focusAreas ?? null,
-        bloomsLevel: createQuestionDto.bloomsLevel ?? null,
-        questionStyle: createQuestionDto.questionStyle ?? null,
-        question: createQuestionDto.question,
-        difficulty: createQuestionDto.difficulty ?? null,
-        language: createQuestionDto.language ?? null,
-        options: createQuestionDto.options,
-        correctOption: createQuestionDto.correctOption,
-        difficultyDistribution: createQuestionDto.difficultyDistribution ?? null,
-        questionCounts: createQuestionDto.questionCounts ?? null,
-        levelId: createQuestionDto.levelId ?? null,
+        orgId: orgId.trim(),
+        domainName: dto.domainName,
+        topicName: dto.topicName,
+        topicDescription: dto.topicDescription,
+        learningObjectives: dto.learningObjectives ?? null,
+        targetAudience: dto.targetAudience ?? null,
+        focusAreas: dto.focusAreas ?? null,
+        bloomsLevel: dto.bloomsLevel ?? null,
+        questionStyle: dto.questionStyle ?? null,
+        question: dto.question,
+        difficulty: dto.difficulty ?? null,
+        language: dto.language ?? null,
+        options: dto.options,
+        correctOption: dto.correctOption,
+        difficultyDistribution: dto.difficultyDistribution ?? null,
+        questionCounts: dto.questionCounts ?? null,
+        levelId: dto.levelId ?? null,
       })
       .returning();
 
@@ -256,87 +259,5 @@ export class QuestionsService {
       .where(eq(zuvyQuestions.domainName, domainName.trim()))
       .limit(limit);
     return rows.map((r) => r.question).filter(Boolean);
-  }
-
-  async findAll(params?: {
-    page?: number | string;
-    limit?: number | string;
-    domainName?: string;
-    difficulty?: string;
-    topicName?: string;
-  }): Promise<{
-    data: unknown[];
-    page: number;
-    limit: number;
-    total: number;
-    totalPages: number;
-  }> {
-    const pageRaw = params?.page ?? 1;
-    const limitRaw = params?.limit ?? 20;
-
-    const page =
-      typeof pageRaw === 'string' ? Number.parseInt(pageRaw, 10) : pageRaw;
-    const limit =
-      typeof limitRaw === 'string' ? Number.parseInt(limitRaw, 10) : limitRaw;
-
-    if (!Number.isFinite(page) || page < 1) {
-      throw new BadRequestException('page must be a positive integer');
-    }
-    if (!Number.isFinite(limit) || limit < 1) {
-      throw new BadRequestException('limit must be a positive integer');
-    }
-
-    const safeLimit = Math.min(100, Math.floor(limit));
-    const safePage = Math.floor(page);
-    const offset = (safePage - 1) * safeLimit;
-
-    const domainName = params?.domainName?.trim();
-    const difficulty = params?.difficulty?.trim();
-    const topicName = params?.topicName?.trim();
-
-    const conditions = [
-      domainName ? eq(zuvyQuestions.domainName, domainName) : undefined,
-      difficulty ? eq(zuvyQuestions.difficulty, difficulty) : undefined,
-      topicName ? eq(zuvyQuestions.topicName, topicName) : undefined,
-    ].filter(Boolean);
-
-    const whereClause =
-      conditions.length > 0 ? and(...(conditions as any)) : undefined;
-
-    const [{ count }] = await this.db
-      .select({ count: sql<number>`count(*)` })
-      .from(zuvyQuestions)
-      .where(whereClause as any);
-
-    const total = Number(count ?? 0);
-    const totalPages = Math.max(1, Math.ceil(total / safeLimit));
-
-    const data = await this.db
-      .select()
-      .from(zuvyQuestions)
-      .where(whereClause as any)
-      .orderBy(desc(zuvyQuestions.createdAt))
-      .limit(safeLimit)
-      .offset(offset);
-
-    return {
-      data,
-      page: safePage,
-      limit: safeLimit,
-      total,
-      totalPages,
-    };
-  }
-
-  findOne(id: number) {
-    return `This action returns a #${id} question`;
-  }
-
-  update(id: number, updateQuestionDto: UpdateQuestionDto) {
-    return `This action updates a #${id} question`;
-  }
-
-  remove(id: number) {
-    return `This action removes a #${id} question`;
   }
 }

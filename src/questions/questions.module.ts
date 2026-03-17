@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { BullModule } from '@nestjs/bullmq';
 import { QuestionsService } from './questions.service';
+import { QuestionsCrudService } from './questions.crud.service';
 import { QuestionsController } from './questions.controller';
 import { QuestionsProcessor } from './questions.processor';
 import { QuestionIndexOutboxProcessor } from './question-index-outbox.processor';
@@ -28,6 +29,7 @@ import { NotificationzModule } from 'src/notificationz/notificationz.module';
   controllers: [QuestionsController],
   providers: [
     QuestionsService,
+    QuestionsCrudService,
     QuestionsProcessor,
     QuestionIndexOutboxProcessor,
     QuestionIndexProcessor,

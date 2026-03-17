@@ -1,5 +1,5 @@
 import { BadRequestException, Body, Controller, Delete, Get, Param, Patch, Post, Query, Req, UseGuards } from '@nestjs/common';
-import { ApiBody, ApiOperation, ApiQuery, ApiTags } from '@nestjs/swagger';
+import { ApiBearerAuth, ApiBody, ApiOperation, ApiQuery, ApiTags } from '@nestjs/swagger';
 import { Request } from 'express';
 import { JwtAuthGuard } from 'src/auth/guards/jwt-auth.guard';
 import { QuestionsService } from './questions.service';
@@ -10,6 +10,7 @@ import { GenerateQuestionsDto } from './dto/generate-questions.dto';
 import { generateQuestionsExample } from './swagger_examples/examples';
 
 @ApiTags('Questions')
+@ApiBearerAuth('JWT-auth')
 @Controller('questions')
 export class QuestionsController {
   constructor(

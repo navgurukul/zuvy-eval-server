@@ -29,11 +29,17 @@ import {
 import { main, zuvyBootcamps } from "./parentSchema";
 // local reference only — not owned by this service
 
+export const assessmentScopeEnum = pgEnum('assessment_scope', ['bootcamp', 'domain']);
+
 export const aiAssessment = main.table("ai_assessment", {
   id: serial("id").primaryKey().notNull(),
   bootcampId: integer("bootcamp_id")
     .notNull()
     .references(() => zuvyBootcamps.id),
+  scope: assessmentScopeEnum('scope').notNull().default('bootcamp'),
+  // Optional domain reference when scope='domain'. This service doesn't own domains,
+  // so it's left as a bare integer here.
+  domainId: integer('domain_id'),
   title: varchar("title", { length: 255 }).notNull(),
   description: text("description"),
   topics: jsonb("topics").notNull(),

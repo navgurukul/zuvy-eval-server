@@ -6,11 +6,9 @@ import {
   Logger,
   NotFoundException,
 } from '@nestjs/common';
-import {
-  CreateAiAssessmentDto,
-  GenerateAssessmentDto,
-} from './dto/create-ai-assessment.dto';
+import { CreateAiAssessmentDto } from './dto/create-ai-assessment.dto';
 import { UpdateAiAssessmentDto } from './dto/update-ai-assessment.dto';
+import { GenerateAssessmentDto } from './dto/create-ai-assessment.dto';
 import { zuvyBatchEnrollments, users } from 'src/db/schema/parentSchema';
 import { questionStudentAnswerRelation } from 'src/db/schema/questionStdAns';
 import { studentLevelRelation } from 'src/db/schema/studentLevel';
@@ -232,19 +230,22 @@ export class AiAssessmentCrudService {
     try {
         const { inserted, enrolledStudentsCount } = await this.db.transaction(
         async (tx) => {
-            const payload = {
-            bootcampId: createAiAssessmentDto.bootcampId,
-            title: createAiAssessmentDto.title,
-            description: createAiAssessmentDto.description ?? null,
-            topics: createAiAssessmentDto.topics,
-            // audience: createAiAssessmentDto.audience ?? null,
-            totalNumberOfQuestions:
-                createAiAssessmentDto.totalNumberOfQuestions,
-            totalQuestionsWithBuffer: Math.floor(
-                createAiAssessmentDto.totalNumberOfQuestions * 2.25,
-            ),
-            startDatetime: createAiAssessmentDto.startDatetime,
-            endDatetime: createAiAssessmentDto.endDatetime,
+            const scope = createAiAssessmentDto.scope ?? 'bootcamp';
+            const payload: any = {
+              bootcampId: createAiAssessmentDto.bootcampId,
+              scope,
+              domainId: scope === 'domain' ? createAiAssessmentDto.domainId ?? null : null,
+              title: createAiAssessmentDto.title,
+              description: createAiAssessmentDto.description ?? null,
+              topics: createAiAssessmentDto.topics,
+              // audience: createAiAssessmentDto.audience ?? null,
+              totalNumberOfQuestions:
+                  createAiAssessmentDto.totalNumberOfQuestions,
+              totalQuestionsWithBuffer: Math.floor(
+                  createAiAssessmentDto.totalNumberOfQuestions * 2.25,
+              ),
+              startDatetime: createAiAssessmentDto.startDatetime,
+              endDatetime: createAiAssessmentDto.endDatetime,
             };
 
             const [aiRow] = await tx

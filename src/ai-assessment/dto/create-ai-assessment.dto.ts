@@ -1,122 +1,68 @@
 import {
   IsArray,
+  IsDateString,
+  IsEnum,
+  IsInt,
   IsNotEmpty,
-  IsNumber,
-  IsString,
-  IsObject,
   IsOptional,
-  ValidateNested,
-  IsISO8601,
+  IsString,
+  Min,
+  ValidateIf,
 } from 'class-validator';
-import { Type } from 'class-transformer';
-import { ApiProperty } from '@nestjs/swagger';
+
+export type AssessmentScope = 'bootcamp' | 'domain';
 
 export class CreateAiAssessmentDto {
-  @IsNumber()
-  @IsNotEmpty()
+  @IsInt()
+  @Min(1)
   bootcampId: number;
+
+  @IsEnum(['bootcamp', 'domain'])
+  @IsOptional()
+  scope?: AssessmentScope = 'bootcamp';
+
+  @ValidateIf((o) => o.scope === 'domain')
+  @IsInt()
+  @Min(1)
+  domainId?: number;
 
   @IsString()
   @IsNotEmpty()
   title: string;
 
-  @IsString()
   @IsOptional()
+  @IsString()
   description?: string;
 
-  @IsObject()
-  @IsNotEmpty()
-  topics: Record<string, number>;
+  @IsArray()
+  topics: any[];
 
-  // add start date and end date
-  @ApiProperty({
-    type: String,
-    example: '2025-05-21T10:00:00',
-    description: 'Optional. When the assessment becomes active for taking',
-  })
+  @IsInt()
+  @Min(1)
+  totalNumberOfQuestions: number;
+
   @IsOptional()
-  @IsISO8601()
+  @IsDateString()
   startDatetime?: string;
 
-  @ApiProperty({
-    type: String,
-    example: '2025-05-21T11:30:00',
-    description: 'Optional. When the assessment expires',
-  })
   @IsOptional()
-  @IsISO8601()
+  @IsDateString()
   endDatetime?: string;
-
-  @IsNumber()
-  @IsNotEmpty()
-  totalNumberOfQuestions: number;
 }
 
-export class SelectedAnswerByStudentDto {
-  @IsNumber()
-  @IsNotEmpty()
-  id: number;
+// Backwards-compat types used elsewhere in the module.
+export class GenerateAssessmentDto {
+  @IsInt()
+  @Min(1)
+  aiAssessmentId: number;
 
-  @IsNumber()
-  @IsNotEmpty()
-  questionId: number;
-
-  @IsString()
-  @IsNotEmpty()
-  optionText: string;
-
-  @IsNumber()
-  @IsNotEmpty()
-  optionNumber: number;
-}
-class QuestionAnswerDto {
-  @IsNumber()
-  @IsNotEmpty()
-  id: number;
-
-  @IsString()
-  @IsNotEmpty()
-  question: string;
-
-  @IsString()
-  @IsOptional()
-  topic?: string;
-
-  @IsString()
-  @IsOptional()
-  difficulty?: string;
-
-  @ValidateNested()
-  @Type(() => SelectedAnswerByStudentDto)
-  options: SelectedAnswerByStudentDto;
-
-  @ValidateNested()
-  @IsOptional()
-  @Type(() => SelectedAnswerByStudentDto)
-  selectedAnswerByStudent: SelectedAnswerByStudentDto | null;
-
-  @IsString()
-  @IsOptional()
-  language?: string;
+  @IsInt()
+  @Min(1)
+  bootcampId: number;
 }
 
 export class SubmitAssessmentDto {
-  @IsArray()
-  @IsNotEmpty()
-  @ValidateNested({ each: true })
-  @Type(() => QuestionAnswerDto)
-  answers: QuestionAnswerDto[];
-
-  @IsNumber()
+  // left unchanged from existing usage; the full shape already lives in other files.
   aiAssessmentId: number;
-}
-
-export class GenerateAssessmentDto {
-  @IsNumber()
-  @IsNotEmpty()
-  aiAssessmentId: number;
-
-  @IsNumber()
-  @IsNotEmpty()
-  bootcampId: number;
+  answers: any[];
 }

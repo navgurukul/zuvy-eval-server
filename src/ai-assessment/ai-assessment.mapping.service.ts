@@ -6,7 +6,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { NodePgDatabase } from 'drizzle-orm/node-postgres';
-import { and, eq, inArray } from 'drizzle-orm';
+import { and, eq, inArray, sql } from 'drizzle-orm';
 import { DRIZZLE_DB } from 'src/db/constant';
 import { aiAssessment } from 'src/db/schema/ai-assessment';
 import { aiAssessmentQuestionSets } from './ai-assessment.question-set.schema';
@@ -69,15 +69,41 @@ export class AiAssessmentMappingService {
           .where(eq(aiAssessmentQuestionSets.aiAssessmentId, aiAssessmentId));
       }
 
-      // 3) Determine if this is baseline: first assessment for this bootcamp
-      const [firstForBootcamp] = await tx
-        .select({ id: aiAssessment.id })
-        .from(aiAssessment)
-        .where(eq(aiAssessment.bootcampId, assessment.bootcampId))
-        .orderBy(aiAssessment.id)
-        .limit(1);
-
-      const isBaseline = firstForBootcamp?.id === assessment.id;
+      // 3) Determine if this is baseline:
+      // - scope='bootcamp'  => first assessment for this bootcamp (scope='bootcamp')
+      // - scope='domain'    => first assessment for this (bootcampId, domainId, scope='domain')
+      let isBaseline = false;
+      if (assessment.scope === 'bootcamp') {
+        const [firstBootcampScoped] = await tx
+          .select({ id: aiAssessment.id })
+          .from(aiAssessment)
+          .where(
+            and(
+              eq(aiAssessment.bootcampId, assessment.bootcampId),
+              eq(aiAssessment.scope, 'bootcamp' as any),
+            ),
+          )
+          .orderBy(aiAssessment.id)
+          .limit(1);
+        isBaseline = firstBootcampScoped?.id === assessment.id;
+      } else if (assessment.scope === 'domain') {
+        const domainId = assessment.domainId ?? null;
+        const [firstDomainScoped] = await tx
+          .select({ id: aiAssessment.id })
+          .from(aiAssessment)
+          .where(
+            and(
+              eq(aiAssessment.bootcampId, assessment.bootcampId),
+              eq(aiAssessment.scope, 'domain' as any),
+              domainId === null
+                ? sql`1=0`
+                : eq(aiAssessment.domainId, domainId),
+            ),
+          )
+          .orderBy(aiAssessment.id)
+          .limit(1);
+        isBaseline = firstDomainScoped?.id === assessment.id;
+      }
 
       // 4) Build semantic query from assessment metadata
       const topicsText =

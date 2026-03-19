@@ -70,6 +70,6 @@ export class CreateQuestionDto {
 
   @IsOptional()
   @IsString()
-  @IsIn(['A', 'B', 'C', 'D', 'E'])
-  levelId?: 'A' | 'B' | 'C' | 'D' | 'E' | null;
+  @IsIn(['A+', 'A', 'B', 'C', 'D', 'E'])
+  levelId?: 'A+' | 'A' | 'B' | 'C' | 'D' | 'E' | null;
 }

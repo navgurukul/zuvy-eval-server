@@ -222,8 +222,7 @@ export class AiAssessmentMappingService {
           setIndex: 6,
           label: 'SET_A_PLUS',
           levelCode: 'A+',
-          // A+ students use the hardest band, which we store as 'A' on questions.
-          questionLevelId: 'A',
+          questionLevelId: 'A+',
         },
       ];
 

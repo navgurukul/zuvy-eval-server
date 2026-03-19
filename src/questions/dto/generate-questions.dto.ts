@@ -105,8 +105,8 @@ export class GenerateQuestionsDto {
 
   @IsOptional()
   @IsString()
-  @IsIn(['A', 'B', 'C', 'D', 'E'])
-  levelId?: 'A' | 'B' | 'C' | 'D' | 'E' | null;
+  @IsIn(['A+', 'A', 'B', 'C', 'D', 'E'])
+  levelId?: 'A+' | 'A' | 'B' | 'C' | 'D' | 'E' | null;
 }
 
 export interface GenerateTopicBatchJobPayload {
@@ -115,7 +115,7 @@ export interface GenerateTopicBatchJobPayload {
   /** User id (e.g. JWT sub) who triggered generation; propagated to outbox for per-user WS notification. */
   requestedByUserId?: string;
   orgId?: string;
-  levelId?: 'A' | 'B' | 'C' | 'D' | 'E' | null;
+  levelId?: 'A+' | 'A' | 'B' | 'C' | 'D' | 'E' | null;
   domainName?: string;
   topicName?: string;
   topicDescription?: string;

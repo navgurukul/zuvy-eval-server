@@ -186,10 +186,10 @@ export function generateMcqPromptFromSpec(
   sections.push(`4. There MUST be exactly ${count} objects in "evaluations".`);
   sections.push('5. Each question object MUST have:');
   sections.push(
-    '   { "question": "<string>", "topic": "<string>", "difficulty": "<easy|medium|hard>", "options": { "1": "<A>", "2": "<B>", "3": "<C>", "4": "<D>" }, "correctOption": <1|2|3|4>, "language": "<string>", "level": "<A|B|C|D|E>" }',
+    '   { "question": "<string>", "topic": "<string>", "difficulty": "<easy|medium|hard>", "options": { "1": "<A>", "2": "<B>", "3": "<C>", "4": "<D>" }, "correctOption": <1|2|3|4>, "language": "<string>", "level": "<A+|A|B|C|D|E>" }',
   );
   sections.push(
-    '   where "level" is the conceptual depth band for this question: "A" = most advanced, "B" = advanced, "C" = intermediate, "D" = basic, "E" = very basic / foundational.',
+    '   where "level" is the conceptual depth band for this question: "A+" = highest / exceptional depth, "A" = most advanced, "B" = advanced, "C" = intermediate, "D" = basic, "E" = very basic / foundational.',
   );
   sections.push('6. Options: exactly 4 entries. correctOption must be 1, 2, 3, or 4.');
   sections.push('7. Do NOT include explanations, ids, or extra keys.');

@@ -93,10 +93,14 @@ export class QuestionsProcessor extends WorkerHost {
           typeof rawLevel === 'string'
             ? rawLevel.trim().toUpperCase()
             : null;
-        const levelBand: 'A' | 'B' | 'C' | 'D' | 'E' | null =
-          normalizedLevel && ['A', 'B', 'C', 'D', 'E'].includes(normalizedLevel)
-            ? (normalizedLevel as 'A' | 'B' | 'C' | 'D' | 'E')
-            : (levelId ?? null) ?? null;
+        const allowedBands = ['A+', 'A', 'B', 'C', 'D', 'E'] as const;
+        const levelBand: (typeof allowedBands)[number] | null =
+          normalizedLevel && (allowedBands as readonly string[]).includes(normalizedLevel)
+            ? (normalizedLevel as (typeof allowedBands)[number])
+            : levelId &&
+                (allowedBands as readonly string[]).includes(String(levelId).toUpperCase())
+              ? (String(levelId).toUpperCase() as (typeof allowedBands)[number])
+              : null;
 
         return {
           orgId: orgId ?? undefined,

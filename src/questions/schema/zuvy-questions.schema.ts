@@ -26,8 +26,8 @@ export const zuvyQuestions = main.table('zuvy_questions', {
   difficultyDistribution: jsonb('difficulty_distribution'),
   questionCounts: jsonb('question_counts'),
 
-  // Per-question conceptual level band: A (most advanced) ... E (most basic).
-  levelId: varchar('level_id', { length: 1 }),
+  // Per-question conceptual level band: A+ / A (most advanced) ... E (most basic).
+  levelId: varchar('level_id', { length: 8 }),
 
   createdAt: timestamp('created_at', {
     withTimezone: true,

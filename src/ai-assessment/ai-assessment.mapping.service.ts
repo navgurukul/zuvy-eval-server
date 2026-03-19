@@ -6,7 +6,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { NodePgDatabase } from 'drizzle-orm/node-postgres';
-import { and, eq, inArray, sql } from 'drizzle-orm';
+import { and, asc, eq, inArray, sql } from 'drizzle-orm';
 import { DRIZZLE_DB } from 'src/db/constant';
 import { aiAssessment } from 'src/db/schema/ai-assessment';
 import { aiAssessmentQuestionSets } from './ai-assessment.question-set.schema';
@@ -68,6 +68,15 @@ export class AiAssessmentMappingService {
           .delete(aiAssessmentQuestionSets)
           .where(eq(aiAssessmentQuestionSets.aiAssessmentId, aiAssessmentId));
       }
+
+      // Regeneration invalidates publish until instructor confirms again.
+      await tx
+        .update(aiAssessment)
+        .set({
+          publishedAt: null,
+          updatedAt: new Date().toISOString(),
+        } as any)
+        .where(eq(aiAssessment.id, aiAssessmentId));
 
       // 3) Determine if this is baseline:
       // - scope='bootcamp'  => first assessment for this bootcamp (scope='bootcamp')
@@ -168,6 +177,7 @@ export class AiAssessmentMappingService {
             setIndex: 1,
             label: 'BASELINE',
             levelCode: null,
+            status: 'generated',
           } as any)
           .returning({ id: aiAssessmentQuestionSets.id });
 
@@ -235,6 +245,7 @@ export class AiAssessmentMappingService {
             setIndex: s.setIndex,
             label: s.label,
             levelCode: s.levelCode,
+            status: 'generated',
           })) as any,
         )
         .returning({
@@ -327,6 +338,132 @@ export class AiAssessmentMappingService {
         uniquePerSet,
       };
     });
+  }
+
+  /**
+   * Instructor preview: all question sets for an assessment with full MCQ payload (includes correctOption).
+   */
+  async getInstructorQuestionSetsPreview(aiAssessmentId: number) {
+    const [assessmentRow] = await this.db
+      .select({
+        id: aiAssessment.id,
+        bootcampId: aiAssessment.bootcampId,
+        title: aiAssessment.title,
+        description: aiAssessment.description,
+        topics: aiAssessment.topics,
+        totalNumberOfQuestions: aiAssessment.totalNumberOfQuestions,
+        scope: aiAssessment.scope,
+        publishedAt: aiAssessment.publishedAt,
+      })
+      .from(aiAssessment)
+      .where(eq(aiAssessment.id, aiAssessmentId))
+      .limit(1);
+
+    if (!assessmentRow) {
+      throw new NotFoundException(
+        `AI assessment with id=${aiAssessmentId} not found`,
+      );
+    }
+
+    const rows = await this.db
+      .select({
+        setId: aiAssessmentQuestionSets.id,
+        setIndex: aiAssessmentQuestionSets.setIndex,
+        label: aiAssessmentQuestionSets.label,
+        levelCode: aiAssessmentQuestionSets.levelCode,
+        setStatus: aiAssessmentQuestionSets.status,
+        position: aiAssessmentQuestions.position,
+        isCommon: aiAssessmentQuestions.isCommon,
+        questionId: zuvyQuestions.id,
+        question: zuvyQuestions.question,
+        difficulty: zuvyQuestions.difficulty,
+        language: zuvyQuestions.language,
+        options: zuvyQuestions.options,
+        correctOption: zuvyQuestions.correctOption,
+        levelId: zuvyQuestions.levelId,
+        domainName: zuvyQuestions.domainName,
+        topicName: zuvyQuestions.topicName,
+        topicDescription: zuvyQuestions.topicDescription,
+      })
+      .from(aiAssessmentQuestionSets)
+      .innerJoin(
+        aiAssessmentQuestions,
+        eq(aiAssessmentQuestions.questionSetId, aiAssessmentQuestionSets.id),
+      )
+      .innerJoin(zuvyQuestions, eq(zuvyQuestions.id, aiAssessmentQuestions.questionId))
+      .where(eq(aiAssessmentQuestionSets.aiAssessmentId, aiAssessmentId))
+      .orderBy(
+        asc(aiAssessmentQuestionSets.setIndex),
+        asc(aiAssessmentQuestions.position),
+      );
+
+    type SetAgg = {
+      id: number;
+      setIndex: number;
+      label: string;
+      levelCode: string | null;
+      status: string;
+      questions: Array<{
+        position: number;
+        isCommon: boolean;
+        questionId: number;
+        question: string;
+        difficulty: string | null;
+        language: string | null;
+        options: unknown;
+        correctOption: number;
+        levelId: string | null;
+        domainName: string;
+        topicName: string;
+        topicDescription: string;
+      }>;
+    };
+
+    const bySetId = new Map<number, SetAgg>();
+    for (const r of rows) {
+      let agg = bySetId.get(r.setId);
+      if (!agg) {
+        agg = {
+          id: r.setId,
+          setIndex: r.setIndex,
+          label: r.label,
+          levelCode: r.levelCode,
+          status: r.setStatus,
+          questions: [],
+        };
+        bySetId.set(r.setId, agg);
+      }
+      agg.questions.push({
+        position: r.position,
+        isCommon: r.isCommon,
+        questionId: r.questionId,
+        question: r.question,
+        difficulty: r.difficulty,
+        language: r.language,
+        options: r.options,
+        correctOption: r.correctOption,
+        levelId: r.levelId,
+        domainName: r.domainName,
+        topicName: r.topicName,
+        topicDescription: r.topicDescription,
+      });
+    }
+
+    const sets = [...bySetId.values()].sort((a, b) => a.setIndex - b.setIndex);
+
+    return {
+      aiAssessmentId: assessmentRow.id,
+      bootcampId: assessmentRow.bootcampId,
+      title: assessmentRow.title,
+      description: assessmentRow.description,
+      topics: assessmentRow.topics,
+      totalNumberOfQuestions: assessmentRow.totalNumberOfQuestions,
+      scope: assessmentRow.scope,
+      publishedAt: assessmentRow.publishedAt ?? null,
+      isPublished: !!assessmentRow.publishedAt,
+      setCount: sets.length,
+      sets,
+    };
   }
 }
 

@@ -14,6 +14,7 @@ import { questionStudentAnswerRelation } from 'src/db/schema/questionStdAns';
 import { studentLevelRelation } from 'src/db/schema/studentLevel';
 import { levels } from 'src/db/schema/level';
 import { aiAssessment } from 'src/db/schema/ai-assessment';
+import { aiAssessmentQuestionSets } from './ai-assessment.question-set.schema';
 import { correctAnswers } from 'src/db/schema/correctAns';
 import { studentAssessment } from 'src/db/schema/stdAssessment';
 import { SubmitAssessmentDto } from './dto/create-ai-assessment.dto';
@@ -302,5 +303,54 @@ export class AiAssessmentCrudService {
         'Failed to create AI assessment: ' + error.message,
         );
     }
+  }
+
+  /**
+   * Mark mapped question sets as final for runtime. Requires at least one set (map-questions completed).
+   */
+  async publishMappedQuestionSets(aiAssessmentId: number) {
+    const [assessment] = await this.db
+      .select({ id: aiAssessment.id })
+      .from(aiAssessment)
+      .where(eq(aiAssessment.id, aiAssessmentId))
+      .limit(1);
+
+    if (!assessment) {
+      throw new NotFoundException(
+        `AI assessment with id=${aiAssessmentId} not found`,
+      );
+    }
+
+    const sets = await this.db
+      .select({ id: aiAssessmentQuestionSets.id })
+      .from(aiAssessmentQuestionSets)
+      .where(eq(aiAssessmentQuestionSets.aiAssessmentId, aiAssessmentId));
+
+    if (sets.length === 0) {
+      throw new BadRequestException(
+        'No mapped question sets found. Run map-questions first.',
+      );
+    }
+
+    const now = new Date().toISOString();
+
+    await this.db.transaction(async (tx) => {
+      await tx
+        .update(aiAssessment)
+        .set({ publishedAt: now, updatedAt: now } as any)
+        .where(eq(aiAssessment.id, aiAssessmentId));
+
+      await tx
+        .update(aiAssessmentQuestionSets)
+        .set({ status: 'approved', updatedAt: now } as any)
+        .where(eq(aiAssessmentQuestionSets.aiAssessmentId, aiAssessmentId));
+    });
+
+    return {
+      aiAssessmentId,
+      publishedAt: now,
+      isPublished: true,
+      questionSetCount: sets.length,
+    };
   }
 }

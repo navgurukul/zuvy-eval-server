@@ -193,6 +193,43 @@ export class AiAssessmentController {
     }
   }
 
+  @Get(':id/question-sets')
+  @ApiOperation({
+    summary:
+      'Instructor preview: all generated question sets with full MCQs (includes correct answers). Use after map-questions.',
+  })
+  @ApiParam({ name: 'id', type: Number })
+  @ApiResponse({ status: 200, description: 'Question sets and questions for the assessment.' })
+  @ApiResponse({ status: 404, description: 'Assessment not found.' })
+  async getQuestionSetsForInstructor(@Param('id') id: string) {
+    const aiAssessmentId = Number(id);
+    if (Number.isNaN(aiAssessmentId)) {
+      throw new HttpException('Invalid assessment id', HttpStatus.BAD_REQUEST);
+    }
+    return this.aiAssessmentMappingService.getInstructorQuestionSetsPreview(
+      aiAssessmentId,
+    );
+  }
+
+  @Post(':id/publish')
+  @ApiOperation({
+    summary:
+      'Publish mapped question sets as final (students may only start attempts after this, once you wire checks). Cleared automatically if map-questions is run again.',
+  })
+  @ApiParam({ name: 'id', type: Number })
+  @ApiResponse({ status: 200, description: 'Assessment published.' })
+  @ApiResponse({ status: 400, description: 'No question sets to publish.' })
+  @ApiResponse({ status: 404, description: 'Assessment not found.' })
+  async publishAssessment(@Param('id') id: string) {
+    const aiAssessmentId = Number(id);
+    if (Number.isNaN(aiAssessmentId)) {
+      throw new HttpException('Invalid assessment id', HttpStatus.BAD_REQUEST);
+    }
+    return this.aiAssessmentCrudService.publishMappedQuestionSets(
+      aiAssessmentId,
+    );
+  }
+
   @Post(':id/map-questions')
   @ApiOperation({
     summary:

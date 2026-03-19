@@ -37,8 +37,6 @@ export const aiAssessment = main.table("ai_assessment", {
     .notNull()
     .references(() => zuvyBootcamps.id),
   scope: assessmentScopeEnum('scope').notNull().default('bootcamp'),
-  // Optional domain reference when scope='domain'. This service doesn't own domains,
-  // so it's left as a bare integer here.
   domainId: integer('domain_id'),
   title: varchar("title", { length: 255 }).notNull(),
   description: text("description"),
@@ -48,6 +46,7 @@ export const aiAssessment = main.table("ai_assessment", {
   totalQuestionsWithBuffer: integer("total_questions_with_buffer").notNull(),
   startDatetime: timestamp('start_datetime', { withTimezone: true, mode: 'string' }),
   endDatetime: timestamp('end_datetime', { withTimezone: true, mode: 'string' }),
+  publishedAt: timestamp('published_at', { withTimezone: true, mode: 'string' }),
   createdAt: timestamp("created_at", { withTimezone: true, mode: "string" }).defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true, mode: "string" }).defaultNow(),
 });

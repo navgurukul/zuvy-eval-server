@@ -31,8 +31,10 @@ import {
 import { JwtAuthGuard } from 'src/auth/guards/jwt-auth.guard';
 import {
   createAiAssessment,
+  mapQuestionsExample,
   submitAssessmentExample,
 } from './swagger_examples/examples';
+import { MapQuestionsForAssessmentDto } from './dto/map-questions.dto';
 import { AiAssessmentCrudService } from './ai-assessment.crud.service';
 import { AiAssessmentMappingService } from './ai-assessment.mapping.service';
 
@@ -230,10 +232,41 @@ export class AiAssessmentController {
     );
   }
 
+  @Post('map-questions')
+  @ApiOperation({
+    summary:
+      'Map (generate) question sets for an assessment via JSON body. ' +
+      'Prerequisites: assessment must exist with totalNumberOfQuestions > 0, ' +
+      'topics array populated, and questions indexed in the QUESTIONS vector collection.',
+  })
+  @ApiBody({
+    type: MapQuestionsForAssessmentDto,
+    examples: {
+      basicExample: {
+        summary: 'Map questions for assessment 800',
+        value: mapQuestionsExample,
+      },
+    },
+  })
+  @ApiResponse({
+    status: 200,
+    description:
+      'Question sets generated and mapped successfully for the given assessment.',
+  })
+  @ApiResponse({ status: 400, description: 'Invalid or missing aiAssessmentId, or totalNumberOfQuestions <= 0.' })
+  @ApiResponse({ status: 404, description: 'Assessment not found.' })
+  async mapQuestionsFromBody(
+    @Body() dto: MapQuestionsForAssessmentDto,
+  ) {
+    return this.aiAssessmentMappingService.mapQuestionsForAssessment(
+      dto.aiAssessmentId,
+    );
+  }
+
   @Post(':id/map-questions')
   @ApiOperation({
     summary:
-      'Map (generate) question sets for an assessment into ai_assessment_question_sets + ai_assessment_questions',
+      'Map (generate) question sets for an assessment (path-param variant, kept for backward compatibility)',
   })
   @ApiParam({ name: 'id', type: Number })
   @ApiResponse({

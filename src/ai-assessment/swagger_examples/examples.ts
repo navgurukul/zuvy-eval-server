@@ -49,15 +49,18 @@ export const submitAssessmentExample = {
   ],
 };
 
+export const mapQuestionsExample = {
+  aiAssessmentId: 800,
+};
+
 export const createAiAssessment = {
   bootcampId: 803,
   title: 'Assessment Title',
   description: 'This is a description',
-  difficulty: 'Medium',
-  topics: {
-    Trees: 4,
-    'Linked Lists': 4,
-  },
-  audience: 'Any previous cohorts (based on bootcampId)',
+  topics: [
+    { name: 'Trees' },
+    { name: 'Linked Lists' },
+  ],
+  audience: 'Beginners with basic programming knowledge',
   totalNumberOfQuestions: 8,
 };

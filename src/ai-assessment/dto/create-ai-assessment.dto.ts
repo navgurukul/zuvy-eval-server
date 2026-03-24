@@ -37,6 +37,9 @@ export class CreateAiAssessmentDto {
   @IsArray()
   topics: any[];
 
+  @IsOptional()
+  audience?: any;
+
   @IsInt()
   @Min(1)
   totalNumberOfQuestions: number;

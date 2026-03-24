@@ -227,82 +227,133 @@ export class AiAssessmentCrudService {
     );
   }
 
-  async create(userId, createAiAssessmentDto: CreateAiAssessmentDto) {
-    try {
-        const { inserted, enrolledStudentsCount } = await this.db.transaction(
-        async (tx) => {
-            const scope = createAiAssessmentDto.scope ?? 'bootcamp';
-            const payload: any = {
-              bootcampId: createAiAssessmentDto.bootcampId,
-              scope,
-              domainId: scope === 'domain' ? createAiAssessmentDto.domainId ?? null : null,
-              title: createAiAssessmentDto.title,
-              description: createAiAssessmentDto.description ?? null,
-              topics: createAiAssessmentDto.topics,
-              // audience: createAiAssessmentDto.audience ?? null,
-              totalNumberOfQuestions:
-                  createAiAssessmentDto.totalNumberOfQuestions,
-              totalQuestionsWithBuffer: Math.floor(
-                  createAiAssessmentDto.totalNumberOfQuestions * 2.25,
-              ),
-              startDatetime: createAiAssessmentDto.startDatetime,
-              endDatetime: createAiAssessmentDto.endDatetime,
-            };
+  // async create(userId, createAiAssessmentDto: CreateAiAssessmentDto) {
+  //   try {
+  //       const { inserted, enrolledStudentsCount } = await this.db.transaction(
+  //       async (tx) => {
+  //           const scope = createAiAssessmentDto.scope ?? 'bootcamp';
+  //           const payload: any = {
+  //             bootcampId: createAiAssessmentDto.bootcampId,
+  //             scope,
+  //             domainId: scope === 'domain' ? createAiAssessmentDto.domainId ?? null : null,
+  //             title: createAiAssessmentDto.title,
+  //             description: createAiAssessmentDto.description ?? null,
+  //             topics: createAiAssessmentDto.topics,
+  //             audience: createAiAssessmentDto.audience ?? null,
+  //             totalNumberOfQuestions:
+  //                 createAiAssessmentDto.totalNumberOfQuestions,
+  //             totalQuestionsWithBuffer: Math.floor(
+  //                 createAiAssessmentDto.totalNumberOfQuestions * 2.25,
+  //             ),
+  //             startDatetime: createAiAssessmentDto.startDatetime,
+  //             endDatetime: createAiAssessmentDto.endDatetime,
+  //           };
 
-            const [aiRow] = await tx
-            .insert(aiAssessment)
-            .values(payload)
-            .returning();
+  //           const [aiRow] = await tx
+  //           .insert(aiAssessment)
+  //           .values(payload)
+  //           .returning();
 
-            const enrolledStudents = await tx
-            .select({
-                studentId: zuvyBatchEnrollments.userId,
-            })
-            .from(zuvyBatchEnrollments)
-            .innerJoin(users, eq(zuvyBatchEnrollments.userId, users.id))
-            .where(
-                eq(
-                zuvyBatchEnrollments.bootcampId,
-                createAiAssessmentDto.bootcampId,
-                ),
-            );
+  //           const enrolledStudents = await tx
+  //           .select({
+  //               studentId: zuvyBatchEnrollments.userId,
+  //           })
+  //           .from(zuvyBatchEnrollments)
+  //           .innerJoin(users, eq(zuvyBatchEnrollments.userId, users.id))
+  //           .where(
+  //               eq(
+  //               zuvyBatchEnrollments.bootcampId,
+  //               createAiAssessmentDto.bootcampId,
+  //               ),
+  //           );
 
-            if (enrolledStudents.length > 0) {
-            const studentAssessments = enrolledStudents.map((student) => ({
-                studentId: Number(student.studentId),
-                aiAssessmentId: aiRow.id,
-                status: 0,
-            }));
-            await tx.insert(studentAssessment).values(studentAssessments);
-            }
+  //           if (enrolledStudents.length > 0) {
+  //           const studentAssessments = enrolledStudents.map((student) => ({
+  //               studentId: Number(student.studentId),
+  //               aiAssessmentId: aiRow.id,
+  //               status: 0,
+  //           }));
+  //           await tx.insert(studentAssessment).values(studentAssessments);
+  //           }
 
-            return {
-            inserted: aiRow,
-            enrolledStudentsCount: enrolledStudents.length,
-            };
-        },
-        );
+  //           return {
+  //           inserted: aiRow,
+  //           enrolledStudentsCount: enrolledStudents.length,
+  //           };
+  //       },
+  //       );
 
-        await this.generate(userId, {
-        aiAssessmentId: inserted.id,
-        bootcampId: inserted.bootcampId,
-        });
+  //       await this.generate(userId, {
+  //       aiAssessmentId: inserted.id,
+  //       bootcampId: inserted.bootcampId,
+  //       });
 
-        return {
-        message:
-            'AI Assessment created successfully and assigned to all enrolled students',
-        data: inserted,
-        totalAssignedStudents: enrolledStudentsCount,
-        };
-    } catch (error) {
-        this.logger.error(
-        'Error creating AI assessment:',
-        error instanceof Error ? error.message : String(error),
-        );
-        throw new BadRequestException(
-        'Failed to create AI assessment: ' + error.message,
-        );
-    }
+  //       return {
+  //       message:
+  //           'AI Assessment created successfully and assigned to all enrolled students',
+  //       data: inserted,
+  //       totalAssignedStudents: enrolledStudentsCount,
+  //       };
+  //   } catch (error) {
+  //       this.logger.error(
+  //       'Error creating AI assessment:',
+  //       error instanceof Error ? error.message : String(error),
+  //       );
+  //       throw new BadRequestException(
+  //       'Failed to create AI assessment: ' + error.message,
+  //       );
+  //   }
+  // }
+
+  async create(userId: number, dto: CreateAiAssessmentDto) {
+    const scope = dto.scope ?? 'bootcamp';
+
+    const { inserted, enrolledStudentsCount } = await this.db.transaction(
+      async (tx) => {
+        const [aiRow] = await tx
+          .insert(aiAssessment)
+          .values({
+            bootcampId: dto.bootcampId,
+            scope,
+            domainId: scope === 'domain' ? (dto.domainId ?? null) : null,
+            title: dto.title,
+            description: dto.description ?? null,
+            topics: dto.topics,
+            audience: dto.audience ?? null,
+            totalNumberOfQuestions: dto.totalNumberOfQuestions,
+            totalQuestionsWithBuffer: Math.floor(
+              dto.totalNumberOfQuestions * 2.25,
+            ),
+            startDatetime: dto.startDatetime,
+            endDatetime: dto.endDatetime,
+          } as any)
+          .returning();
+
+        const enrolledStudents = await tx
+          .select({ studentId: zuvyBatchEnrollments.userId })
+          .from(zuvyBatchEnrollments)
+          .innerJoin(users, eq(zuvyBatchEnrollments.userId, users.id))
+          .where(eq(zuvyBatchEnrollments.bootcampId, dto.bootcampId));
+
+        if (enrolledStudents.length > 0) {
+          await tx.insert(studentAssessment).values(
+            enrolledStudents.map((s) => ({
+              studentId: Number(s.studentId),
+              aiAssessmentId: aiRow.id,
+              status: 0,
+            })),
+          );
+        }
+
+        return { inserted: aiRow, enrolledStudentsCount: enrolledStudents.length };
+      },
+    );
+
+    return {
+      message: 'AI Assessment created and assigned to all enrolled students',
+      data: inserted,
+      totalAssignedStudents: enrolledStudentsCount,
+    };
   }
 
   /**

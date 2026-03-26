@@ -59,6 +59,8 @@ export const createAiAssessmentBootcamp = {
   description: 'Covers core JS concepts including closures, async, and DOM',
   audience: 'Beginners with basic programming knowledge',
   totalNumberOfQuestions: 10,
+  startDatetime: '2026-04-10T09:00:00+05:30',
+  endDatetime: '2026-04-10T11:00:00+05:30',
 };
 
 export const createAiAssessmentDomain = {
@@ -69,4 +71,6 @@ export const createAiAssessmentDomain = {
   description: 'Covers trees, linked lists, and graph traversal algorithms',
   audience: 'Students who completed the DSA module',
   totalNumberOfQuestions: 15,
+  startDatetime: '2026-04-15T14:00:00+05:30',
+  endDatetime: '2026-04-15T16:30:00+05:30',
 };

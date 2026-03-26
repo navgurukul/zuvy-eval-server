@@ -235,31 +235,6 @@ export class AiAssessmentMappingHelpers {
     return samples.map((s) => s.domainName).filter(Boolean);
   }
 
-  // ─── Domain scope post-filter ──────────────────────────────────────
-
-  async filterByDomain(
-    tx: Tx,
-    domainId: number,
-    vectorIds: number[],
-  ): Promise<number[]> {
-    const domainTopics = await tx
-      .select({ name: topic.name })
-      .from(topic)
-      .where(eq(topic.moduleId, domainId));
-    const topicNames = new Set(domainTopics.map((t) => t.name));
-
-    const candidates = await tx
-      .select({ id: zuvyQuestions.id, topicName: zuvyQuestions.topicName })
-      .from(zuvyQuestions)
-      .where(inArray(zuvyQuestions.id, vectorIds));
-
-    const vectorOrder = new Map(vectorIds.map((id, i) => [id, i]));
-    return candidates
-      .filter((q) => topicNames.has(q.topicName))
-      .sort((a, b) => (vectorOrder.get(a.id) ?? 0) - (vectorOrder.get(b.id) ?? 0))
-      .map((q) => q.id);
-  }
-
   // ─── Baseline set creation ─────────────────────────────────────────
 
   async createBaselineSet(

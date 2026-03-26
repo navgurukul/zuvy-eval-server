@@ -42,11 +42,7 @@ export class AiAssessmentMappingService {
         scopedIds = await this.helpers.searchPerDomain(tx, assessment.bootcampId, queryVector, neededTotal);
       } else {
         const qdrantFilter = await this.helpers.resolveDomainFilter(tx, assessment);
-        const vectorIds = await this.helpers.searchQuestions(queryVector, neededTotal, qdrantFilter);
-
-        scopedIds = assessment.scope === 'domain' && assessment.domainId
-          ? await this.helpers.filterByDomain(tx, assessment.domainId, vectorIds)
-          : vectorIds;
+        scopedIds = await this.helpers.searchQuestions(queryVector, neededTotal, qdrantFilter);
       }
 
       if (scopedIds.length === 0) {

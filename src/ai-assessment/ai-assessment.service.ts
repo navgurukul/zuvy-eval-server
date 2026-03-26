@@ -246,7 +246,6 @@ export class AiAssessmentService {
         bootcampId: aiAssessment.bootcampId,
         title: aiAssessment.title,
         description: aiAssessment.description,
-        topics: aiAssessment.topics,
         audience: aiAssessment.audience,
         totalNumberOfQuestions: aiAssessment.totalNumberOfQuestions,
         totalQuestionsWithBuffer: aiAssessment.totalQuestionsWithBuffer,

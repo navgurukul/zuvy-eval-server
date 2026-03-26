@@ -75,26 +75,26 @@ export class AiAssessmentController {
     return this.aiAssessmentCrudService.create(userId, createAiAssessmentDto);
   }
 
-  @Post('/generate/all')
-  @ApiOperation({ summary: 'Generate mcqs' })
-  @ApiBody({
-    type: Object,
-    examples: {
-      basicExample: {
-        summary: 'Generate Mcqs.',
-        value: { aiAssessmentId: 800 },
-      },
-    },
-  })
-  @ApiResponse({
-    status: 200,
-    description: 'Assessment successfully submitted and evaluated.',
-  })
-  @ApiResponse({ status: 400, description: 'Invalid assessment data.' })
-  generate(@Body() generateAssessmentDto: GenerateAssessmentDto, @Req() req) {
-    const userId = req.user?.sub;
-    return this.aiAssessmentCrudService.generate(userId, generateAssessmentDto);
-  }
+  // @Post('/generate/all')
+  // @ApiOperation({ summary: 'Generate mcqs' })
+  // @ApiBody({
+  //   type: Object,
+  //   examples: {
+  //     basicExample: {
+  //       summary: 'Generate Mcqs.',
+  //       value: { aiAssessmentId: 800 },
+  //     },
+  //   },
+  // })
+  // @ApiResponse({
+  //   status: 200,
+  //   description: 'Assessment successfully submitted and evaluated.',
+  // })
+  // @ApiResponse({ status: 400, description: 'Invalid assessment data.' })
+  // generate(@Body() generateAssessmentDto: GenerateAssessmentDto, @Req() req) {
+  //   const userId = req.user?.sub;
+  //   return this.aiAssessmentCrudService.generate(userId, generateAssessmentDto);
+  // }
 
   @Post('/submit')
   @ApiOperation({ summary: 'Submit an AI assessment for evaluation' })

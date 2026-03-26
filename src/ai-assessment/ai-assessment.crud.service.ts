@@ -45,28 +45,28 @@ export class AiAssessmentCrudService {
     private readonly aiAssessmentService: AiAssessmentService
   ){}
 
-   async getTopicsOfAssessments(assessmentIds: number[]) {
-    try {
-      if (!assessmentIds || assessmentIds.length === 0) {
-        return [];
-      }
+  //  async getTopicsOfAssessments(assessmentIds: number[]) {
+  //   try {
+  //     if (!assessmentIds || assessmentIds.length === 0) {
+  //       return [];
+  //     }
 
-      const topicsData = await this.db
-        .select({
-          id: aiAssessment.id,
-          topics: aiAssessment.topics,
-        })
-        .from(aiAssessment)
-        .where(inArray(aiAssessment.id, assessmentIds));
+  //     const topicsData = await this.db
+  //       .select({
+  //         id: aiAssessment.id,
+  //         topics: aiAssessment.topics,
+  //       })
+  //       .from(aiAssessment)
+  //       .where(inArray(aiAssessment.id, assessmentIds));
 
-      return topicsData;
-    } catch (error) {
-      this.logger.error('Error fetching topics of assessments:', error);
-      throw new InternalServerErrorException(
-        'Failed to fetch topics of assessments',
-      );
-    }
-  }
+  //     return topicsData;
+  //   } catch (error) {
+  //     this.logger.error('Error fetching topics of assessments:', error);
+  //     throw new InternalServerErrorException(
+  //       'Failed to fetch topics of assessments',
+  //     );
+  //   }
+  // }
 
   async findAll(userId: number, bootcampId?: number) {
     const query = this.db.select().from(aiAssessment);
@@ -199,33 +199,33 @@ export class AiAssessmentCrudService {
     // return systemPrompts;
   }
 
-  async generate(userId, generateAssessmentDto: GenerateAssessmentDto) {
-    const { aiAssessmentId, bootcampId } = generateAssessmentDto;
-    const distinctLevels =
-      await this.getDistinctLevelsByAssessment(aiAssessmentId, bootcampId);
-    const allAssessmentOfABootcamp = await this.findAll(
-      userId,
-      generateAssessmentDto.bootcampId,
-    );
-    const assessmentIds = allAssessmentOfABootcamp.map((a) => a.id);
-    const allQuestionsOfAllAssessmentsInABootcamp =
-      await this.questionByLlmService.getAllLlmQuestionsOfAllAssessments(
-        assessmentIds,
-      );
-    const topicOfCurrentAssessment = await this.getTopicsOfAssessments([
-      generateAssessmentDto.aiAssessmentId,
-    ]);
-    const totalQuestions = await this.getTotalQuestions([
-      generateAssessmentDto.aiAssessmentId,
-    ]);
-    await this.generateMcqPromptsForEachLevel(
-      distinctLevels,
-      aiAssessmentId,
-      allQuestionsOfAllAssessmentsInABootcamp,
-      topicOfCurrentAssessment[0].topics,
-      totalQuestions,
-    );
-  }
+  // async generate(userId, generateAssessmentDto: GenerateAssessmentDto) {
+  //   const { aiAssessmentId, bootcampId } = generateAssessmentDto;
+  //   const distinctLevels =
+  //     await this.getDistinctLevelsByAssessment(aiAssessmentId, bootcampId);
+  //   const allAssessmentOfABootcamp = await this.findAll(
+  //     userId,
+  //     generateAssessmentDto.bootcampId,
+  //   );
+  //   const assessmentIds = allAssessmentOfABootcamp.map((a) => a.id);
+  //   const allQuestionsOfAllAssessmentsInABootcamp =
+  //     await this.questionByLlmService.getAllLlmQuestionsOfAllAssessments(
+  //       assessmentIds,
+  //     );
+  //   const topicOfCurrentAssessment = await this.getTopicsOfAssessments([
+  //     generateAssessmentDto.aiAssessmentId,
+  //   ]);
+  //   const totalQuestions = await this.getTotalQuestions([
+  //     generateAssessmentDto.aiAssessmentId,
+  //   ]);
+  //   await this.generateMcqPromptsForEachLevel(
+  //     distinctLevels,
+  //     aiAssessmentId,
+  //     allQuestionsOfAllAssessmentsInABootcamp,
+  //     topicOfCurrentAssessment[0].topics,
+  //     totalQuestions,
+  //   );
+  // }
 
   // async create(userId, createAiAssessmentDto: CreateAiAssessmentDto) {
   //   try {

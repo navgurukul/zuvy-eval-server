@@ -318,7 +318,6 @@ export class AiAssessmentCrudService {
             domainId: scope === 'domain' ? (dto.domainId ?? null) : null,
             title: dto.title,
             description: dto.description ?? null,
-            topics: dto.topics,
             audience: dto.audience ?? null,
             totalNumberOfQuestions: dto.totalNumberOfQuestions,
             totalQuestionsWithBuffer: Math.floor(

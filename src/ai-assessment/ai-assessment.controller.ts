@@ -30,7 +30,8 @@ import {
 } from '@nestjs/swagger';
 import { JwtAuthGuard } from 'src/auth/guards/jwt-auth.guard';
 import {
-  createAiAssessment,
+  createAiAssessmentBootcamp,
+  createAiAssessmentDomain,
   mapQuestionsExample,
   submitAssessmentExample,
 } from './swagger_examples/examples';
@@ -54,9 +55,13 @@ export class AiAssessmentController {
   @ApiBody({
     type: CreateAiAssessmentDto,
     examples: {
-      basicExample: {
-        summary: 'Payload for creating ai assessment.',
-        value: createAiAssessment,
+      bootcampScope: {
+        summary: 'Bootcamp-level assessment (scope defaults to "bootcamp")',
+        value: createAiAssessmentBootcamp,
+      },
+      domainScope: {
+        summary: 'Domain-level assessment (scope: "domain", domainId required)',
+        value: createAiAssessmentDomain,
       },
     },
   })

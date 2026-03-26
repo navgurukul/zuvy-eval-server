@@ -53,14 +53,20 @@ export const mapQuestionsExample = {
   aiAssessmentId: 800,
 };
 
-export const createAiAssessment = {
+export const createAiAssessmentBootcamp = {
   bootcampId: 803,
-  title: 'Assessment Title',
-  description: 'This is a description',
-  topics: [
-    { name: 'Trees' },
-    { name: 'Linked Lists' },
-  ],
+  title: 'JavaScript Fundamentals Assessment',
+  description: 'Covers core JS concepts including closures, async, and DOM',
   audience: 'Beginners with basic programming knowledge',
-  totalNumberOfQuestions: 8,
+  totalNumberOfQuestions: 10,
+};
+
+export const createAiAssessmentDomain = {
+  bootcampId: 803,
+  scope: 'domain',
+  domainId: 5,
+  title: 'Data Structures Assessment',
+  description: 'Covers trees, linked lists, and graph traversal algorithms',
+  audience: 'Students who completed the DSA module',
+  totalNumberOfQuestions: 15,
 };

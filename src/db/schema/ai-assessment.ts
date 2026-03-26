@@ -40,7 +40,7 @@ export const aiAssessment = main.table("ai_assessment", {
   domainId: integer('domain_id'),
   title: varchar("title", { length: 255 }).notNull(),
   description: text("description"),
-  topics: jsonb("topics").notNull(),
+  topics: jsonb("topics").default(null),
   audience: jsonb("audience").default(null),
   totalNumberOfQuestions: integer("total_number_of_questions").notNull(),
   totalQuestionsWithBuffer: integer("total_questions_with_buffer").notNull(),

@@ -9,6 +9,7 @@ import { StorageModule } from 'src/storage/storage.module';
 import { VectorModule } from 'src/vector/vector.module';
 import { EmbeddingsService } from 'src/llm/embeddings.service';
 import { AiAssessmentMappingService } from './ai-assessment.mapping.service';
+import { AiAssessmentMappingHelpers } from './ai-assessment.mapping.helpers';
 import { AiAssessmentCrudService } from './ai-assessment.crud.service';
 
 @Module({
@@ -25,6 +26,7 @@ import { AiAssessmentCrudService } from './ai-assessment.crud.service';
     AiAssessmentService,
     AiAssessmentCrudService,
     EmbeddingsService,
+    AiAssessmentMappingHelpers,
     AiAssessmentMappingService,
   ],
 })

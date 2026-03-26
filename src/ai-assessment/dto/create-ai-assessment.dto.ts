@@ -1,5 +1,4 @@
 import {
-  IsArray,
   IsDateString,
   IsEnum,
   IsInt,
@@ -33,9 +32,6 @@ export class CreateAiAssessmentDto {
   @IsOptional()
   @IsString()
   description?: string;
-
-  @IsArray()
-  topics: any[];
 
   @IsOptional()
   audience?: any;

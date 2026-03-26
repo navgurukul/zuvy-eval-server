@@ -1,4 +1,18 @@
 services:
+  redis:
+    container_name: zuvy-eval-redis
+    image: redis:7-alpine
+    restart: unless-stopped
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
   api:
     container_name: zuvy-eval-server
     build:
@@ -9,10 +23,15 @@ services:
         NODE_VERSION: ${NODE_VERSION:-20.18.0}
     image: ${DOCKER_IMAGE:-zuvy-eval-server}:${DOCKER_TAG:-latest}
     restart: unless-stopped
+    depends_on:
+      redis:
+        condition: service_healthy
     env_file:
       - .env.docker
     environment:
       NODE_ENV: ${NODE_ENV:-production}
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
     ports:
       - "${PORT:-5000}:5000"
     expose:
@@ -22,3 +41,6 @@ services:
       options:
         max-size: "10m"
         max-file: "5"
+
+volumes:
+  redis-data:

@@ -45,4 +45,12 @@ export class PineconeVectorStore implements IVectorStore {
       'PineconeVectorStore not implemented. Use Qdrant by setting VECTOR_DB=qdrant or implement PineconeVectorStore.',
     );
   }
+
+  async createPayloadIndex(
+    _collectionName: string,
+    _fieldName: string,
+    _fieldSchema: 'keyword' | 'integer' | 'float' | 'bool',
+  ): Promise<void> {
+    this.logger.warn('PineconeVectorStore: createPayloadIndex not applicable');
+  }
 }

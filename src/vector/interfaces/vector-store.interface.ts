@@ -50,4 +50,13 @@ export interface IVectorStore {
    * Delete points by id.
    */
   delete(collectionName: string, ids: string[]): Promise<void>;
+
+  /**
+   * Create a payload index on a field for filtered searches.
+   */
+  createPayloadIndex(
+    collectionName: string,
+    fieldName: string,
+    fieldSchema: 'keyword' | 'integer' | 'float' | 'bool',
+  ): Promise<void>;
 }

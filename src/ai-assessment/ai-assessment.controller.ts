@@ -38,6 +38,7 @@ import {
 import { MapQuestionsForAssessmentDto } from './dto/map-questions.dto';
 import { AiAssessmentCrudService } from './ai-assessment.crud.service';
 import { AiAssessmentMappingService } from './ai-assessment.mapping.service';
+import { VectorService } from 'src/vector/vector.service';
 
 @ApiTags('AI Assessment')
 @ApiBearerAuth('JWT-auth')
@@ -48,6 +49,7 @@ export class AiAssessmentController {
     private readonly aiAssessmentService: AiAssessmentService,
     private readonly aiAssessmentCrudService: AiAssessmentCrudService,
     private readonly aiAssessmentMappingService: AiAssessmentMappingService,
+    private readonly vectorService: VectorService,
   ) {}
 
   @Post()
@@ -287,5 +289,16 @@ export class AiAssessmentController {
     return this.aiAssessmentMappingService.mapQuestionsForAssessment(
       aiAssessmentId,
     );
+  }
+
+  @Post('admin/create-qdrant-indexes')
+  @ApiOperation({ summary: 'One-time: create payload indexes on QUESTIONS collection in Qdrant' })
+  @ApiResponse({ status: 200, description: 'Indexes created successfully' })
+  async createQdrantIndexes() {
+    const collection = 'QUESTIONS';
+    await this.vectorService.createPayloadIndex(collection, 'domainName', 'keyword');
+    await this.vectorService.createPayloadIndex(collection, 'topicName', 'keyword');
+    await this.vectorService.createPayloadIndex(collection, 'difficulty', 'keyword');
+    return { message: 'Qdrant payload indexes created on QUESTIONS collection', fields: ['domainName', 'topicName', 'difficulty'] };
   }
 }

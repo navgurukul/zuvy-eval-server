@@ -47,7 +47,15 @@ export class AiAssessmentMappingService {
 
       if (scopedIds.length === 0) {
         this.logger.warn(`No vector results for assessment id=${aiAssessmentId}`);
-        return { aiAssessmentId, isBaseline, setsCreated: 0, totalQuestionsPerSet: totalQuestions };
+        return {
+          statusCode: 200,
+          aiAssessmentId,
+          isBaseline,
+          setsCreated: 0,
+          totalQuestionsPerSet: totalQuestions,
+          message:
+            'No questions found for this assessment scope. Please generate questions first before mapping.',
+        };
       }
 
       if (isBaseline) {

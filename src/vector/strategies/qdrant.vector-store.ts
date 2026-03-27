@@ -92,4 +92,19 @@ export class QdrantVectorStore implements IVectorStore {
     });
     this.logger.debug(`Deleted ${ids.length} points from ${collectionName}`);
   }
+
+  async createPayloadIndex(
+    collectionName: string,
+    fieldName: string,
+    fieldSchema: 'keyword' | 'integer' | 'float' | 'bool',
+  ): Promise<void> {
+    await this.client.createPayloadIndex(collectionName, {
+      field_name: fieldName,
+      field_schema: fieldSchema,
+      wait: true,
+    });
+    this.logger.log(
+      `Created ${fieldSchema} index on "${fieldName}" in ${collectionName}`,
+    );
+  }
 }

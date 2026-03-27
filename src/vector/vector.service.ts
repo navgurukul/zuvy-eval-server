@@ -31,4 +31,12 @@ export class VectorService {
   async delete(collectionName: string, ids: string[]): Promise<void> {
     return this.store.delete(collectionName, ids);
   }
+
+  async createPayloadIndex(
+    collectionName: string,
+    fieldName: string,
+    fieldSchema: 'keyword' | 'integer' | 'float' | 'bool' = 'keyword',
+  ): Promise<void> {
+    return this.store.createPayloadIndex(collectionName, fieldName, fieldSchema);
+  }
 }

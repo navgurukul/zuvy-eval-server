@@ -68,18 +68,45 @@ export class AiAssessmentCrudService {
   //   }
   // }
 
-  async findAll(userId: number, bootcampId?: number) {
+  async findAll(
+    userId: number,
+    bootcampId?: number | string,
+    chapterId?: number | string,
+  ) {
     const query = this.db.select().from(aiAssessment);
 
-    const results = bootcampId
-      ? await query.where(eq(aiAssessment.bootcampId, bootcampId))
-      : await query;
+    const parsedBootcampId =
+      bootcampId === undefined || bootcampId === null || bootcampId === ''
+        ? undefined
+        : Number(bootcampId);
+    const parsedChapterId =
+      chapterId === undefined || chapterId === null || chapterId === ''
+        ? undefined
+        : Number(chapterId);
 
-    if (bootcampId && results.length === 0) {
-      return [];
+    const hasBootcampFilter =
+      typeof parsedBootcampId === 'number' && !Number.isNaN(parsedBootcampId);
+    const hasChapterFilter =
+      typeof parsedChapterId === 'number' && !Number.isNaN(parsedChapterId);
+
+    if (hasBootcampFilter && hasChapterFilter) {
+      return query.where(
+        and(
+          eq(aiAssessment.bootcampId, parsedBootcampId),
+          eq(aiAssessment.chapterId, parsedChapterId),
+        ),
+      );
     }
 
-    return results;
+    if (hasBootcampFilter) {
+      return query.where(eq(aiAssessment.bootcampId, parsedBootcampId));
+    }
+
+    if (hasChapterFilter) {
+      return query.where(eq(aiAssessment.chapterId, parsedChapterId));
+    }
+
+    return query;
   }
 
   async getDistinctLevelsByAssessment(aiAssessmentId: number, bootcampId: number) {

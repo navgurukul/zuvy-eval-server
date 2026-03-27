@@ -314,6 +314,7 @@ export class AiAssessmentCrudService {
           .insert(aiAssessment)
           .values({
             bootcampId: dto.bootcampId,
+            chapterId: dto.chapterId,
             scope,
             domainId: scope === 'domain' ? (dto.domainId ?? null) : null,
             title: dto.title,

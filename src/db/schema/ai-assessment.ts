@@ -26,7 +26,7 @@ import {
   numeric,
   primaryKey,
 } from 'drizzle-orm/pg-core';
-import { main, zuvyBootcamps } from "./parentSchema";
+import { main, zuvyBootcamps, zuvyModuleChapter } from "./parentSchema";
 import { zuvyCourseModules } from "src/topic/db/topic.schema";
 
 export const assessmentScopeEnum = pgEnum('assessment_scope', ['bootcamp', 'domain']);
@@ -36,6 +36,9 @@ export const aiAssessment = main.table("ai_assessment", {
   bootcampId: integer("bootcamp_id")
     .notNull()
     .references(() => zuvyBootcamps.id),
+  chapterId: integer('chapter_id')
+    .notNull()
+    .references(() => zuvyModuleChapter.id),
   scope: assessmentScopeEnum('scope').notNull().default('bootcamp'),
   domainId: integer('domain_id').references(() => zuvyCourseModules.id),
   title: varchar("title", { length: 255 }).notNull(),

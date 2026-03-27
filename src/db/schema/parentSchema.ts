@@ -1,4 +1,4 @@
-import { bigserial, integer, pgSchema, serial, unique, varchar } from "drizzle-orm/pg-core";
+import { bigserial, integer, pgSchema, serial, text, unique, varchar } from "drizzle-orm/pg-core";
 
 export const main = pgSchema("main");
 
@@ -67,3 +67,9 @@ export const zuvyBatchEnrollments = main.table('zuvy_batch_enrollments', {
   export const sansaarUserRoles = main.table( 'sansaar_user_roles', {
     id: serial('id').primaryKey().notNull(),
   });
+
+  export const zuvyModuleChapter = main.table('zuvy_module_chapter', {
+    id: serial('id').primaryKey().notNull(),
+    title: varchar('title'),
+    description: text('description'),
+  })

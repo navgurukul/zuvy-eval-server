@@ -16,6 +16,10 @@ export class CreateAiAssessmentDto {
   @Min(1)
   bootcampId: number;
 
+  @IsInt()
+  @Min(1)
+  chapterId: number;
+
   @IsEnum(['bootcamp', 'domain'])
   @IsOptional()
   scope?: AssessmentScope = 'bootcamp';

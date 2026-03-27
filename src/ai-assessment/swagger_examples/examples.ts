@@ -55,6 +55,7 @@ export const mapQuestionsExample = {
 
 export const createAiAssessmentBootcamp = {
   bootcampId: 803,
+  chapterId: 12,
   title: 'JavaScript Fundamentals Assessment',
   description: 'Covers core JS concepts including closures, async, and DOM',
   audience: 'Beginners with basic programming knowledge',
@@ -65,6 +66,7 @@ export const createAiAssessmentBootcamp = {
 
 export const createAiAssessmentDomain = {
   bootcampId: 803,
+  chapterId: 6647,
   scope: 'domain',
   domainId: 5,
   title: 'Data Structures Assessment',

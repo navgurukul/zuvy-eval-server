@@ -149,8 +149,9 @@ export function generateMcqPromptFromSpec(
 
   const sections: string[] = [];
 
-  sections.push(`You are an expert assessment author. Generate EXACTLY ${count} multiple-choice questions (MCQs) in strict JSON format.`);
+  sections.push(`You are an expert assessment author and subject-matter expert. Generate EXACTLY ${count} high-quality multiple-choice questions (MCQs) in strict JSON format.`);
   sections.push('');
+  
   sections.push('CONTEXT:');
   if (domainName) sections.push(`- Domain: ${domainName}`);
   if (topicName) sections.push(`- Topic name: ${topicName}`);
@@ -165,19 +166,44 @@ export function generateMcqPromptFromSpec(
     sections.push(`- Difficulty distribution (percent): ${JSON.stringify(difficultyDistribution)}`);
   }
   if (questionCounts && Object.keys(questionCounts).length > 0) {
-    sections.push(`- Question counts by difficulty for this batch: ${JSON.stringify(questionCounts)}. Respect these counts where possible.`);
+    sections.push(`- Question counts by difficulty for this batch: ${JSON.stringify(questionCounts)}. STRICTLY follow these counts.`);
   }
-
+  
   if (existingQuestionTexts && existingQuestionTexts.length > 0) {
     sections.push('');
-    sections.push(
-      'EXISTING QUESTIONS IN THIS DOMAIN (do NOT repeat or closely rephrase these; generate new, distinct questions):',
-    );
+    sections.push('EXISTING QUESTIONS IN THIS DOMAIN (do NOT repeat or closely rephrase these):');
     existingQuestionTexts.forEach((q, i) => {
       sections.push(`${i + 1}. ${q.trim()}`);
     });
   }
-
+  
+  sections.push('');
+  sections.push('CRITICAL GENERATION RULES (MANDATORY):');
+  sections.push('For EACH question, you MUST follow this internal process BEFORE finalizing:');
+  sections.push('1. Construct a clear, unambiguous question.');
+  sections.push('2. Solve the question step-by-step internally.');
+  sections.push('3. Identify the SINGLE correct answer.');
+  sections.push('4. Generate exactly 4 options:');
+  sections.push('   - One MUST be the correct answer');
+  sections.push('   - Three MUST be plausible but clearly incorrect');
+  sections.push('5. Validate strictly:');
+  sections.push('   - The correct answer EXACTLY matches one of the options');
+  sections.push('   - Only ONE option is correct (no ambiguity)');
+  sections.push('   - No duplicate or semantically identical options');
+  sections.push('   - No partially correct options');
+  sections.push('   - The question has a definite, verifiable answer (not opinion-based)');
+  sections.push('6. If ANY validation fails, DISCARD and regenerate the question.');
+  sections.push('7. Do NOT guess. Only include questions where correctness is certain.');
+  
+  sections.push('');
+  sections.push('SELF-VALIDATION PASS (MANDATORY):');
+  sections.push('After generating each question, re-evaluate it independently:');
+  sections.push('1. Re-solve the question again.');
+  sections.push('2. Confirm that the selected correctOption is still correct.');
+  sections.push('3. Ensure none of the other options could be correct.');
+  sections.push('4. If inconsistency is found, regenerate the question.');
+  sections.push('5. Only include questions that pass this second validation.');
+  
   sections.push('');
   sections.push('OUTPUT REQUIREMENTS:');
   sections.push('1. Output ONLY a single valid JSON object (no markdown, no code fence, no surrounding text).');
@@ -186,16 +212,21 @@ export function generateMcqPromptFromSpec(
   sections.push(`4. There MUST be exactly ${count} objects in "evaluations".`);
   sections.push('5. Each question object MUST have:');
   sections.push(
-    '   { "question": "<string>", "topic": "<string>", "difficulty": "<easy|medium|hard>", "options": { "1": "<A>", "2": "<B>", "3": "<C>", "4": "<D>" }, "correctOption": <1|2|3|4>, "language": "<string>", "level": "<A+|A|B|C|D|E>" }',
+    '   { "question": "<string>", "topic": "<string>", "difficulty": "<easy|medium|hard>", "options": { "1": "<A>", "2": "<B>", "3": "<C>", "4": "<D>" }, "correctOption": <1|2|3|4>, "language": "<string>", "level": "<A+|A|B|C|D|E>" }'
   );
   sections.push(
-    '   where "level" is the conceptual depth band for this question: "A+" = highest / exceptional depth, "A" = most advanced, "B" = advanced, "C" = intermediate, "D" = basic, "E" = very basic / foundational.',
+    '   where "level" is the conceptual depth band for this question: "A+" = highest / exceptional depth, "A" = most advanced, "B" = advanced, "C" = intermediate, "D" = basic, "E" = very basic / foundational.'
   );
   sections.push('6. Options: exactly 4 entries. correctOption must be 1, 2, 3, or 4.');
-  sections.push('7. Do NOT include explanations, ids, or extra keys.');
-  sections.push('8. If you cannot produce valid JSON, return: { "error": "INVALID_JSON", "reason": "<short reason>" }');
+  sections.push('7. "correctOption" MUST correspond to the correct answer.');
+  sections.push('8. Options MUST be mutually exclusive and non-overlapping.');
+  sections.push('9. Do NOT include explanations, ids, or extra keys.');
+  sections.push('10. Avoid "All of the above" or "None of the above".');
+  sections.push('11. Avoid vague or ambiguous wording.');
+  sections.push('12. If you cannot ensure correctness, return: { "error": "GENERATION_FAILED", "reason": "<short reason>" }');
+  
   sections.push('');
   sections.push('Produce the JSON only.');
-
+  
   return sections.join('\n');
 }

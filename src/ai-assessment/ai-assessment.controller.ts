@@ -128,18 +128,26 @@ export class AiAssessmentController {
 
   @Get()
   @ApiOperation({
-    summary: 'Get all AI assessments (optionally filter by bootcampId and chapterId)',
+    summary:
+      'Get all AI assessments (optionally filter by bootcampId, chapterId, and domainId)',
   })
   @ApiQuery({ name: 'bootcampId', required: false, type: Number })
   @ApiQuery({ name: 'chapterId', required: false, type: Number })
+  @ApiQuery({ name: 'domainId', required: false, type: Number })
   @ApiResponse({ status: 200, description: 'List of AI assessments.' })
   findAll(
     @Req() req,
     @Query('bootcampId') bootcampId?: number,
     @Query('chapterId') chapterId?: number,
+    @Query('domainId') domainId?: number,
   ) {
     const userId = req.user?.sub;
-    return this.aiAssessmentCrudService.findAll(userId, bootcampId, chapterId);
+    return this.aiAssessmentCrudService.findAll(
+      userId,
+      bootcampId,
+      chapterId,
+      domainId,
+    );
   }
 
   @Get('/by/studentId')

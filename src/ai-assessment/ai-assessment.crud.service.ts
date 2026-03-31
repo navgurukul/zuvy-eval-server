@@ -72,6 +72,7 @@ export class AiAssessmentCrudService {
     userId: number,
     bootcampId?: number | string,
     chapterId?: number | string,
+    domainId?: number | string,
   ) {
     const query = this.db.select().from(aiAssessment);
 
@@ -83,27 +84,26 @@ export class AiAssessmentCrudService {
       chapterId === undefined || chapterId === null || chapterId === ''
         ? undefined
         : Number(chapterId);
+    const parsedDomainId =
+      domainId === undefined || domainId === null || domainId === ''
+        ? undefined
+        : Number(domainId);
 
     const hasBootcampFilter =
       typeof parsedBootcampId === 'number' && !Number.isNaN(parsedBootcampId);
     const hasChapterFilter =
       typeof parsedChapterId === 'number' && !Number.isNaN(parsedChapterId);
+    const hasDomainFilter =
+      typeof parsedDomainId === 'number' && !Number.isNaN(parsedDomainId);
 
-    if (hasBootcampFilter && hasChapterFilter) {
-      return query.where(
-        and(
-          eq(aiAssessment.bootcampId, parsedBootcampId),
-          eq(aiAssessment.chapterId, parsedChapterId),
-        ),
-      );
-    }
+    const conditions = [
+      hasBootcampFilter ? eq(aiAssessment.bootcampId, parsedBootcampId) : undefined,
+      hasChapterFilter ? eq(aiAssessment.chapterId, parsedChapterId) : undefined,
+      hasDomainFilter ? eq(aiAssessment.domainId, parsedDomainId) : undefined,
+    ].filter(Boolean);
 
-    if (hasBootcampFilter) {
-      return query.where(eq(aiAssessment.bootcampId, parsedBootcampId));
-    }
-
-    if (hasChapterFilter) {
-      return query.where(eq(aiAssessment.chapterId, parsedChapterId));
+    if (conditions.length > 0) {
+      return query.where(and(...(conditions as any)));
     }
 
     return query;

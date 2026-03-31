@@ -25,7 +25,7 @@ import {
 } from './system_prompts/system_prompts';
 import { parseLlmEvaluation } from 'src/llm/llm_response_parsers/evaluationParser';
 import { QuestionEvaluationService } from 'src/questions-by-llm/question-evaluation.service';
-import { eq, and, inArray, sum } from 'drizzle-orm';
+import { eq, and, desc, inArray, sum } from 'drizzle-orm';
 import { parseLlmMcq } from 'src/llm/llm_response_parsers/mcqParser';
 import { QuestionsByLlmService } from 'src/questions-by-llm/questions-by-llm.service';
 import { DRIZZLE_DB } from 'src/db/constant';
@@ -395,6 +395,7 @@ export class AiAssessmentCrudService {
       .select({
         id: aiAssessment.id,
         status: aiAssessment.status,
+        bootcampId: aiAssessment.bootcampId,
       })
       .from(aiAssessment)
       .where(eq(aiAssessment.id, aiAssessmentId))
@@ -422,6 +423,82 @@ export class AiAssessmentCrudService {
     return sets;
   }
 
+  /**
+   * Resolve a student's current level grade for a given bootcamp.
+   * Stub -- queries latest student_level_relation entry. Replace with real logic later.
+   */
+  private async resolveStudentLevel(
+    studentId: number,
+    bootcampId: number,
+  ): Promise<string | null> {
+    const [row] = await this.db
+      .select({ grade: levels.grade })
+      .from(studentLevelRelation)
+      .innerJoin(levels, eq(levels.id, studentLevelRelation.levelId))
+      .where(
+        and(
+          eq(studentLevelRelation.studentId, studentId),
+          eq(studentLevelRelation.bootcampId, bootcampId),
+        ),
+      )
+      .orderBy(desc(studentLevelRelation.assignedAt))
+      .limit(1);
+    return row?.grade ?? null;
+  }
+
+  private async assignQuestionSetsToStudents(
+    aiAssessmentId: number,
+    bootcampId: number,
+  ) {
+    const sets = await this.db
+      .select({
+        id: aiAssessmentQuestionSets.id,
+        label: aiAssessmentQuestionSets.label,
+        levelCode: aiAssessmentQuestionSets.levelCode,
+      })
+      .from(aiAssessmentQuestionSets)
+      .where(eq(aiAssessmentQuestionSets.aiAssessmentId, aiAssessmentId));
+
+    if (sets.length === 0) return;
+
+    const isBaseline = sets.length === 1 && sets[0].label === 'BASELINE';
+
+    const students = await this.db
+      .select({
+        id: studentAssessment.id,
+        studentId: studentAssessment.studentId,
+      })
+      .from(studentAssessment)
+      .where(eq(studentAssessment.aiAssessmentId, aiAssessmentId));
+
+    if (students.length === 0) return;
+
+    if (isBaseline) {
+      const setId = sets[0].id;
+      await this.db
+        .update(studentAssessment)
+        .set({ questionSetId: setId, updatedAt: new Date().toISOString() } as any)
+        .where(eq(studentAssessment.aiAssessmentId, aiAssessmentId));
+      return;
+    }
+
+    const setByLevel = new Map(
+      sets.filter((s) => s.levelCode).map((s) => [s.levelCode!.toUpperCase(), s.id]),
+    );
+    const fallbackSetId = setByLevel.get('C') ?? sets[0].id;
+
+    for (const student of students) {
+      const grade = await this.resolveStudentLevel(student.studentId, bootcampId);
+      const normalizedGrade = grade?.toUpperCase() ?? null;
+      const assignedSetId = (normalizedGrade && setByLevel.get(normalizedGrade)) || fallbackSetId;
+
+      await this.db
+        .update(studentAssessment)
+        .set({ questionSetId: assignedSetId, updatedAt: new Date().toISOString() } as any)
+        .where(eq(studentAssessment.id, student.id));
+    }
+  }
+
   async draftAssessment(aiAssessmentId: number) {
     await this.loadAssessmentOrFail(aiAssessmentId);
     const now = new Date().toISOString();
@@ -445,7 +522,7 @@ export class AiAssessmentCrudService {
     startDatetime: string,
     endDatetime?: string,
   ) {
-    await this.loadAssessmentOrFail(aiAssessmentId);
+    const assessment = await this.loadAssessmentOrFail(aiAssessmentId);
     const sets = await this.requireQuestionSets(aiAssessmentId);
     const now = new Date().toISOString();
 
@@ -459,6 +536,8 @@ export class AiAssessmentCrudService {
       } as any)
       .where(eq(aiAssessment.id, aiAssessmentId));
 
+    await this.assignQuestionSetsToStudents(aiAssessmentId, assessment.bootcampId);
+
     return {
       aiAssessmentId,
       status: 'scheduled',
@@ -469,7 +548,7 @@ export class AiAssessmentCrudService {
   }
 
   async publishAssessment(aiAssessmentId: number, endDatetime?: string) {
-    await this.loadAssessmentOrFail(aiAssessmentId);
+    const assessment = await this.loadAssessmentOrFail(aiAssessmentId);
     const sets = await this.requireQuestionSets(aiAssessmentId);
     const now = new Date().toISOString();
 
@@ -490,6 +569,8 @@ export class AiAssessmentCrudService {
         .set({ status: 'approved', updatedAt: now } as any)
         .where(eq(aiAssessmentQuestionSets.aiAssessmentId, aiAssessmentId));
     });
+
+    await this.assignQuestionSetsToStudents(aiAssessmentId, assessment.bootcampId);
 
     return {
       aiAssessmentId,

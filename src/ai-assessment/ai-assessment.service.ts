@@ -270,15 +270,18 @@ export class AiAssessmentService {
 
   async findAllAssessmentOfAStudent(
     userId: number,
-    bootcampId: number,
-    chapterId?: number,
-    domainId?: number,
+    bootcampId: number | string,
+    chapterId?: number | string,
+    domainId?: number | string,
   ) {
     if (!userId) return [];
 
+    const parsedBootcampId = Number(bootcampId);
+    if (Number.isNaN(parsedBootcampId)) return [];
+
     const conditions: any[] = [
-      eq(studentAssessment.studentId, userId),
-      eq(aiAssessment.bootcampId, bootcampId),
+      eq(studentAssessment.studentId, Number(userId)),
+      eq(aiAssessment.bootcampId, parsedBootcampId),
       or(
         eq(aiAssessment.status, 'published'),
         and(
@@ -288,11 +291,20 @@ export class AiAssessmentService {
       ),
     ];
 
-    if (chapterId !== undefined && chapterId !== null) {
-      conditions.push(eq(aiAssessment.chapterId, Number(chapterId)));
+    const parsedChapterId =
+      chapterId !== undefined && chapterId !== null && chapterId !== ''
+        ? Number(chapterId)
+        : undefined;
+    const parsedDomainId =
+      domainId !== undefined && domainId !== null && domainId !== ''
+        ? Number(domainId)
+        : undefined;
+
+    if (typeof parsedChapterId === 'number' && !Number.isNaN(parsedChapterId)) {
+      conditions.push(eq(aiAssessment.chapterId, parsedChapterId));
     }
-    if (domainId !== undefined && domainId !== null) {
-      conditions.push(eq(aiAssessment.domainId, Number(domainId)));
+    if (typeof parsedDomainId === 'number' && !Number.isNaN(parsedDomainId)) {
+      conditions.push(eq(aiAssessment.domainId, parsedDomainId));
     }
 
     const assessments = await this.db

@@ -73,6 +73,7 @@ export class AiAssessmentCrudService {
     bootcampId?: number | string,
     chapterId?: number | string,
     domainId?: number | string,
+    status?: string,
   ) {
     const query = this.db.select().from(aiAssessment);
 
@@ -96,10 +97,16 @@ export class AiAssessmentCrudService {
     const hasDomainFilter =
       typeof parsedDomainId === 'number' && !Number.isNaN(parsedDomainId);
 
+    const validStatuses = ['draft', 'scheduled', 'published'] as const;
+    const normalizedStatus = status?.trim().toLowerCase();
+    const hasStatusFilter =
+      !!normalizedStatus && (validStatuses as readonly string[]).includes(normalizedStatus);
+
     const conditions = [
       hasBootcampFilter ? eq(aiAssessment.bootcampId, parsedBootcampId) : undefined,
       hasChapterFilter ? eq(aiAssessment.chapterId, parsedChapterId) : undefined,
       hasDomainFilter ? eq(aiAssessment.domainId, parsedDomainId) : undefined,
+      hasStatusFilter ? eq(aiAssessment.status, normalizedStatus as any) : undefined,
     ].filter(Boolean);
 
     if (conditions.length > 0) {
@@ -383,12 +390,12 @@ export class AiAssessmentCrudService {
     };
   }
 
-  /**
-   * Mark mapped question sets as final for runtime. Requires at least one set (map-questions completed).
-   */
-  async publishMappedQuestionSets(aiAssessmentId: number) {
+  private async loadAssessmentOrFail(aiAssessmentId: number) {
     const [assessment] = await this.db
-      .select({ id: aiAssessment.id })
+      .select({
+        id: aiAssessment.id,
+        status: aiAssessment.status,
+      })
       .from(aiAssessment)
       .where(eq(aiAssessment.id, aiAssessmentId))
       .limit(1);
@@ -398,7 +405,10 @@ export class AiAssessmentCrudService {
         `AI assessment with id=${aiAssessmentId} not found`,
       );
     }
+    return assessment;
+  }
 
+  private async requireQuestionSets(aiAssessmentId: number) {
     const sets = await this.db
       .select({ id: aiAssessmentQuestionSets.id })
       .from(aiAssessmentQuestionSets)
@@ -409,13 +419,47 @@ export class AiAssessmentCrudService {
         'No mapped question sets found. Run map-questions first.',
       );
     }
+    return sets;
+  }
 
+  async draftAssessment(aiAssessmentId: number) {
+    await this.loadAssessmentOrFail(aiAssessmentId);
+    const now = new Date().toISOString();
+
+    await this.db
+      .update(aiAssessment)
+      .set({ status: 'draft', publishedAt: null, updatedAt: now } as any)
+      .where(eq(aiAssessment.id, aiAssessmentId));
+
+    return { aiAssessmentId, status: 'draft' };
+  }
+
+  async scheduleAssessment(aiAssessmentId: number) {
+    await this.loadAssessmentOrFail(aiAssessmentId);
+    const sets = await this.requireQuestionSets(aiAssessmentId);
+    const now = new Date().toISOString();
+
+    await this.db
+      .update(aiAssessment)
+      .set({ status: 'scheduled', updatedAt: now } as any)
+      .where(eq(aiAssessment.id, aiAssessmentId));
+
+    return {
+      aiAssessmentId,
+      status: 'scheduled',
+      questionSetCount: sets.length,
+    };
+  }
+
+  async publishAssessment(aiAssessmentId: number) {
+    await this.loadAssessmentOrFail(aiAssessmentId);
+    const sets = await this.requireQuestionSets(aiAssessmentId);
     const now = new Date().toISOString();
 
     await this.db.transaction(async (tx) => {
       await tx
         .update(aiAssessment)
-        .set({ publishedAt: now, updatedAt: now } as any)
+        .set({ status: 'published', publishedAt: now, updatedAt: now } as any)
         .where(eq(aiAssessment.id, aiAssessmentId));
 
       await tx
@@ -426,8 +470,8 @@ export class AiAssessmentCrudService {
 
     return {
       aiAssessmentId,
+      status: 'published',
       publishedAt: now,
-      isPublished: true,
       questionSetCount: sets.length,
     };
   }

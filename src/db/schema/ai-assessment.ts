@@ -30,6 +30,7 @@ import { main, zuvyBootcamps, zuvyModuleChapter } from "./parentSchema";
 import { zuvyCourseModules } from "src/topic/db/topic.schema";
 
 export const assessmentScopeEnum = pgEnum('assessment_scope', ['bootcamp', 'domain']);
+export const assessmentStatusEnum = pgEnum('assessment_status', ['draft', 'scheduled', 'published']);
 
 export const aiAssessment = main.table("ai_assessment", {
   id: serial("id").primaryKey().notNull(),
@@ -40,6 +41,7 @@ export const aiAssessment = main.table("ai_assessment", {
     .notNull()
     .references(() => zuvyModuleChapter.id),
   scope: assessmentScopeEnum('scope').notNull().default('bootcamp'),
+  status: assessmentStatusEnum('status').notNull().default('draft'),
   domainId: integer('domain_id').references(() => zuvyCourseModules.id),
   title: varchar("title", { length: 255 }).notNull(),
   description: text("description"),

@@ -58,6 +58,13 @@ export class AiAssessmentMappingService {
         };
       }
 
+      // Reset to draft so the instructor must review before publishing
+      const now = new Date().toISOString();
+      await tx
+        .update(aiAssessment)
+        .set({ status: 'draft', publishedAt: null, updatedAt: now } as any)
+        .where(eq(aiAssessment.id, aiAssessmentId));
+
       if (isBaseline) {
         return this.helpers.createBaselineSet(tx, aiAssessmentId, scopedIds, totalQuestions);
       }
@@ -79,6 +86,7 @@ export class AiAssessmentMappingService {
         description: aiAssessment.description,
         totalNumberOfQuestions: aiAssessment.totalNumberOfQuestions,
         scope: aiAssessment.scope,
+        status: aiAssessment.status,
         publishedAt: aiAssessment.publishedAt,
       })
       .from(aiAssessment)
@@ -176,8 +184,9 @@ export class AiAssessmentMappingService {
       description: assessmentRow.description,
       totalNumberOfQuestions: assessmentRow.totalNumberOfQuestions,
       scope: assessmentRow.scope,
+      status: assessmentRow.status,
       publishedAt: assessmentRow.publishedAt ?? null,
-      isPublished: !!assessmentRow.publishedAt,
+      isPublished: assessmentRow.status === 'published',
       setCount: sets.length,
       sets,
     };

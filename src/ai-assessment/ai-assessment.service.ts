@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   Inject,
   Injectable,
   InternalServerErrorException,
@@ -24,7 +25,7 @@ import {
 } from './system_prompts/system_prompts';
 import { parseLlmEvaluation } from 'src/llm/llm_response_parsers/evaluationParser';
 import { QuestionEvaluationService } from 'src/questions-by-llm/question-evaluation.service';
-import { eq, and, inArray, sum } from 'drizzle-orm';
+import { eq, and, or, inArray, sum, sql } from 'drizzle-orm';
 import { parseLlmMcq } from 'src/llm/llm_response_parsers/mcqParser';
 import { QuestionsByLlmService } from 'src/questions-by-llm/questions-by-llm.service';
 import { DRIZZLE_DB } from 'src/db/constant';
@@ -83,6 +84,18 @@ export class AiAssessmentService {
     return { score, totalQuestions: answers.length };
   }
 
+  private isAssessmentAvailable(
+    status: string,
+    startDatetime: string | null,
+  ): boolean {
+    if (status === 'published') return true;
+    if (status === 'scheduled') {
+      if (!startDatetime) return false;
+      return new Date(startDatetime) <= new Date();
+    }
+    return false;
+  }
+
   async submitLlmAssessment(
     studentId: number,
     submitAssessmentDto: SubmitAssessmentDto,
@@ -91,7 +104,22 @@ export class AiAssessmentService {
       return await this.db.transaction(async (tx) => {
         const { answers, aiAssessmentId } = submitAssessmentDto;
 
-        // const totalQuestions = answers.length;
+        const [assessmentRow] = await this.db
+          .select({
+            status: aiAssessment.status,
+            startDatetime: aiAssessment.startDatetime,
+          })
+          .from(aiAssessment)
+          .where(eq(aiAssessment.id, aiAssessmentId))
+          .limit(1);
+
+        if (
+          !assessmentRow ||
+          !this.isAssessmentAvailable(assessmentRow.status, assessmentRow.startDatetime)
+        ) {
+          throw new BadRequestException('Assessment is not yet available');
+        }
+
         const { score, totalQuestions } =
           await this.countScore(submitAssessmentDto);
         const totalScore = (score / totalQuestions) * 100;
@@ -253,7 +281,8 @@ export class AiAssessmentService {
         endDatetime: aiAssessment.endDatetime,
         createdAt: aiAssessment.createdAt,
         updatedAt: aiAssessment.updatedAt,
-        status: studentAssessment.status,
+        assessmentStatus: aiAssessment.status,
+        studentStatus: studentAssessment.status,
       })
       .from(studentAssessment)
       .innerJoin(
@@ -264,17 +293,15 @@ export class AiAssessmentService {
         and(
           eq(studentAssessment.studentId, userId),
           eq(aiAssessment.bootcampId, bootcampId),
+          or(
+            eq(aiAssessment.status, 'published'),
+            and(
+              eq(aiAssessment.status, 'scheduled'),
+              sql`${aiAssessment.startDatetime} <= now()`,
+            ),
+          ),
         ),
       );
-
-    // if (assessments.length === 0) {
-    //   const defaultAssessment = await this.db
-    //     .select()
-    //     .from(aiAssessment)
-    //     .where(eq(aiAssessment.id, 1))
-    //     .limit(1);
-    //   return defaultAssessment;
-    // }
 
     return assessments;
   }

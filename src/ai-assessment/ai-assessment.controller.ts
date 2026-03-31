@@ -129,17 +129,19 @@ export class AiAssessmentController {
   @Get()
   @ApiOperation({
     summary:
-      'Get all AI assessments (optionally filter by bootcampId, chapterId, and domainId)',
+      'Get all AI assessments (optionally filter by bootcampId, chapterId, domainId, and status)',
   })
   @ApiQuery({ name: 'bootcampId', required: false, type: Number })
   @ApiQuery({ name: 'chapterId', required: false, type: Number })
   @ApiQuery({ name: 'domainId', required: false, type: Number })
+  @ApiQuery({ name: 'status', required: false, enum: ['draft', 'scheduled', 'published'] })
   @ApiResponse({ status: 200, description: 'List of AI assessments.' })
   findAll(
     @Req() req,
     @Query('bootcampId') bootcampId?: number,
     @Query('chapterId') chapterId?: number,
     @Query('domainId') domainId?: number,
+    @Query('status') status?: string,
   ) {
     const userId = req.user?.sub;
     return this.aiAssessmentCrudService.findAll(
@@ -147,6 +149,7 @@ export class AiAssessmentController {
       bootcampId,
       chapterId,
       domainId,
+      status,
     );
   }
 
@@ -233,10 +236,42 @@ export class AiAssessmentController {
     );
   }
 
+  @Post(':id/draft')
+  @ApiOperation({
+    summary: 'Revert assessment to draft status so the instructor can review/edit questions.',
+  })
+  @ApiParam({ name: 'id', type: Number })
+  @ApiResponse({ status: 200, description: 'Assessment reverted to draft.' })
+  @ApiResponse({ status: 404, description: 'Assessment not found.' })
+  async draftAssessment(@Param('id') id: string) {
+    const aiAssessmentId = Number(id);
+    if (Number.isNaN(aiAssessmentId)) {
+      throw new HttpException('Invalid assessment id', HttpStatus.BAD_REQUEST);
+    }
+    return this.aiAssessmentCrudService.draftAssessment(aiAssessmentId);
+  }
+
+  @Post(':id/schedule')
+  @ApiOperation({
+    summary:
+      'Schedule the assessment. Students will see it once startDatetime arrives. Requires mapped question sets.',
+  })
+  @ApiParam({ name: 'id', type: Number })
+  @ApiResponse({ status: 200, description: 'Assessment scheduled.' })
+  @ApiResponse({ status: 400, description: 'No question sets to schedule.' })
+  @ApiResponse({ status: 404, description: 'Assessment not found.' })
+  async scheduleAssessment(@Param('id') id: string) {
+    const aiAssessmentId = Number(id);
+    if (Number.isNaN(aiAssessmentId)) {
+      throw new HttpException('Invalid assessment id', HttpStatus.BAD_REQUEST);
+    }
+    return this.aiAssessmentCrudService.scheduleAssessment(aiAssessmentId);
+  }
+
   @Post(':id/publish')
   @ApiOperation({
     summary:
-      'Publish mapped question sets as final (students may only start attempts after this, once you wire checks). Cleared automatically if map-questions is run again.',
+      'Publish the assessment immediately. Students can attempt it right away. Requires mapped question sets.',
   })
   @ApiParam({ name: 'id', type: Number })
   @ApiResponse({ status: 200, description: 'Assessment published.' })
@@ -247,9 +282,7 @@ export class AiAssessmentController {
     if (Number.isNaN(aiAssessmentId)) {
       throw new HttpException('Invalid assessment id', HttpStatus.BAD_REQUEST);
     }
-    return this.aiAssessmentCrudService.publishMappedQuestionSets(
-      aiAssessmentId,
-    );
+    return this.aiAssessmentCrudService.publishAssessment(aiAssessmentId);
   }
 
   @Post('map-questions')

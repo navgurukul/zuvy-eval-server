@@ -53,6 +53,21 @@ export const mapQuestionsExample = {
   aiAssessmentId: 800,
 };
 
+export const scheduleAssessmentExample = {
+  startDatetime: '2026-04-10T09:00:00+05:30',
+  endDatetime: '2026-04-10T11:00:00+05:30',
+};
+
+export const scheduleAssessmentNoEndExample = {
+  startDatetime: '2026-04-10T09:00:00+05:30',
+};
+
+export const publishAssessmentExample = {
+  endDatetime: '2026-04-10T11:00:00+05:30',
+};
+
+export const publishAssessmentNoEndExample = {};
+
 export const createAiAssessmentBootcamp = {
   bootcampId: 803,
   chapterId: 12,

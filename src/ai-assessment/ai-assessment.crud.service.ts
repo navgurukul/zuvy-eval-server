@@ -428,30 +428,47 @@ export class AiAssessmentCrudService {
 
     await this.db
       .update(aiAssessment)
-      .set({ status: 'draft', publishedAt: null, updatedAt: now } as any)
+      .set({
+        status: 'draft',
+        publishedAt: null,
+        startDatetime: null,
+        endDatetime: null,
+        updatedAt: now,
+      } as any)
       .where(eq(aiAssessment.id, aiAssessmentId));
 
     return { aiAssessmentId, status: 'draft' };
   }
 
-  async scheduleAssessment(aiAssessmentId: number) {
+  async scheduleAssessment(
+    aiAssessmentId: number,
+    startDatetime: string,
+    endDatetime?: string,
+  ) {
     await this.loadAssessmentOrFail(aiAssessmentId);
     const sets = await this.requireQuestionSets(aiAssessmentId);
     const now = new Date().toISOString();
 
     await this.db
       .update(aiAssessment)
-      .set({ status: 'scheduled', updatedAt: now } as any)
+      .set({
+        status: 'scheduled',
+        startDatetime,
+        endDatetime: endDatetime ?? null,
+        updatedAt: now,
+      } as any)
       .where(eq(aiAssessment.id, aiAssessmentId));
 
     return {
       aiAssessmentId,
       status: 'scheduled',
+      startDatetime,
+      endDatetime: endDatetime ?? null,
       questionSetCount: sets.length,
     };
   }
 
-  async publishAssessment(aiAssessmentId: number) {
+  async publishAssessment(aiAssessmentId: number, endDatetime?: string) {
     await this.loadAssessmentOrFail(aiAssessmentId);
     const sets = await this.requireQuestionSets(aiAssessmentId);
     const now = new Date().toISOString();
@@ -459,7 +476,13 @@ export class AiAssessmentCrudService {
     await this.db.transaction(async (tx) => {
       await tx
         .update(aiAssessment)
-        .set({ status: 'published', publishedAt: now, updatedAt: now } as any)
+        .set({
+          status: 'published',
+          publishedAt: now,
+          startDatetime: now,
+          endDatetime: endDatetime ?? null,
+          updatedAt: now,
+        } as any)
         .where(eq(aiAssessment.id, aiAssessmentId));
 
       await tx
@@ -472,6 +495,8 @@ export class AiAssessmentCrudService {
       aiAssessmentId,
       status: 'published',
       publishedAt: now,
+      startDatetime: now,
+      endDatetime: endDatetime ?? null,
       questionSetCount: sets.length,
     };
   }

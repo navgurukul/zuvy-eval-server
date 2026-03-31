@@ -16,6 +16,8 @@ import { AiAssessmentService } from './ai-assessment.service';
 import {
   CreateAiAssessmentDto,
   GenerateAssessmentDto,
+  ScheduleAssessmentDto,
+  PublishAssessmentDto,
   SubmitAssessmentDto,
 } from './dto/create-ai-assessment.dto';
 import { UpdateAiAssessmentDto } from './dto/update-ai-assessment.dto';
@@ -34,6 +36,10 @@ import {
   createAiAssessmentDomain,
   mapQuestionsExample,
   submitAssessmentExample,
+  scheduleAssessmentExample,
+  scheduleAssessmentNoEndExample,
+  publishAssessmentExample,
+  publishAssessmentNoEndExample,
 } from './swagger_examples/examples';
 import { MapQuestionsForAssessmentDto } from './dto/map-questions.dto';
 import { AiAssessmentCrudService } from './ai-assessment.crud.service';
@@ -238,7 +244,8 @@ export class AiAssessmentController {
 
   @Post(':id/draft')
   @ApiOperation({
-    summary: 'Revert assessment to draft status so the instructor can review/edit questions.',
+    summary:
+      'Revert assessment to draft. Clears publishedAt, startDatetime, and endDatetime.',
   })
   @ApiParam({ name: 'id', type: Number })
   @ApiResponse({ status: 200, description: 'Assessment reverted to draft.' })
@@ -254,35 +261,77 @@ export class AiAssessmentController {
   @Post(':id/schedule')
   @ApiOperation({
     summary:
-      'Schedule the assessment. Students will see it once startDatetime arrives. Requires mapped question sets.',
+      'Schedule the assessment for a future start. Accepts startDatetime (required) and endDatetime (optional). ' +
+      'Students see the assessment once startDatetime arrives. Requires mapped question sets.',
   })
   @ApiParam({ name: 'id', type: Number })
+  @ApiBody({
+    type: ScheduleAssessmentDto,
+    examples: {
+      withEnd: {
+        summary: 'Schedule with start and end',
+        value: scheduleAssessmentExample,
+      },
+      noEnd: {
+        summary: 'Schedule with start only (no end date)',
+        value: scheduleAssessmentNoEndExample,
+      },
+    },
+  })
   @ApiResponse({ status: 200, description: 'Assessment scheduled.' })
-  @ApiResponse({ status: 400, description: 'No question sets to schedule.' })
+  @ApiResponse({ status: 400, description: 'No question sets or missing startDatetime.' })
   @ApiResponse({ status: 404, description: 'Assessment not found.' })
-  async scheduleAssessment(@Param('id') id: string) {
+  async scheduleAssessment(
+    @Param('id') id: string,
+    @Body() dto: ScheduleAssessmentDto,
+  ) {
     const aiAssessmentId = Number(id);
     if (Number.isNaN(aiAssessmentId)) {
       throw new HttpException('Invalid assessment id', HttpStatus.BAD_REQUEST);
     }
-    return this.aiAssessmentCrudService.scheduleAssessment(aiAssessmentId);
+    return this.aiAssessmentCrudService.scheduleAssessment(
+      aiAssessmentId,
+      dto.startDatetime,
+      dto.endDatetime,
+    );
   }
 
   @Post(':id/publish')
   @ApiOperation({
     summary:
-      'Publish the assessment immediately. Students can attempt it right away. Requires mapped question sets.',
+      'Publish the assessment immediately (startDatetime = now). Optionally accepts endDatetime. ' +
+      'Requires mapped question sets.',
   })
   @ApiParam({ name: 'id', type: Number })
+  @ApiBody({
+    type: PublishAssessmentDto,
+    required: false,
+    examples: {
+      withEnd: {
+        summary: 'Publish now with an end date',
+        value: publishAssessmentExample,
+      },
+      noEnd: {
+        summary: 'Publish now, no end date (open-ended)',
+        value: publishAssessmentNoEndExample,
+      },
+    },
+  })
   @ApiResponse({ status: 200, description: 'Assessment published.' })
   @ApiResponse({ status: 400, description: 'No question sets to publish.' })
   @ApiResponse({ status: 404, description: 'Assessment not found.' })
-  async publishAssessment(@Param('id') id: string) {
+  async publishAssessment(
+    @Param('id') id: string,
+    @Body() dto: PublishAssessmentDto,
+  ) {
     const aiAssessmentId = Number(id);
     if (Number.isNaN(aiAssessmentId)) {
       throw new HttpException('Invalid assessment id', HttpStatus.BAD_REQUEST);
     }
-    return this.aiAssessmentCrudService.publishAssessment(aiAssessmentId);
+    return this.aiAssessmentCrudService.publishAssessment(
+      aiAssessmentId,
+      dto?.endDatetime,
+    );
   }
 
   @Post('map-questions')

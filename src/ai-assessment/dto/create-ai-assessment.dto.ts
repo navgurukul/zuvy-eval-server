@@ -53,6 +53,21 @@ export class CreateAiAssessmentDto {
   endDatetime?: string;
 }
 
+export class ScheduleAssessmentDto {
+  @IsDateString()
+  startDatetime: string;
+
+  @IsOptional()
+  @IsDateString()
+  endDatetime?: string;
+}
+
+export class PublishAssessmentDto {
+  @IsOptional()
+  @IsDateString()
+  endDatetime?: string;
+}
+
 // Backwards-compat types used elsewhere in the module.
 export class GenerateAssessmentDto {
   @IsInt()

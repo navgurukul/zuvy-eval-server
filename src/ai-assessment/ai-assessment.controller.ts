@@ -161,22 +161,45 @@ export class AiAssessmentController {
 
   @Get('/by/studentId')
   @ApiOperation({
-    summary: 'Get all AI assessments by student id',
+    summary:
+      'Get all available AI assessments for the current student, filtered by bootcamp and optionally by chapter/domain.',
   })
   @ApiResponse({
     status: 200,
-    description: 'List of AI assessments of a student.',
+    description: 'List of AI assessments available to the student.',
   })
-  @ApiQuery({ name: 'bootcampId', required: false, type: Number })
+  @ApiQuery({ name: 'bootcampId', required: true, type: Number })
+  @ApiQuery({ name: 'chapterId', required: false, type: Number })
+  @ApiQuery({ name: 'domainId', required: false, type: Number })
   findAllAssessmentOfAStudent(
     @Query('bootcampId') bootcampId: number,
-    @Req() req,
+    @Query('chapterId') chapterId?: number,
+    @Query('domainId') domainId?: number,
+    @Req() req?,
   ) {
     const userId = req.user?.sub;
     return this.aiAssessmentService.findAllAssessmentOfAStudent(
       userId,
       bootcampId,
+      chapterId,
+      domainId,
     );
+  }
+
+  @Get(':id/my-questions')
+  @ApiOperation({
+    summary:
+      "Get the current student's assigned questions for a specific assessment (without correct answers).",
+  })
+  @ApiResponse({
+    status: 200,
+    description:
+      'Questions assigned to the student for this assessment.',
+  })
+  @ApiParam({ name: 'id', type: Number, description: 'AI Assessment ID' })
+  getStudentQuestions(@Param('id') id: number, @Req() req) {
+    const userId = req.user?.sub;
+    return this.aiAssessmentService.getStudentQuestions(userId, +id);
   }
 
   @Post('audio')

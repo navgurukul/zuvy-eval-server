@@ -4,6 +4,7 @@ import {
   Injectable,
   InternalServerErrorException,
   Logger,
+  NotFoundException,
 } from '@nestjs/common';
 import {
   CreateAiAssessmentDto,
@@ -25,7 +26,9 @@ import {
 } from './system_prompts/system_prompts';
 import { parseLlmEvaluation } from 'src/llm/llm_response_parsers/evaluationParser';
 import { QuestionEvaluationService } from 'src/questions-by-llm/question-evaluation.service';
-import { eq, and, or, inArray, sum, sql } from 'drizzle-orm';
+import { eq, and, or, asc, inArray, sum, sql } from 'drizzle-orm';
+import { aiAssessmentQuestions } from './ai-assessment.questions.schema';
+import { zuvyQuestions } from 'src/questions/schema/zuvy-questions.schema';
 import { parseLlmMcq } from 'src/llm/llm_response_parsers/mcqParser';
 import { QuestionsByLlmService } from 'src/questions-by-llm/questions-by-llm.service';
 import { DRIZZLE_DB } from 'src/db/constant';
@@ -265,24 +268,65 @@ export class AiAssessmentService {
     return level;
   }
 
-  async findAllAssessmentOfAStudent(userId: number, bootcampId) {
+  async findAllAssessmentOfAStudent(
+    userId: number,
+    bootcampId: number,
+    chapterId?: number,
+    domainId?: number,
+  ) {
     if (!userId) return [];
+
+    const conditions: any[] = [
+      eq(studentAssessment.studentId, userId),
+      eq(aiAssessment.bootcampId, bootcampId),
+      or(
+        eq(aiAssessment.status, 'published'),
+        and(
+          eq(aiAssessment.status, 'scheduled'),
+          sql`${aiAssessment.startDatetime} <= now()`,
+        ),
+      ),
+    ];
+
+    if (chapterId !== undefined && chapterId !== null) {
+      conditions.push(eq(aiAssessment.chapterId, Number(chapterId)));
+    }
+    if (domainId !== undefined && domainId !== null) {
+      conditions.push(eq(aiAssessment.domainId, Number(domainId)));
+    }
 
     const assessments = await this.db
       .select({
         id: aiAssessment.id,
         bootcampId: aiAssessment.bootcampId,
+        chapterId: aiAssessment.chapterId,
+        domainId: aiAssessment.domainId,
         title: aiAssessment.title,
         description: aiAssessment.description,
-        audience: aiAssessment.audience,
         totalNumberOfQuestions: aiAssessment.totalNumberOfQuestions,
-        totalQuestionsWithBuffer: aiAssessment.totalQuestionsWithBuffer,
         startDatetime: aiAssessment.startDatetime,
         endDatetime: aiAssessment.endDatetime,
-        createdAt: aiAssessment.createdAt,
-        updatedAt: aiAssessment.updatedAt,
         assessmentStatus: aiAssessment.status,
         studentStatus: studentAssessment.status,
+        questionSetId: studentAssessment.questionSetId,
+      })
+      .from(studentAssessment)
+      .innerJoin(
+        aiAssessment,
+        eq(studentAssessment.aiAssessmentId, aiAssessment.id),
+      )
+      .where(and(...conditions));
+
+    return assessments;
+  }
+
+  async getStudentQuestions(userId: number, aiAssessmentId: number) {
+    const rows = await this.db
+      .select({
+        studentStatus: studentAssessment.status,
+        questionSetId: studentAssessment.questionSetId,
+        assessmentStatus: aiAssessment.status,
+        startDatetime: aiAssessment.startDatetime,
       })
       .from(studentAssessment)
       .innerJoin(
@@ -292,18 +336,55 @@ export class AiAssessmentService {
       .where(
         and(
           eq(studentAssessment.studentId, userId),
-          eq(aiAssessment.bootcampId, bootcampId),
-          or(
-            eq(aiAssessment.status, 'published'),
-            and(
-              eq(aiAssessment.status, 'scheduled'),
-              sql`${aiAssessment.startDatetime} <= now()`,
-            ),
-          ),
+          eq(studentAssessment.aiAssessmentId, aiAssessmentId),
         ),
-      );
+      )
+      .limit(1);
 
-    return assessments;
+    if (!rows.length) {
+      throw new NotFoundException(
+        'No assessment assignment found for this student',
+      );
+    }
+
+    const row = rows[0];
+
+    if (
+      !this.isAssessmentAvailable(row.assessmentStatus, row.startDatetime)
+    ) {
+      throw new BadRequestException('Assessment is not yet available');
+    }
+
+    if (!row.questionSetId) {
+      throw new BadRequestException(
+        'No question set has been assigned to this student yet',
+      );
+    }
+
+    const questions = await this.db
+      .select({
+        questionId: aiAssessmentQuestions.questionId,
+        position: aiAssessmentQuestions.position,
+        question: zuvyQuestions.question,
+        options: zuvyQuestions.options,
+        difficulty: zuvyQuestions.difficulty,
+        topic: zuvyQuestions.topicName,
+        language: zuvyQuestions.language,
+      })
+      .from(aiAssessmentQuestions)
+      .innerJoin(
+        zuvyQuestions,
+        eq(aiAssessmentQuestions.questionId, zuvyQuestions.id),
+      )
+      .where(eq(aiAssessmentQuestions.questionSetId, row.questionSetId))
+      .orderBy(asc(aiAssessmentQuestions.position));
+
+    return {
+      aiAssessmentId,
+      questionSetId: row.questionSetId,
+      studentStatus: row.studentStatus,
+      questions,
+    };
   }
 
   async getTotalBufferedQuestions(assessmentIds: number[]) {

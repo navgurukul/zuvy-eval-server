@@ -19,6 +19,7 @@ import {
   ScheduleAssessmentDto,
   PublishAssessmentDto,
   SubmitAssessmentDto,
+  ScoreSubmitDto,
 } from './dto/create-ai-assessment.dto';
 import { UpdateAiAssessmentDto } from './dto/update-ai-assessment.dto';
 import {
@@ -36,6 +37,7 @@ import {
   createAiAssessmentDomain,
   mapQuestionsExample,
   submitAssessmentExample,
+  scoreSubmitExample,
   scheduleAssessmentExample,
   scheduleAssessmentNoEndExample,
   publishAssessmentExample,
@@ -130,6 +132,30 @@ export class AiAssessmentController {
     } catch (error) {
       console.error('error in evaluation controller', error);
     }
+  }
+
+  @Post('/submit-score')
+  @ApiOperation({
+    summary:
+      'Submit answers and receive score only (no LLM evaluation). Returns score, totalQuestions, and percentage.',
+  })
+  @ApiBody({
+    type: ScoreSubmitDto,
+    examples: {
+      basicExample: {
+        summary: 'Score-only submission',
+        value: scoreSubmitExample,
+      },
+    },
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Score calculated successfully.',
+  })
+  @ApiResponse({ status: 400, description: 'Invalid payload or assessment not available.' })
+  submitScore(@Body() scoreSubmitDto: ScoreSubmitDto, @Req() req) {
+    const userId = req.user?.sub;
+    return this.aiAssessmentService.submitAndScore(userId, scoreSubmitDto);
   }
 
   @Get()

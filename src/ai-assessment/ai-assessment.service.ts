@@ -18,7 +18,7 @@ import { levels } from 'src/db/schema/level';
 import { aiAssessment } from 'src/db/schema/ai-assessment';
 import { correctAnswers } from 'src/db/schema/correctAns';
 import { studentAssessment } from 'src/db/schema/stdAssessment';
-import { SubmitAssessmentDto } from './dto/create-ai-assessment.dto';
+import { SubmitAssessmentDto, ScoreSubmitDto } from './dto/create-ai-assessment.dto';
 import { LlmService } from 'src/llm/llm.service';
 import {
   answerEvaluationPrompt,
@@ -85,6 +85,52 @@ export class AiAssessmentService {
       }
     }
     return { score, totalQuestions: answers.length };
+  }
+
+  async submitAndScore(studentId: number, dto: ScoreSubmitDto) {
+    const { assessmentId, questions } = dto;
+
+    const [assessmentRow] = await this.db
+      .select({
+        status: aiAssessment.status,
+        startDatetime: aiAssessment.startDatetime,
+      })
+      .from(aiAssessment)
+      .where(eq(aiAssessment.id, assessmentId))
+      .limit(1);
+
+    if (
+      !assessmentRow ||
+      !this.isAssessmentAvailable(assessmentRow.status, assessmentRow.startDatetime)
+    ) {
+      throw new BadRequestException('Assessment is not yet available');
+    }
+
+    let score = 0;
+    const totalQuestions = questions.length;
+
+    for (const q of questions) {
+      if (!q.correctOptionSelectedByStudents) continue;
+
+      const [match] = await this.db
+        .select()
+        .from(correctAnswers)
+        .where(
+          and(
+            eq(correctAnswers.questionId, q.questionId),
+            eq(correctAnswers.correctOptionId, q.correctOptionSelectedByStudents),
+          ),
+        )
+        .limit(1);
+
+      if (match) score++;
+    }
+
+    const percentage = totalQuestions > 0
+      ? Math.round((score / totalQuestions) * 100 * 100) / 100
+      : 0;
+
+    return { score, totalQuestions, percentage };
   }
 
   private isAssessmentAvailable(

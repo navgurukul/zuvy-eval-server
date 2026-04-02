@@ -49,6 +49,35 @@ export const submitAssessmentExample = {
   ],
 };
 
+export const scoreSubmitExample = {
+  assessmentId: 137,
+  courseId: 1040,
+  domainId: 896,
+  chapterId: 6688,
+  questions: [
+    {
+      questionId: 750,
+      position: 1,
+      question: 'If a point is equidistant from both axes and lies in Quadrant IV, what are its possible coordinates?',
+      options: { '1': '(a, a), a > 0', '2': '(-a, -a), a > 0', '3': '(a, -a), a > 0', '4': '(-a, a), a > 0' },
+      difficulty: 'hard',
+      topic: 'Quadrants',
+      language: 'English',
+      correctOptionSelectedByStudents: 3,
+    },
+    {
+      questionId: 751,
+      position: 2,
+      question: 'If the product of the coordinates of a point (x, y) is negative, in which quadrants can it lie?',
+      options: { '1': 'Only Quadrant I', '2': 'Only Quadrants II and III', '3': 'Only Quadrants I and III', '4': 'Only Quadrants II and IV' },
+      difficulty: 'hard',
+      topic: 'Quadrants',
+      language: 'English',
+      correctOptionSelectedByStudents: 4,
+    },
+  ],
+};
+
 export const mapQuestionsExample = {
   aiAssessmentId: 800,
 };

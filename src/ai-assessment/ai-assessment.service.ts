@@ -13,6 +13,7 @@ import {
 import { UpdateAiAssessmentDto } from './dto/update-ai-assessment.dto';
 import { zuvyBatchEnrollments, users } from 'src/db/schema/parentSchema';
 import { questionStudentAnswerRelation } from 'src/db/schema/questionStdAns';
+import { studentAnswers } from 'src/db/schema/studentAnswer';
 import { studentLevelRelation } from 'src/db/schema/studentLevel';
 import { levels } from 'src/db/schema/level';
 import { aiAssessment } from 'src/db/schema/ai-assessment';
@@ -90,47 +91,119 @@ export class AiAssessmentService {
   async submitAndScore(studentId: number, dto: ScoreSubmitDto) {
     const { assessmentId, questions } = dto;
 
-    const [assessmentRow] = await this.db
-      .select({
-        status: aiAssessment.status,
-        startDatetime: aiAssessment.startDatetime,
-      })
-      .from(aiAssessment)
-      .where(eq(aiAssessment.id, assessmentId))
-      .limit(1);
-
-    if (
-      !assessmentRow ||
-      !this.isAssessmentAvailable(assessmentRow.status, assessmentRow.startDatetime)
-    ) {
-      throw new BadRequestException('Assessment is not yet available');
-    }
-
-    let score = 0;
-    const totalQuestions = questions.length;
-
-    for (const q of questions) {
-      if (!q.correctOptionSelectedByStudents) continue;
-
-      const [match] = await this.db
-        .select()
-        .from(correctAnswers)
-        .where(
-          and(
-            eq(correctAnswers.questionId, q.questionId),
-            eq(correctAnswers.correctOptionId, q.correctOptionSelectedByStudents),
-          ),
-        )
+    return await this.db.transaction(async (tx) => {
+      const [assessmentRow] = await tx
+        .select({
+          status: aiAssessment.status,
+          startDatetime: aiAssessment.startDatetime,
+          bootcampId: aiAssessment.bootcampId,
+        })
+        .from(aiAssessment)
+        .where(eq(aiAssessment.id, assessmentId))
         .limit(1);
 
-      if (match) score++;
-    }
+      if (
+        !assessmentRow ||
+        !this.isAssessmentAvailable(assessmentRow.status, assessmentRow.startDatetime)
+      ) {
+        throw new BadRequestException('Assessment is not yet available');
+      }
 
-    const percentage = totalQuestions > 0
-      ? Math.round((score / totalQuestions) * 100 * 100) / 100
-      : 0;
+      // 1. Batch-fetch correct options from zuvy_questions
+      const questionIds = questions.map((q) => q.questionId);
+      const correctRows = await tx
+        .select({
+          id: zuvyQuestions.id,
+          correctOption: zuvyQuestions.correctOption,
+        })
+        .from(zuvyQuestions)
+        .where(inArray(zuvyQuestions.id, questionIds));
 
-    return { score, totalQuestions, percentage };
+      const correctMap = new Map<number, number>();
+      for (const row of correctRows) {
+        correctMap.set(row.id, row.correctOption);
+      }
+
+      // 2. Score and build per-question details
+      let score = 0;
+      const totalQuestions = questions.length;
+
+      const questionDetails = questions.map((q) => {
+        const correctOption = correctMap.get(q.questionId) ?? null;
+        const selectedOption = q.correctOptionSelectedByStudents ?? null;
+        const isCorrect =
+          selectedOption !== null &&
+          correctOption !== null &&
+          selectedOption === correctOption;
+
+        if (isCorrect) score++;
+
+        return {
+          questionId: q.questionId,
+          correctOption,
+          selectedOption,
+          isCorrect,
+        };
+      });
+
+      const percentage =
+        totalQuestions > 0
+          ? Math.round((score / totalQuestions) * 100 * 100) / 100
+          : 0;
+
+      // 3. Save student answers
+      const answerPayloads = questionDetails.map((detail) => ({
+        studentId,
+        aiAssessmentId: assessmentId,
+        questionId: detail.questionId,
+        selectedOption: detail.selectedOption,
+        isCorrect: detail.isCorrect ? 1 : 0,
+        answeredAt: new Date().toISOString(),
+      }));
+
+      await Promise.all(
+        answerPayloads.map((payload) =>
+          tx.insert(studentAnswers).values(payload),
+        ),
+      );
+
+      // 4. Update student_assessment status to completed
+      await tx
+        .update(studentAssessment)
+        .set({
+          status: 1,
+          updatedAt: new Date().toISOString(),
+        } as any)
+        .where(
+          and(
+            eq(studentAssessment.studentId, studentId),
+            eq(studentAssessment.aiAssessmentId, assessmentId),
+          ),
+        );
+
+      // 5. Calculate level and persist
+      const level = await this.calculateStudentLevel(percentage);
+
+      await tx.insert(studentLevelRelation).values({
+        studentId,
+        levelId: level.id,
+        aiAssessmentId: assessmentId,
+        bootcampId: assessmentRow.bootcampId,
+        assignedAt: new Date().toISOString(),
+      });
+
+      return {
+        score,
+        totalQuestions,
+        percentage,
+        level: {
+          grade: level.grade,
+          meaning: level.meaning,
+          hardship: level.hardship,
+        },
+        questions: questionDetails,
+      };
+    });
   }
 
   private isAssessmentAvailable(

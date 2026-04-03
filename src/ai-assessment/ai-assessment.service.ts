@@ -353,6 +353,51 @@ export class AiAssessmentService {
     };
   }
 
+  /**
+   * Time-window status: expired when now is past endDatetime (if set);
+   * active when not draft, not expired, and start time has been reached.
+   */
+  async getAssessmentTimeStatus(assessmentId: number) {
+    const [row] = await this.db
+      .select({
+        id: aiAssessment.id,
+        status: aiAssessment.status,
+        startDatetime: aiAssessment.startDatetime,
+        endDatetime: aiAssessment.endDatetime,
+      })
+      .from(aiAssessment)
+      .where(eq(aiAssessment.id, assessmentId))
+      .limit(1);
+
+    if (!row) {
+      throw new NotFoundException('Assessment not found');
+    }
+
+    const now = new Date();
+    const end = row.endDatetime ? new Date(row.endDatetime) : null;
+    const start = row.startDatetime ? new Date(row.startDatetime) : null;
+
+    const expired = end !== null && now > end;
+
+    let active = false;
+    if (row.status !== 'draft' && !expired) {
+      if (row.status === 'published') {
+        active = start === null || now >= start;
+      } else if (row.status === 'scheduled') {
+        active = start !== null && now >= start;
+      }
+    }
+
+    return {
+      assessmentId: row.id,
+      status: row.status,
+      startDatetime: row.startDatetime,
+      endDatetime: row.endDatetime,
+      expired,
+      active,
+    };
+  }
+
   private isAssessmentAvailable(
     status: string,
     startDatetime: string | null,

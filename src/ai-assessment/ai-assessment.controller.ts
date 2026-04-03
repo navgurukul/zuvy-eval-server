@@ -237,6 +237,27 @@ export class AiAssessmentController {
     return this.aiAssessmentService.getSubmitScoreResult(userId, id);
   }
 
+  @Get('time-status')
+  @ApiOperation({
+    summary:
+      'Check whether an assessment is expired (past end time) and active by calendar (started, not ended).',
+  })
+  @ApiQuery({ name: 'assessmentId', required: true, type: Number })
+  @ApiResponse({
+    status: 200,
+    description:
+      'expired, active, status, startDatetime, endDatetime. Open-ended assessments have no expiry.',
+  })
+  @ApiResponse({ status: 404, description: 'Assessment not found.' })
+  @ApiResponse({ status: 400, description: 'Invalid assessmentId.' })
+  getAssessmentTimeStatus(@Query('assessmentId') assessmentId: string) {
+    const id = Number(assessmentId);
+    if (!Number.isFinite(id) || id < 1) {
+      throw new HttpException('Invalid assessmentId', HttpStatus.BAD_REQUEST);
+    }
+    return this.aiAssessmentService.getAssessmentTimeStatus(id);
+  }
+
   @Get(':id/my-questions')
   @ApiOperation({
     summary:

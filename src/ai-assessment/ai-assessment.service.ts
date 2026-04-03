@@ -27,7 +27,7 @@ import {
 } from './system_prompts/system_prompts';
 import { parseLlmEvaluation } from 'src/llm/llm_response_parsers/evaluationParser';
 import { QuestionEvaluationService } from 'src/questions-by-llm/question-evaluation.service';
-import { eq, and, or, asc, inArray, sum, sql } from 'drizzle-orm';
+import { eq, and, or, asc, desc, inArray, sum, sql } from 'drizzle-orm';
 import { aiAssessmentQuestions } from './ai-assessment.questions.schema';
 import { zuvyQuestions } from 'src/questions/schema/zuvy-questions.schema';
 import { parseLlmMcq } from 'src/llm/llm_response_parsers/mcqParser';
@@ -204,6 +204,153 @@ export class AiAssessmentService {
         questions: questionDetails,
       };
     });
+  }
+
+  async getSubmitScoreResult(studentId: number, assessmentId: number) {
+    const [assignment] = await this.db
+      .select({
+        status: studentAssessment.status,
+        questionSetId: studentAssessment.questionSetId,
+      })
+      .from(studentAssessment)
+      .where(
+        and(
+          eq(studentAssessment.studentId, studentId),
+          eq(studentAssessment.aiAssessmentId, assessmentId),
+        ),
+      )
+      .limit(1);
+
+    if (!assignment || assignment.status !== 1) {
+      throw new NotFoundException(
+        'Assessment result not found or not completed',
+      );
+    }
+
+    const answerRows = await this.db
+      .select({
+        questionId: studentAnswers.questionId,
+        selectedOption: studentAnswers.selectedOption,
+      })
+      .from(studentAnswers)
+      .where(
+        and(
+          eq(studentAnswers.studentId, studentId),
+          eq(studentAnswers.aiAssessmentId, assessmentId),
+        ),
+      );
+
+    if (!answerRows.length) {
+      throw new NotFoundException('Assessment result not found');
+    }
+
+    const questionIds = answerRows.map((r) => r.questionId);
+    const correctRows = await this.db
+      .select({
+        id: zuvyQuestions.id,
+        correctOption: zuvyQuestions.correctOption,
+      })
+      .from(zuvyQuestions)
+      .where(inArray(zuvyQuestions.id, questionIds));
+
+    const correctMap = new Map<number, number>();
+    for (const row of correctRows) {
+      correctMap.set(row.id, row.correctOption);
+    }
+
+    let ordered = [...answerRows];
+    if (assignment.questionSetId) {
+      const positions = await this.db
+        .select({
+          questionId: aiAssessmentQuestions.questionId,
+          position: aiAssessmentQuestions.position,
+        })
+        .from(aiAssessmentQuestions)
+        .where(
+          and(
+            eq(
+              aiAssessmentQuestions.questionSetId,
+              assignment.questionSetId,
+            ),
+            inArray(aiAssessmentQuestions.questionId, questionIds),
+          ),
+        );
+
+      const posMap = new Map(
+        positions.map((p) => [p.questionId, p.position] as const),
+      );
+      ordered.sort((a, b) => {
+        const pa = posMap.get(a.questionId) ?? 999999;
+        const pb = posMap.get(b.questionId) ?? 999999;
+        if (pa !== pb) return pa - pb;
+        return a.questionId - b.questionId;
+      });
+    } else {
+      ordered.sort((a, b) => a.questionId - b.questionId);
+    }
+
+    const questionDetails = ordered.map((r) => {
+      const correctOption = correctMap.get(r.questionId) ?? null;
+      const selectedOption = r.selectedOption ?? null;
+      const isCorrect =
+        selectedOption !== null &&
+        correctOption !== null &&
+        selectedOption === correctOption;
+
+      return {
+        questionId: r.questionId,
+        correctOption,
+        selectedOption,
+        isCorrect,
+      };
+    });
+
+    let score = 0;
+    for (const q of questionDetails) {
+      if (q.isCorrect) score++;
+    }
+    const totalQuestions = questionDetails.length;
+    const percentage =
+      totalQuestions > 0
+        ? Math.round((score / totalQuestions) * 100 * 100) / 100
+        : 0;
+
+    const [levelFromDb] = await this.db
+      .select({
+        grade: levels.grade,
+        meaning: levels.meaning,
+        hardship: levels.hardship,
+      })
+      .from(studentLevelRelation)
+      .innerJoin(levels, eq(studentLevelRelation.levelId, levels.id))
+      .where(
+        and(
+          eq(studentLevelRelation.studentId, studentId),
+          eq(studentLevelRelation.aiAssessmentId, assessmentId),
+        ),
+      )
+      .orderBy(desc(studentLevelRelation.id))
+      .limit(1);
+
+    let levelPayload: { grade: string; meaning: string | null; hardship: string | null };
+    if (levelFromDb) {
+      levelPayload = levelFromDb;
+    } else {
+      const level = await this.calculateStudentLevel(percentage);
+      levelPayload = {
+        grade: level.grade,
+        meaning: level.meaning,
+        hardship: level.hardship,
+      };
+    }
+
+    return {
+      score,
+      totalQuestions,
+      percentage,
+      level: levelPayload,
+      questions: questionDetails,
+    };
   }
 
   private isAssessmentAvailable(

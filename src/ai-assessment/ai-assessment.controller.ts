@@ -212,6 +212,31 @@ export class AiAssessmentController {
     );
   }
 
+  @Get('result')
+  @ApiOperation({
+    summary:
+      'Get persisted submit-score result for the current student (same body as POST /submit-score).',
+  })
+  @ApiQuery({ name: 'assessmentId', required: true, type: Number })
+  @ApiResponse({
+    status: 200,
+    description:
+      'score, totalQuestions, percentage, level, questions — matches submit-score response.',
+  })
+  @ApiResponse({ status: 404, description: 'Not found or assessment not completed.' })
+  @ApiResponse({ status: 400, description: 'Invalid assessmentId.' })
+  getSubmitScoreResult(
+    @Query('assessmentId') assessmentId: string,
+    @Req() req,
+  ) {
+    const id = Number(assessmentId);
+    if (!Number.isFinite(id) || id < 1) {
+      throw new HttpException('Invalid assessmentId', HttpStatus.BAD_REQUEST);
+    }
+    const userId = req.user?.sub;
+    return this.aiAssessmentService.getSubmitScoreResult(userId, id);
+  }
+
   @Get(':id/my-questions')
   @ApiOperation({
     summary:

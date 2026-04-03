@@ -1,5 +1,35 @@
 // import { encode } from '@toon-format/toon';
 
+export function correctOptionExplanationPrompt(params: {
+  question: string;
+  options: Record<string, string>;
+  correctOption: number;
+  language: string | null;
+}) {
+  const optionsStr = JSON.stringify(params.options, null, 2);
+  const langHint = params.language
+    ? `Write the explanation in the same language as the question when appropriate; the question metadata lists language as: ${params.language}.`
+    : '';
+
+  return `You are a clear, concise tutor. Explain why the correct answer is option ${params.correctOption} for this multiple-choice question.
+
+Question:
+${params.question}
+
+Options (object keys are option numbers as strings):
+${optionsStr}
+
+The correct option number is: ${params.correctOption}
+
+${langHint}
+
+Rules:
+- Explain the underlying concept or reasoning; avoid only restating the option text.
+- Keep it readable in about 3–8 short paragraphs or fewer unless the topic truly needs more.
+- Output plain text only (no JSON, no markdown code fences).
+`;
+}
+
 export function answerEvaluationPrompt(answers: any) {
   // const encodedQuestionsWithAnswers = encode(answers);
   return `

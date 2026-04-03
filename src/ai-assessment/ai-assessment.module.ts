@@ -11,6 +11,7 @@ import { EmbeddingsService } from 'src/llm/embeddings.service';
 import { AiAssessmentMappingService } from './ai-assessment.mapping.service';
 import { AiAssessmentMappingHelpers } from './ai-assessment.mapping.helpers';
 import { AiAssessmentCrudService } from './ai-assessment.crud.service';
+import { QuestionExplanationService } from './question-explanation.service';
 
 @Module({
   imports: [
@@ -28,6 +29,7 @@ import { AiAssessmentCrudService } from './ai-assessment.crud.service';
     EmbeddingsService,
     AiAssessmentMappingHelpers,
     AiAssessmentMappingService,
+    QuestionExplanationService,
   ],
 })
 export class AiAssessmentModule {}

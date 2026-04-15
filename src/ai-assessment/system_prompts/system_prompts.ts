@@ -8,10 +8,10 @@ export function correctOptionExplanationPrompt(params: {
 }) {
   const optionsStr = JSON.stringify(params.options, null, 2);
   const langHint = params.language
-    ? `Write the explanation in the same language as the question when appropriate; the question metadata lists language as: ${params.language}.`
+    ? `Use the same language as the question when appropriate; question language metadata: ${params.language}.`
     : '';
 
-  return `You are a clear, concise tutor. Explain why the correct answer is option ${params.correctOption} for this multiple-choice question.
+  return `You are a precise tutor. Solve this multiple-choice question yourself and identify the truly correct option from the options provided.
 
 Question:
 ${params.question}
@@ -19,14 +19,19 @@ ${params.question}
 Options (object keys are option numbers as strings):
 ${optionsStr}
 
-The correct option number is: ${params.correctOption}
+Provided correct option (may be wrong; do NOT trust blindly): ${params.correctOption}
 
 ${langHint}
 
 Rules:
-- Explain the underlying concept or reasoning; avoid only restating the option text.
-- Keep it readable in about 3–8 short paragraphs or fewer unless the topic truly needs more.
-- Output plain text only (no JSON, no markdown code fences).
+- First determine the correct option by solving the question.
+- If the provided correct option conflicts with your solution, ignore it and use your solved answer.
+- Output ONLY:
+  1) "Correct option: <option_number>"
+  2) A brief explanation of why that option is correct.
+- Do NOT explain why other options are wrong.
+- Keep the explanation concise to save tokens (2-4 short sentences).
+- Output plain text only (no JSON, no markdown code fences, no extra sections).
 `;
 }
 
@@ -156,6 +161,7 @@ export interface McqGenerationSpec {
   questionStyle?: string;
   difficultyDistribution?: { easy?: number; medium?: number; hard?: number };
   questionCounts?: { easy?: number; medium?: number; hard?: number };
+  batchQuestionCounts?: { easy?: number; medium?: number; hard?: number };
 }
 
 export function generateMcqPromptFromSpec(
@@ -175,7 +181,25 @@ export function generateMcqPromptFromSpec(
     questionStyle,
     difficultyDistribution,
     questionCounts,
+    batchQuestionCounts,
   } = spec;
+  const requiredEasyCount =
+    batchQuestionCounts?.easy ??
+    questionCounts?.easy ??
+    difficultyDistribution?.easy ??
+    0;
+  const requiredMediumCount =
+    batchQuestionCounts?.medium ??
+    questionCounts?.medium ??
+    difficultyDistribution?.medium ??
+    0;
+  const requiredHardCount =
+    batchQuestionCounts?.hard ??
+    questionCounts?.hard ??
+    difficultyDistribution?.hard ??
+    0;
+  const hasRequiredDifficultyCounts =
+    requiredEasyCount + requiredMediumCount + requiredHardCount > 0;
 
   const sections: string[] = [];
 
@@ -192,11 +216,13 @@ export function generateMcqPromptFromSpec(
   if (focusAreas) sections.push(`- Focus areas: ${focusAreas}`);
   if (bloomsLevel) sections.push(`- Bloom's taxonomy level: ${bloomsLevel}`);
   if (questionStyle) sections.push(`- Question style: ${questionStyle}`);
-  if (difficultyDistribution && Object.keys(difficultyDistribution).length > 0) {
-    sections.push(`- Difficulty distribution (percent): ${JSON.stringify(difficultyDistribution)}`);
-  }
-  if (questionCounts && Object.keys(questionCounts).length > 0) {
-    sections.push(`- Question counts by difficulty for this batch: ${JSON.stringify(questionCounts)}. STRICTLY follow these counts.`);
+  if (hasRequiredDifficultyCounts) {
+    sections.push(
+      `- REQUIRED DIFFICULTY COUNTS (MANDATORY): Generate exactly ${requiredEasyCount} easy, ${requiredMediumCount} medium, and ${requiredHardCount} hard questions. Missing keys mean 0. Do not exceed or fall short for any level.`
+    );
+    sections.push(
+      `- HARD CONSTRAINT: The difficulty counts must sum to ${count} exactly. If they do not sum to ${count}, return: { "error": "GENERATION_FAILED", "reason": "DIFFICULTY_COUNT_MISMATCH" }.`
+    );
   }
   
   if (existingQuestionTexts && existingQuestionTexts.length > 0) {
@@ -224,6 +250,13 @@ export function generateMcqPromptFromSpec(
   sections.push('   - The question has a definite, verifiable answer (not opinion-based)');
   sections.push('6. If ANY validation fails, DISCARD and regenerate the question.');
   sections.push('7. Do NOT guess. Only include questions where correctness is certain.');
+  sections.push('8. NUMERICAL QUESTION PROTOCOL (MANDATORY when arithmetic/calculation is involved):');
+  sections.push('   - Solve to a final numeric value internally before writing options.');
+  sections.push('   - Use consistent units and conversions; do not mix units across options.');
+  sections.push('   - Decide and apply a single rounding rule (or no rounding) consistently.');
+  sections.push('   - Ensure exactly one option matches the computed final value under that rule.');
+  sections.push('   - Ensure the other three options are definitively incorrect for the same units/rounding rule.');
+  sections.push('   - If no option matches exactly, regenerate the entire question and options.');
   
   sections.push('');
   sections.push('SELF-VALIDATION PASS (MANDATORY):');
@@ -233,6 +266,7 @@ export function generateMcqPromptFromSpec(
   sections.push('3. Ensure none of the other options could be correct.');
   sections.push('4. If inconsistency is found, regenerate the question.');
   sections.push('5. Only include questions that pass this second validation.');
+  sections.push('6. For numerical questions, independently recompute once more (different order/method internally) and confirm the same final answer maps to the same option.');
   
   sections.push('');
   sections.push('OUTPUT REQUIREMENTS:');
@@ -249,11 +283,20 @@ export function generateMcqPromptFromSpec(
   );
   sections.push('6. Options: exactly 4 entries. correctOption must be 1, 2, 3, or 4.');
   sections.push('7. "correctOption" MUST correspond to the correct answer.');
-  sections.push('8. Options MUST be mutually exclusive and non-overlapping.');
-  sections.push('9. Do NOT include explanations, ids, or extra keys.');
-  sections.push('10. Avoid "All of the above" or "None of the above".');
-  sections.push('11. Avoid vague or ambiguous wording.');
-  sections.push('12. If you cannot ensure correctness, return: { "error": "GENERATION_FAILED", "reason": "<short reason>" }');
+  sections.push('8. For numerical questions, one option must exactly equal the internally computed final answer (same units/rounding), and "correctOption" must point to it.');
+  sections.push('9. Options MUST be mutually exclusive and non-overlapping.');
+  sections.push('10. Do NOT include explanations, ids, or extra keys.');
+  sections.push('11. Avoid "All of the above" or "None of the above".');
+  sections.push('12. Avoid vague or ambiguous wording.');
+  sections.push('13. If you cannot ensure correctness, return: { "error": "GENERATION_FAILED", "reason": "<short reason>" }');
+  if (hasRequiredDifficultyCounts) {
+    sections.push(
+      `14. FINAL BATCH CHECK (MANDATORY): Before output, count difficulties across all generated items. You MUST have easy=${requiredEasyCount}, medium=${requiredMediumCount}, hard=${requiredHardCount}, total=${count}.`
+    );
+    sections.push(
+      '15. If final difficulty counts do not match exactly, regenerate/rebalance before output. Do not output partial or mismatched distribution.'
+    );
+  }
   
   sections.push('');
   sections.push('Produce the JSON only.');

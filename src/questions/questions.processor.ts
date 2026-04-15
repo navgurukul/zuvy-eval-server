@@ -80,6 +80,34 @@ export class QuestionsProcessor extends WorkerHost {
       );
     }
     const parsed = await parseLlmMcq(aiResponse.text);
+    const evaluations = parsed.evaluations ?? [];
+    const requiredBatchCounts = job.data.batchQuestionCounts;
+    if (evaluations.length !== count) {
+      throw new Error(
+        `Batch size mismatch for job ${job.id}: expected ${count}, got ${evaluations.length}`,
+      );
+    }
+    if (requiredBatchCounts) {
+      const actualCounts = evaluations.reduce(
+        (acc, q) => {
+          const difficulty = String(q.difficulty ?? '').trim().toLowerCase();
+          if (difficulty === 'easy' || difficulty === 'medium' || difficulty === 'hard') {
+            acc[difficulty] += 1;
+          }
+          return acc;
+        },
+        { easy: 0, medium: 0, hard: 0 },
+      );
+      if (
+        actualCounts.easy !== requiredBatchCounts.easy ||
+        actualCounts.medium !== requiredBatchCounts.medium ||
+        actualCounts.hard !== requiredBatchCounts.hard
+      ) {
+        throw new Error(
+          `Difficulty mismatch for job ${job.id}: expected easy=${requiredBatchCounts.easy}, medium=${requiredBatchCounts.medium}, hard=${requiredBatchCounts.hard}; got easy=${actualCounts.easy}, medium=${actualCounts.medium}, hard=${actualCounts.hard}`,
+        );
+      }
+    }
 
     const domainNameForInsert = job.data.domainName ?? 'Unknown';
     const topicName = job.data.topicName ?? topic;
@@ -87,7 +115,7 @@ export class QuestionsProcessor extends WorkerHost {
 
     const requestedByUserId = job.data.requestedByUserId;
     const inserted = await this.questionsService.createManyWithOutbox(
-      (parsed.evaluations ?? []).map((q) => {
+      evaluations.map((q) => {
         const rawLevel = (q as any).level;
         const normalizedLevel =
           typeof rawLevel === 'string'
@@ -126,7 +154,7 @@ export class QuestionsProcessor extends WorkerHost {
     );
 
     this.logger.log(
-      `Job ${job.id} completed: inserted ${parsed.evaluations?.length ?? 0} questions for topic ${topic}`,
+      `Job ${job.id} completed: inserted ${evaluations.length} questions for topic ${topic}`,
     );
     } catch (error) {
       this.logger.error('Error processing job:', error);

@@ -134,4 +134,10 @@ export interface GenerateTopicBatchJobPayload {
     medium?: number;
     hard?: number;
   };
+  /** Per-job difficulty counts derived from topic-level questionCounts/difficultyDistribution. */
+  batchQuestionCounts?: {
+    easy: number;
+    medium: number;
+    hard: number;
+  };
 }

@@ -14,6 +14,7 @@ import { questionIndexOutbox, zuvyQuestions } from './schema/zuvy-questions.sche
 
 const BATCH_SIZE = 10;
 const JOB_NAME = 'generate-topic-batch';
+type DifficultyCounts = { easy: number; medium: number; hard: number };
 
 const JOB_OPTS = {
   attempts: 5,
@@ -87,14 +88,23 @@ export class QuestionsService {
         };
 
       const numBatches = Math.ceil(count / BATCH_SIZE);
+      const batchSizes: number[] = [];
       for (let i = 0; i < numBatches; i++) {
-        const countForThisJob =
-          i < numBatches - 1
-            ? BATCH_SIZE
-            : count - (numBatches - 1) * BATCH_SIZE;
+        batchSizes.push(i < numBatches - 1 ? BATCH_SIZE : count - (numBatches - 1) * BATCH_SIZE);
+      }
+      const topicCounts = this.toDifficultyCounts(
+        perTopicCtx.questionCounts ?? perTopicCtx.difficultyDistribution,
+      );
+      const perBatchCounts = topicCounts
+        ? this.splitDifficultyCountsAcrossBatches(topicCounts, batchSizes, count)
+        : null;
+
+      for (let i = 0; i < numBatches; i++) {
+        const countForThisJob = batchSizes[i];
         jobs.push({
           topic,
           count: countForThisJob,
+          batchQuestionCounts: perBatchCounts?.[i],
           ...perTopicCtx,
         });
       }
@@ -107,6 +117,93 @@ export class QuestionsService {
     }
 
     return jobs;
+  }
+
+  private toDifficultyCounts(source?: {
+    easy?: number;
+    medium?: number;
+    hard?: number;
+  }): DifficultyCounts | null {
+    if (!source) return null;
+    const easy = source.easy ?? 0;
+    const medium = source.medium ?? 0;
+    const hard = source.hard ?? 0;
+    const sum = easy + medium + hard;
+    if (sum <= 0) return null;
+    return { easy, medium, hard };
+  }
+
+  private splitDifficultyCountsAcrossBatches(
+    totalCounts: DifficultyCounts,
+    batchSizes: number[],
+    totalQuestions: number,
+  ): DifficultyCounts[] {
+    const totalByDifficulty =
+      totalCounts.easy + totalCounts.medium + totalCounts.hard;
+    if (totalByDifficulty !== totalQuestions) {
+      throw new BadRequestException(
+        `questionCounts sum (${totalByDifficulty}) must equal totalQuestions (${totalQuestions}) per topic`,
+      );
+    }
+
+    const levels: (keyof DifficultyCounts)[] = ['easy', 'medium', 'hard'];
+    const remaining: DifficultyCounts = { ...totalCounts };
+    const perBatch: DifficultyCounts[] = [];
+
+    for (let batchIndex = 0; batchIndex < batchSizes.length; batchIndex++) {
+      const batchSize = batchSizes[batchIndex];
+      const isLastBatch = batchIndex === batchSizes.length - 1;
+
+      if (isLastBatch) {
+        perBatch.push({ ...remaining });
+        continue;
+      }
+
+      const rawShares = levels.map((level) => ({
+        level,
+        raw: (remaining[level] * batchSize) / this.sumCounts(remaining),
+      }));
+
+      const allocated: DifficultyCounts = { easy: 0, medium: 0, hard: 0 };
+      let assigned = 0;
+
+      for (const share of rawShares) {
+        const base = Math.min(Math.floor(share.raw), remaining[share.level]);
+        allocated[share.level] = base;
+        assigned += base;
+      }
+
+      const sortedRemainders = rawShares
+        .map((share) => ({
+          level: share.level,
+          remainder: share.raw - Math.floor(share.raw),
+        }))
+        .sort((a, b) => b.remainder - a.remainder);
+
+      let pointer = 0;
+      while (assigned < batchSize) {
+        const current = sortedRemainders[pointer % sortedRemainders.length];
+        if (
+          allocated[current.level] < remaining[current.level]
+        ) {
+          allocated[current.level] += 1;
+          assigned += 1;
+        }
+        pointer += 1;
+      }
+
+      levels.forEach((level) => {
+        remaining[level] -= allocated[level];
+      });
+
+      perBatch.push(allocated);
+    }
+
+    return perBatch;
+  }
+
+  private sumCounts(counts: DifficultyCounts): number {
+    return counts.easy + counts.medium + counts.hard;
   }
 
   async enqueueGeneration(

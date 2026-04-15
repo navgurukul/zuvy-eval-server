@@ -511,8 +511,11 @@ export class AiAssessmentController {
   async createQdrantIndexes() {
     const collection = 'QUESTIONS';
     await this.vectorService.createPayloadIndex(collection, 'domainName', 'keyword');
-    await this.vectorService.createPayloadIndex(collection, 'topicName', 'keyword');
+    await this.vectorService.createPayloadIndex(collection, 'topic', 'keyword');
     await this.vectorService.createPayloadIndex(collection, 'difficulty', 'keyword');
-    return { message: 'Qdrant payload indexes created on QUESTIONS collection', fields: ['domainName', 'topicName', 'difficulty'] };
+    return {
+      message: 'Qdrant payload indexes created on QUESTIONS collection',
+      fields: ['domainName', 'topic', 'difficulty'],
+    };
   }
 }

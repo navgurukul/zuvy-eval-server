@@ -32,17 +32,26 @@ export class AiAssessmentMappingService {
       await this.helpers.clearExistingSets(tx, aiAssessmentId);
       const isBaseline = await this.helpers.checkIsBaseline(tx, assessment);
 
-      const queryVector = await this.helpers.buildQueryVector(assessment);
+      const queryVector = await this.helpers.buildScopedQueryVector(tx, assessment);
       const { commonPerSet, uniquePerSet, neededTotal } =
         this.helpers.calculateSetSizes(totalQuestions, isBaseline);
 
       let scopedIds: number[];
 
       if (assessment.scope === 'bootcamp') {
-        scopedIds = await this.helpers.searchPerDomain(tx, assessment.bootcampId, queryVector, neededTotal);
+        scopedIds = await this.helpers.searchBootcampScoped(
+          tx,
+          assessment.bootcampId,
+          queryVector,
+          neededTotal,
+        );
       } else {
-        const qdrantFilter = await this.helpers.resolveDomainFilter(tx, assessment);
-        scopedIds = await this.helpers.searchQuestions(queryVector, neededTotal, qdrantFilter);
+        scopedIds = await this.helpers.searchDomainScoped(
+          tx,
+          assessment,
+          queryVector,
+          neededTotal,
+        );
       }
 
       if (scopedIds.length === 0) {

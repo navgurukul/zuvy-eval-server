@@ -1,0 +1,21 @@
+name: deploy
+
+on:
+  push:
+    branches: ["main"]
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: SSH Deploy
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.EC2_DEP }}
+          username: ec2-user
+          key: ${{ secrets.EVAL_DEP }}
+          script: |
+            cd /app
+            git pull origin main
+            docker compose down
+            docker compose up -d --build

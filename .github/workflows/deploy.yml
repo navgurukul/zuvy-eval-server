@@ -17,5 +17,6 @@ jobs:
           script: |
             cd /app
             git pull origin main
-            docker compose down
+            docker stop zuvy-eval-server
+            docker rm zuvy-eval-server
             docker compose up -d --build

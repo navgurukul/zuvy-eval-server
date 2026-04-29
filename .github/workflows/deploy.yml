@@ -15,7 +15,7 @@ jobs:
           username: ec2-user
           key: ${{ secrets.EVAL_DEP }}
           script: |
-            cd /app
+            cd /home/ubuntu/zuvy-eval-server
             git pull origin main
             docker stop zuvy-eval-server
             docker rm zuvy-eval-server

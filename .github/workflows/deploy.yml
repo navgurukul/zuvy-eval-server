@@ -11,9 +11,9 @@ jobs:
       - name: SSH Deploy
         uses: appleboy/ssh-action@v1.0.3
         with:
-          host: ${{ secrets.EC2_DEP }}
-          username: ec2-user
-          key: ${{ secrets.EVAL_DEP }}
+          host: ${{ secrets.SSH_KEY }}
+          username: ubuntu
+          key: ${{ secrets.EC2_IP }}
           script: |
             cd /home/ubuntu/zuvy-eval-server
             git pull origin main

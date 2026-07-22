@@ -47,6 +47,7 @@ export class QuestionsService {
       questionStyle,
       difficultyDistribution,
       questionCounts,
+      subtopics,
     } = payload;
 
     if (
@@ -70,6 +71,7 @@ export class QuestionsService {
       questionStyle,
       difficultyDistribution,
       questionCounts,
+      subtopics,
     };
 
     for (const cfg of topicConfigurations) {
@@ -82,6 +84,7 @@ export class QuestionsService {
           ...baseContext,
           topicName: cfg.topicName,
           topicDescription: cfg.topicDescription,
+          subtopics: cfg.subtopics ?? subtopics,
           difficultyDistribution:
             cfg.difficultyDistribution ?? difficultyDistribution,
           questionCounts: cfg.questionCounts ?? questionCounts,

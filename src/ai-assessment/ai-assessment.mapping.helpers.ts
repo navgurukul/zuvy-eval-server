@@ -12,7 +12,7 @@ import { aiAssessment } from 'src/db/schema/ai-assessment';
 import { aiAssessmentQuestionSets } from './ai-assessment.question-set.schema';
 import { aiAssessmentQuestions } from './ai-assessment.questions.schema';
 import { zuvyQuestions } from 'src/questions/schema/zuvy-questions.schema';
-import { topic, zuvyCourseModules } from 'src/topic/db/topic.schema';
+import { topic } from 'src/topic/db/topic.schema';
 import { EmbeddingsService } from 'src/llm/embeddings.service';
 import { VectorService } from 'src/vector/vector.service';
 
@@ -157,12 +157,9 @@ export class AiAssessmentMappingHelpers {
     tx: Tx,
     assessment: any,
   ): Promise<Record<string, any> | undefined> {
-    if (assessment.scope !== 'domain' || !assessment.domainId) return undefined;
-
     const domainTopics = await tx
       .select({ name: topic.name })
-      .from(topic)
-      .where(eq(topic.moduleId, assessment.domainId));
+      .from(topic);
 
     if (domainTopics.length === 0) return undefined;
 
@@ -295,18 +292,9 @@ export class AiAssessmentMappingHelpers {
   // ─── Resolve bootcamp domain names ──────────────────────────────────
 
   private async resolveBootcampDomainNames(tx: Tx, bootcampId: number): Promise<string[]> {
-    const modules = await tx
-      .select({ moduleId: zuvyCourseModules.id })
-      .from(zuvyCourseModules)
-      .where(eq(zuvyCourseModules.bootcampId, String(bootcampId)));
-
-    if (modules.length === 0) return [];
-
-    const moduleIds = modules.map((m) => m.moduleId);
     const allTopics = await tx
       .select({ name: topic.name })
-      .from(topic)
-      .where(inArray(topic.moduleId, moduleIds));
+      .from(topic);
 
     if (allTopics.length === 0) return [];
 
@@ -319,40 +307,17 @@ export class AiAssessmentMappingHelpers {
   }
 
   private async resolveScopedTopicNames(tx: Tx, assessment: any): Promise<string[]> {
-    if (assessment.scope === 'domain' && assessment.domainId) {
-      const rows = await tx
-        .select({ name: topic.name })
-        .from(topic)
-        .where(eq(topic.moduleId, assessment.domainId));
-      return this.normalizeNames(rows.map((r) => r.name));
-    }
-
-    if (assessment.scope === 'bootcamp') {
-      const modules = await tx
-        .select({ moduleId: zuvyCourseModules.id })
-        .from(zuvyCourseModules)
-        .where(eq(zuvyCourseModules.bootcampId, String(assessment.bootcampId)));
-      if (modules.length === 0) return [];
-      const rows = await tx
-        .select({ name: topic.name })
-        .from(topic)
-        .where(inArray(topic.moduleId, modules.map((m) => m.moduleId)));
-      return this.normalizeNames(rows.map((r) => r.name));
-    }
-
-    return [];
+    const rows = await tx.select({ name: topic.name }).from(topic);
+    return this.normalizeNames(rows.map((r) => r.name));
   }
 
   private async resolveDomainScope(
     tx: Tx,
     assessment: any,
   ): Promise<{ domainName: string; topics: string[] } | null> {
-    if (assessment.scope !== 'domain' || !assessment.domainId) return null;
-
     const domainTopics = await tx
       .select({ name: topic.name })
-      .from(topic)
-      .where(eq(topic.moduleId, assessment.domainId));
+      .from(topic);
     const topics = this.normalizeNames(domainTopics.map((t) => t.name));
     if (topics.length === 0) return null;
 
@@ -370,16 +335,9 @@ export class AiAssessmentMappingHelpers {
     tx: Tx,
     bootcampId: number,
   ): Promise<Array<{ domainName: string; topics: string[] }>> {
-    const modules = await tx
-      .select({ moduleId: zuvyCourseModules.id })
-      .from(zuvyCourseModules)
-      .where(eq(zuvyCourseModules.bootcampId, String(bootcampId)));
-    if (modules.length === 0) return [];
-
     const allTopics = await tx
       .select({ name: topic.name })
-      .from(topic)
-      .where(inArray(topic.moduleId, modules.map((m) => m.moduleId)));
+      .from(topic);
     const topicNames = this.normalizeNames(allTopics.map((t) => t.name));
     if (topicNames.length === 0) return [];
 

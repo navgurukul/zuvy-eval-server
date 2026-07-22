@@ -31,6 +31,12 @@ export class TopicConfigurationDto {
   @IsString()
   topicDescription: string;
 
+  /** Selected concepts within this topic. These constrain question generation. */
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  subtopics?: string[];
+
   @IsInt()
   @Min(1)
   totalQuestions: number;
@@ -52,6 +58,12 @@ export class GenerateQuestionsDto {
   @IsArray()
   @IsString({ each: true })
   topicNames?: string[];
+
+  /** Selected concepts within the requested topic(s). */
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  subtopics?: string[];
 
   @IsInt()
   @Min(1)
@@ -119,6 +131,7 @@ export interface GenerateTopicBatchJobPayload {
   domainName?: string;
   topicName?: string;
   topicDescription?: string;
+  subtopics?: string[];
   learningObjectives?: string;
   targetAudience?: string;
   focusAreas?: string;

@@ -1,10 +1,6 @@
-import { IsInt, IsNotEmpty, IsOptional, IsString, MaxLength, Min } from 'class-validator';
+import { IsInt, IsNotEmpty, IsOptional, IsString, MaxLength, Min ,IsObject} from 'class-validator';
 
 export class CreateTopicDto {
-  @IsInt()
-  @Min(1)
-  moduleId: number;
-
   @IsString()
   @IsNotEmpty()
   @MaxLength(255)
@@ -13,4 +9,8 @@ export class CreateTopicDto {
   @IsOptional()
   @IsString()
   description?: string;
+
+  @IsOptional()
+  @IsObject()
+  subtopic?: string;
 }

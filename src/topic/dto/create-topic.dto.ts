@@ -12,5 +12,5 @@ export class CreateTopicDto {
 
   @IsOptional()
   @IsObject()
-  subtopic?: string;
+  subtopic?: Record<string, string>;
 }

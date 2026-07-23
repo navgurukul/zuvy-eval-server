@@ -16,7 +16,7 @@ const BATCH_SIZE = 50;
 
 @Processor(OUTBOX_QUEUE)
 export class QuestionIndexOutboxProcessor extends WorkerHost {
-  private readonly logger = new Logger(QuestionIndexOutboxProcessor.name);
+  private readonly logger = new Logger(.name);
 
   constructor(
     @Inject(DRIZZLE_DB) private readonly db: NodePgDatabase,

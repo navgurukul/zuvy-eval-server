@@ -2,7 +2,7 @@
  * Payload stored with a vector (e.g. questionId, level band for questions).
  * All values should be JSON-serializable.
  */
-export type VectorPayload = Record<string, string | number | boolean | null>;
+export type VectorPayload = Record<string, string | number | boolean | null | string[]>;
 
 /**
  * Single point: id, embedding vector, and optional metadata.

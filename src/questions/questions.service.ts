@@ -47,6 +47,7 @@ export class QuestionsService {
       questionStyle,
       difficultyDistribution,
       questionCounts,
+      subtopics,
     } = payload;
 
     if (
@@ -70,6 +71,7 @@ export class QuestionsService {
       questionStyle,
       difficultyDistribution,
       questionCounts,
+      subtopics,
     };
 
     for (const cfg of topicConfigurations) {
@@ -82,6 +84,7 @@ export class QuestionsService {
           ...baseContext,
           topicName: cfg.topicName,
           topicDescription: cfg.topicDescription,
+          subtopics: cfg.subtopics ?? subtopics,
           difficultyDistribution:
             cfg.difficultyDistribution ?? difficultyDistribution,
           questionCounts: cfg.questionCounts ?? questionCounts,
@@ -246,6 +249,7 @@ export class QuestionsService {
         domainName: dto.domainName,
         topicName: dto.topicName,
         topicDescription: dto.topicDescription,
+        subtopics: dto.subtopics ?? null,
         learningObjectives: dto.learningObjectives ?? null,
         targetAudience: dto.targetAudience ?? null,
         focusAreas: dto.focusAreas ?? null,
@@ -275,6 +279,7 @@ export class QuestionsService {
           domainName: r.domainName,
           topicName: r.topicName,
           topicDescription: r.topicDescription,
+          subtopics: r.subtopics ?? null,
           learningObjectives: r.learningObjectives ?? null,
           targetAudience: r.targetAudience ?? null,
           focusAreas: r.focusAreas ?? null,
@@ -310,6 +315,7 @@ export class QuestionsService {
             domainName: r.domainName,
             topicName: r.topicName,
             topicDescription: r.topicDescription,
+            subtopics: r.subtopics ?? null,
             learningObjectives: r.learningObjectives ?? null,
             targetAudience: r.targetAudience ?? null,
             focusAreas: r.focusAreas ?? null,

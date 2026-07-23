@@ -22,6 +22,7 @@ export class QuestionsCrudService {
         domainName: dto.domainName,
         topicName: dto.topicName,
         topicDescription: dto.topicDescription,
+        subtopics: dto.subtopics ?? null,
         learningObjectives: dto.learningObjectives ?? null,
         targetAudience: dto.targetAudience ?? null,
         focusAreas: dto.focusAreas ?? null,
@@ -151,6 +152,7 @@ export class QuestionsCrudService {
       'domainName',
       'topicName',
       'topicDescription',
+      'subtopics',
       'question',
       'difficulty',
       'language',
@@ -206,4 +208,3 @@ export class QuestionsCrudService {
     return row;
   }
 }
-

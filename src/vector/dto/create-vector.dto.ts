@@ -7,6 +7,7 @@ import {
   ValidateNested,
 } from 'class-validator';
 import { Type } from 'class-transformer';
+import type { VectorPayload } from '../interfaces/vector-store.interface';
 
 export class VectorPointDto {
   @IsString()
@@ -18,7 +19,7 @@ export class VectorPointDto {
 
   @IsOptional()
   @IsObject()
-  payload?: Record<string, string | number | boolean | null>;
+  payload?: VectorPayload;
 }
 
 export class UpsertVectorsDto {

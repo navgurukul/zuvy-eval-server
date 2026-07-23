@@ -154,6 +154,7 @@ export interface McqGenerationSpec {
   domainName?: string;
   topicName?: string;
   topicDescription?: string;
+  subtopics?: string[];
   learningObjectives?: string;
   targetAudience?: string;
   focusAreas?: string;
@@ -174,6 +175,7 @@ export function generateMcqPromptFromSpec(
     domainName,
     topicName,
     topicDescription,
+    subtopics,
     learningObjectives,
     targetAudience,
     focusAreas,
@@ -211,6 +213,10 @@ export function generateMcqPromptFromSpec(
   if (topicName) sections.push(`- Topic name: ${topicName}`);
   if (topicDescription) sections.push(`- Topic description: ${topicDescription}`);
   sections.push(`- Primary topic for this batch: ${topic}`);
+  if (subtopics?.length) {
+    sections.push(`- Selected subtopics/concepts: ${subtopics.join(', ')}`);
+    sections.push('- Generate questions only from the selected subtopics/concepts.');
+  }
   if (learningObjectives) sections.push(`- Learning objectives: ${learningObjectives}`);
   if (targetAudience) sections.push(`- Target audience: ${targetAudience}`);
   if (focusAreas) sections.push(`- Focus areas: ${focusAreas}`);

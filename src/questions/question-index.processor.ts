@@ -54,6 +54,7 @@ export class QuestionIndexProcessor extends WorkerHost {
           question: zuvyQuestions.question,
           topicName: zuvyQuestions.topicName,
           topicDescription: zuvyQuestions.topicDescription,
+          subtopics: zuvyQuestions.subtopics,
           difficulty: zuvyQuestions.difficulty,
           levelId: zuvyQuestions.levelId,
           domainName: zuvyQuestions.domainName,
@@ -80,6 +81,7 @@ export class QuestionIndexProcessor extends WorkerHost {
           r.question,
           r.topicName ?? '',
           r.topicDescription ?? '',
+          ...(Array.isArray(r.subtopics) ? r.subtopics : []),
           r.difficulty ?? '',
         ]
           .filter(Boolean)
@@ -98,6 +100,7 @@ export class QuestionIndexProcessor extends WorkerHost {
             topic: row.topicName ?? '',
             difficulty: row.difficulty ?? null,
             topicDescription: row.topicDescription ?? '',
+            subtopics: Array.isArray(row.subtopics) ? row.subtopics : [],
             domainName: row.domainName ?? '',
           },
         }))
@@ -157,4 +160,3 @@ export class QuestionIndexProcessor extends WorkerHost {
     }
   }
 }
-

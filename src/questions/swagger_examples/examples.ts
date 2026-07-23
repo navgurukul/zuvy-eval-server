@@ -5,6 +5,7 @@ export const generateQuestionsExample = {
       domainName: 'Web Development',
       topicName: 'REST APIs',
       topicDescription: 'Async and Await calls',
+      subtopics: ['Async/Await', 'Error Handling'],
       numberOfQuestions: 5,
       learningObjectives: 'To understand asynchronous API calls',
       targetAudience: 'Beginner students',
@@ -24,8 +25,20 @@ export const generateQuestionsExample = {
       topics: {
         'REST APIs': 5,
       },
+      topicConfigurations: [
+        {
+          topicName: 'REST APIs',
+          topicDescription: 'Async and Await calls',
+          subtopics: ['Async/Await', 'Error Handling'],
+          totalQuestions: 5,
+          questionCounts: {
+            easy: 1,
+            medium: 2,
+            hard: 2,
+          },
+        },
+      ],
       levelId: null,
     },
   },
 };
-

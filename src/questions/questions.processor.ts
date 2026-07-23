@@ -135,6 +135,7 @@ export class QuestionsProcessor extends WorkerHost {
           domainName: domainNameForInsert,
           topicName,
           topicDescription,
+          subtopics: job.data.subtopics,
           learningObjectives: job.data.learningObjectives,
           targetAudience: job.data.targetAudience,
           focusAreas: job.data.focusAreas,

@@ -18,6 +18,8 @@ export const zuvyCourseModules = main.table('zuvy_course_modules', {
 
 export const topic = main.table('topic', {
   id: serial('id').primaryKey().notNull(),
+  // Topics are tenant-owned. All reads and mutations must be scoped by this value.
+  orgId: varchar('org_id', { length: 255 }).notNull(),
   name: varchar('name', { length: 255 }).notNull(),
   description: text('description'),
   subtopic: jsonb('subtopic'),

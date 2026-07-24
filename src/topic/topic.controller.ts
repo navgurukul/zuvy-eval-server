@@ -6,6 +6,7 @@ import {
   Param,
   Patch,
   Post,
+  Req,
   UseGuards,
 } from '@nestjs/common';
 import {
@@ -14,6 +15,7 @@ import {
   ApiOperation,
   ApiTags,
 } from '@nestjs/swagger';
+import { Request } from 'express';
 import { JwtAuthGuard } from 'src/auth/guards/jwt-auth.guard';
 import { TopicService } from './topic.service';
 import { CreateTopicDto } from './dto/create-topic.dto';
@@ -42,23 +44,25 @@ export class TopicController {
     },
   })
   create(
+    @Req() req: Request & { user?: { orgId?: number | string } },
     @Body() createTopicDto: CreateTopicDto,
   ) {
-    return this.topicService.create(createTopicDto);
+    return this.topicService.create(this.getOrgId(req), createTopicDto);
   }
 
   @Get()
   @ApiOperation({ summary: 'List topics' })
-  findAll() {
-    return this.topicService.findAll();
+  findAll(@Req() req: Request & { user?: { orgId?: number | string } }) {
+    return this.topicService.findAll(this.getOrgId(req));
   }
 
   @Get(':id')
   @ApiOperation({ summary: 'Get a single topic' })
   findOne(
+    @Req() req: Request & { user?: { orgId?: number | string } },
     @Param('id') id: string,
   ) {
-    return this.topicService.findOne(+id);
+    return this.topicService.findOne(this.getOrgId(req), +id);
   }
 
   @Patch(':id')
@@ -73,17 +77,23 @@ export class TopicController {
     },
   })
   update(
+    @Req() req: Request & { user?: { orgId?: number | string } },
     @Param('id') id: string,
     @Body() updateTopicDto: UpdateTopicDto,
   ) {
-    return this.topicService.update(+id, updateTopicDto);
+    return this.topicService.update(this.getOrgId(req), +id, updateTopicDto);
   }
 
   @Delete(':id')
   @ApiOperation({ summary: 'Delete a topic' })
   remove(
+    @Req() req: Request & { user?: { orgId?: number | string } },
     @Param('id') id: string,
   ) {
-    return this.topicService.remove(+id);
+    return this.topicService.remove(this.getOrgId(req), +id);
+  }
+
+  private getOrgId(req: Request & { user?: { orgId?: number | string } }): string {
+    return req.user?.orgId != null ? String(req.user.orgId) : '';
   }
 }

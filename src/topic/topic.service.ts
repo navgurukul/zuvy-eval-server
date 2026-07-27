@@ -6,6 +6,7 @@ import {
 } from '@nestjs/common';
 import { CreateTopicDto } from './dto/create-topic.dto';
 import { UpdateTopicDto } from './dto/update-topic.dto';
+import { AddSubtopicDto } from './dto/add-subtopic.dto';
 import { DRIZZLE_DB } from 'src/db/constant';
 import { NodePgDatabase } from 'drizzle-orm/node-postgres';
 import { topic } from './db/topic.schema';
@@ -26,12 +27,12 @@ export class TopicService {
         subtopic: createTopicDto.subtopic ?? null,
       })
       .returning();
-    return created;
+    return this.withNormalizedSubtopics(created);
   }
 
   async findAll(orgId: string) {
     const scopedOrgId = this.requireOrgId(orgId);
-    return this.db
+    const topics = await this.db
       .select({
         id: topic.id,
         orgId: topic.orgId,
@@ -43,6 +44,7 @@ export class TopicService {
       })
       .from(topic)
       .where(eq(topic.orgId, scopedOrgId));
+    return topics.map((row) => this.withNormalizedSubtopics(row));
   }
 
   async findOne(orgId: string, id: number) {
@@ -61,7 +63,7 @@ export class TopicService {
       .where(and(eq(topic.id, id), eq(topic.orgId, scopedOrgId)))
       .limit(1);
     if (!row) throw new NotFoundException(`Topic with id=${id} not found`);
-    return row;
+    return this.withNormalizedSubtopics(row);
   }
 
   async update(orgId: string, id: number, updateTopicDto: UpdateTopicDto) {
@@ -81,7 +83,35 @@ export class TopicService {
       .where(and(eq(topic.id, id), eq(topic.orgId, scopedOrgId)))
       .returning();
     if (!updated) throw new NotFoundException(`Topic with id=${id} not found`);
-    return updated;
+    return this.withNormalizedSubtopics(updated);
+  }
+
+  async addSubtopic(orgId: string, id: number, addSubtopicDto: AddSubtopicDto) {
+    const scopedOrgId = this.requireOrgId(orgId);
+    const name = addSubtopicDto.subtopic.trim();
+    if (!name) {
+      throw new BadRequestException('Subtopic name cannot be empty');
+    }
+
+    const existingTopic = await this.findOne(scopedOrgId, id);
+    const existingSubtopics = this.normalizeSubtopics(existingTopic.subtopic);
+    const duplicate = existingSubtopics.some(
+      (subtopicName) => subtopicName.toLocaleLowerCase() === name.toLocaleLowerCase(),
+    );
+    if (duplicate) {
+      throw new BadRequestException(`Subtopic \"${name}\" already exists`);
+    }
+
+    const [updated] = await this.db
+      .update(topic)
+      .set({
+        subtopic: [...existingSubtopics, name],
+        updatedAt: new Date().toISOString(),
+      })
+      .where(and(eq(topic.id, id), eq(topic.orgId, scopedOrgId)))
+      .returning();
+    if (!updated) throw new NotFoundException(`Topic with id=${id} not found`);
+    return this.withNormalizedSubtopics(updated);
   }
 
   async remove(orgId: string, id: number) {
@@ -100,5 +130,38 @@ export class TopicService {
       throw new BadRequestException('orgId is required');
     }
     return scopedOrgId;
+  }
+
+  private normalizeSubtopics(value: unknown): string[] {
+    if (!value) return [];
+
+    // Accept arrays too, so older/newer clients can safely migrate to a
+    // simple list of names without losing their existing concepts.
+    if (Array.isArray(value)) {
+      return value.reduce<string[]>((subtopics, subtopic) => {
+        if (typeof subtopic === 'string' && subtopic.trim()) {
+          subtopics.push(subtopic.trim());
+        }
+        return subtopics;
+      }, []);
+    }
+
+    if (typeof value === 'object') {
+      return Object.keys(value as Record<string, unknown>).reduce<string[]>(
+        (subtopics, name) => {
+          if (name.trim()) {
+            subtopics.push(name.trim());
+          }
+          return subtopics;
+        },
+        [],
+      );
+    }
+
+    return [];
+  }
+
+  private withNormalizedSubtopics<T extends { subtopic: unknown }>(row: T) {
+    return { ...row, subtopic: this.normalizeSubtopics(row.subtopic) };
   }
 }

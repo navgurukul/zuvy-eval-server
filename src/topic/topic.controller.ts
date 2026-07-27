@@ -20,6 +20,7 @@ import { JwtAuthGuard } from 'src/auth/guards/jwt-auth.guard';
 import { TopicService } from './topic.service';
 import { CreateTopicDto } from './dto/create-topic.dto';
 import { UpdateTopicDto } from './dto/update-topic.dto';
+import { AddSubtopicDto } from './dto/add-subtopic.dto';
 import {
   createTopicExample,
   updateTopicExample,
@@ -82,6 +83,31 @@ export class TopicController {
     @Body() updateTopicDto: UpdateTopicDto,
   ) {
     return this.topicService.update(this.getOrgId(req), +id, updateTopicDto);
+  }
+
+  @Post(':id/subtopics')
+  @ApiOperation({ summary: 'Add a subtopic to an existing topic' })
+  @ApiBody({
+    type: AddSubtopicDto,
+    examples: {
+      addSubtopic: {
+        summary: 'Add one subtopic',
+        value: {
+          subtopic: 'Investment Planning',
+        },
+      },
+    },
+  })
+  addSubtopic(
+    @Req() req: Request & { user?: { orgId?: number | string } },
+    @Param('id') id: string,
+    @Body() addSubtopicDto: AddSubtopicDto,
+  ) {
+    return this.topicService.addSubtopic(
+      this.getOrgId(req),
+      +id,
+      addSubtopicDto,
+    );
   }
 
   @Delete(':id')

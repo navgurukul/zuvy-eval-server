@@ -1,4 +1,4 @@
-import { IsInt, IsNotEmpty, IsOptional, IsString, MaxLength, Min ,IsObject} from 'class-validator';
+import { IsArray, IsNotEmpty, IsOptional, IsString, MaxLength } from 'class-validator';
 
 export class CreateTopicDto {
   @IsString()
@@ -11,6 +11,7 @@ export class CreateTopicDto {
   description?: string;
 
   @IsOptional()
-  @IsObject()
-  subtopic?: Record<string, string>;
+  @IsArray()
+  @IsString({ each: true })
+  subtopic?: string[];
 }

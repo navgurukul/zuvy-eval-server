@@ -51,9 +51,6 @@ export class TopicConfigurationDto {
 }
 
 export class GenerateQuestionsDto {
-  @IsString()
-  domainName: string;
-
   @IsOptional()
   @IsArray()
   @IsString({ each: true })

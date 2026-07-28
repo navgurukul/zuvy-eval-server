@@ -39,7 +39,6 @@ export class QuestionsService {
     const {
       topicConfigurations,
       levelId,
-      domainName,
       learningObjectives,
       targetAudience,
       focusAreas,
@@ -63,7 +62,6 @@ export class QuestionsService {
     const baseContext: Omit<GenerateTopicBatchJobPayload, 'topic' | 'count'> = {
       orgId,
       levelId: levelId ?? null,
-      domainName,
       learningObjectives,
       targetAudience,
       focusAreas,

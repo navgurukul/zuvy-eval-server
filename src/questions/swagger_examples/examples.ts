@@ -2,7 +2,6 @@ export const generateQuestionsExample = {
   basicExample: {
     summary: 'Generate questions for a single topic',
     value: {
-      domainName: 'Web Development',
       topicName: 'REST APIs',
       topicDescription: 'Async and Await calls',
       subtopics: ['Async/Await', 'Error Handling'],

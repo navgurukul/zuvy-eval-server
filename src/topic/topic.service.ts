@@ -35,7 +35,6 @@ export class TopicService {
     const topics = await this.db
       .select({
         id: topic.id,
-        topicname: topic.name,
         orgId: topic.orgId,
         name: topic.name,
         description: topic.description,

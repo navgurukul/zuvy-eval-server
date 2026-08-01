@@ -15,6 +15,17 @@ import { Type } from 'class-transformer';
 
 export type AssessmentScope = 'bootcamp' | 'domain';
 
+/*
+1.objective.
+2.expectedOutcomes
+3. asseementType   ["checkpoint","milestone"]
+4. targetLevel   nullable.
+5.timeLimit
+6.Proctoring {blockCopyandPaste:boolean  , flagTabChanges: boolean  }
+
+
+*/
+
 export class CreateAiAssessmentDto {
   @IsInt()
   @Min(1)
@@ -35,7 +46,11 @@ export class CreateAiAssessmentDto {
 
   @IsString()
   @IsNotEmpty()
-  title: string;
+  title: string; //present//
+
+  @IsString()
+  @IsNotEmpty()
+  objective: string;
 
   @IsOptional()
   @IsString()
@@ -44,9 +59,13 @@ export class CreateAiAssessmentDto {
   @IsOptional()
   audience?: any;
 
+  @IsOptional()
+  @IsString()
+  expectedOutcomes?: string;
+
   @IsInt()
   @Min(1)
-  totalNumberOfQuestions: number;
+  totalNumberOfQuestions: number; // present//
 
   @IsOptional()
   @IsDateString()

@@ -45,6 +45,8 @@ export const aiAssessment = main.table("ai_assessment", {
   domainId: integer('domain_id').references(() => zuvyCourseModules.id),
   title: varchar("title", { length: 255 }).notNull(),
   description: text("description"),
+  objective: varchar("objective", { length: 255 }).notNull(),
+  expectedOutcomes: varchar("expected_outcomes", { length: 255 }),
   audience: jsonb("audience").default(null),
   totalNumberOfQuestions: integer("total_number_of_questions").notNull(),
   totalQuestionsWithBuffer: integer("total_questions_with_buffer").notNull(),

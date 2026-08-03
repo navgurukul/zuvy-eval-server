@@ -21,6 +21,7 @@ import { TopicService } from './topic.service';
 import { CreateTopicDto } from './dto/create-topic.dto';
 import { UpdateTopicDto } from './dto/update-topic.dto';
 import { AddSubtopicDto } from './dto/add-subtopic.dto';
+import { GetTopicDto } from './dto/get-topic.dto';
 import {
   createTopicExample,
   updateTopicExample,
@@ -121,5 +122,32 @@ export class TopicController {
 
   private getOrgId(req: Request & { user?: { orgId?: number | string } }): string {
     return req.user?.orgId != null ? String(req.user.orgId) : '';
+  }
+
+  @Post('resolve-tags-from-chapter-ids')
+  @ApiOperation({ summary: 'Resolve tags from chapter IDs' })
+  @ApiBody({
+    description: 'Provide chapter IDs to resolve associated tags',
+    type: GetTopicDto,
+    examples: {
+      resolveTagsFromChapterIds: {
+        summary: 'Resolve tags from chapter IDs',
+        value: {
+          chapterIds: [6157, 6158, 6159],
+          bootcampId: 873,
+          moduleId: 806,
+        },
+      },
+    },
+  })
+  resolveTagsFromChapterIds(
+    @Req() req: Request & { user?: { orgId?: number | string } },
+    @Body() body: GetTopicDto,
+  ) {
+    return this.topicService.resolveTagsFromChapterIds(
+      this.getOrgId(req),
+      body,
+      req.headers.authorization,
+    );
   }
 }

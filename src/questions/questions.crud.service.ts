@@ -1,7 +1,7 @@
 import { BadRequestException, Injectable, NotFoundException, Inject } from '@nestjs/common';
 import { DRIZZLE_DB } from 'src/db/constant';
 import { NodePgDatabase } from 'drizzle-orm/node-postgres';
-import { and, desc, eq, sql } from 'drizzle-orm';
+import { and, desc, eq, ne, sql } from 'drizzle-orm';
 import { zuvyQuestions } from './schema/zuvy-questions.schema';
 import { CreateQuestionDto } from './dto/create-question.dto';
 import { UpdateQuestionDto } from './dto/update-question.dto';
@@ -206,5 +206,62 @@ export class QuestionsCrudService {
     }
 
     return row;
+  }
+
+
+  async findReplacements(params: {
+    orgId: string;
+    topicName: string;
+    difficulty: string;
+    excludeId?: number;
+  }): Promise<{ data: unknown[]; total: number }> {
+    const orgId = params.orgId?.trim();
+    if (!orgId) {
+      throw new BadRequestException('orgId is required');
+    }
+
+    const topicName = params.topicName?.trim();
+    if (!topicName) {
+      throw new BadRequestException('topicName is required');
+    }
+
+    const difficulty = params.difficulty?.trim();
+    if (!difficulty) {
+      throw new BadRequestException('difficulty is required');
+    }
+
+    const conditions: any[] = [
+      eq(zuvyQuestions.orgId, orgId),
+      sql`LOWER(${zuvyQuestions.topicName}) = LOWER(${topicName})`,
+      sql`LOWER(${zuvyQuestions.difficulty}) = LOWER(${difficulty})`,
+    ];
+
+    if (params.excludeId && Number.isInteger(params.excludeId) && params.excludeId > 0) {
+      conditions.push(ne(zuvyQuestions.id, params.excludeId));
+    }
+
+    const whereClause = and(...conditions);
+
+    const data = await this.db
+      .select({
+        id: zuvyQuestions.id,
+        topicName: zuvyQuestions.topicName,
+        difficulty: zuvyQuestions.difficulty,
+        question: zuvyQuestions.question,
+        options: zuvyQuestions.options,
+        correctOption: zuvyQuestions.correctOption,
+        levelId: zuvyQuestions.levelId,
+      })
+      .from(zuvyQuestions)
+      .where(whereClause as any)
+      .orderBy(desc(zuvyQuestions.createdAt));
+
+    if (data.length === 0) {
+      throw new NotFoundException(
+        `No questions found for topic "${topicName}" with difficulty "${difficulty}"`,
+      );
+    }
+
+    return { data, total: data.length };
   }
 }

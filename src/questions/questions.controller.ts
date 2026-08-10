@@ -48,6 +48,27 @@ export class QuestionsController {
     return this.questionsCrudService.create(orgId ?? '', createQuestionDto);
   }
 
+  @Get('replace')
+  @UseGuards(JwtAuthGuard)
+  @ApiOperation({ summary: 'Get replacement questions filtered by topic and difficulty (used by Review → Replace)' })
+  @ApiQuery({ name: 'topicName', required: true, type: String, example: 'HTML & CSS' })
+  @ApiQuery({ name: 'difficulty', required: true, type: String, example: 'easy' })
+  @ApiQuery({ name: 'excludeId', required: false, type: Number, example: 42, description: 'ID of the current question to exclude' })
+  findReplacement(
+    @Req() req: Request & { user?: { orgId?: number | string } },
+    @Query('topicName') topicName: string,
+    @Query('difficulty') difficulty: string,
+    @Query('excludeId') excludeId?: string,
+  ) {
+    const orgId = req.user?.orgId != null ? String(req.user.orgId) : undefined;
+    return this.questionsCrudService.findReplacements({
+      orgId: orgId ?? '',
+      topicName,
+      difficulty,
+      excludeId: excludeId ? Number(excludeId) : undefined,
+    });
+  }
+
   @Get()
   @ApiQuery({ name: 'page', required: false, type: Number, example: 1 })
   @ApiQuery({ name: 'limit', required: false, type: Number, example: 20 })

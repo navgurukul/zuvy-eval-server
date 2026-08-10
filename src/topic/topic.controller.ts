@@ -58,6 +58,14 @@ export class TopicController {
     return this.topicService.findAll(this.getOrgId(req));
   }
 
+  @Get('with-difficulty-levels')
+  @ApiOperation({ summary: 'Get topics with difficulty levels' })
+  getAllTopicsWithDifficultyLevels(
+    @Req() req: Request & { user?: { orgId?: number | string } },
+  ) {
+    return this.topicService.getAllTopicsWithDifficultyLevels(this.getOrgId(req));
+  }
+
   @Get(':id')
   @ApiOperation({ summary: 'Get a single topic' })
   findOne(

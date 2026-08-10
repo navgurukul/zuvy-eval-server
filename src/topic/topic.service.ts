@@ -10,6 +10,7 @@ import { AddSubtopicDto } from './dto/add-subtopic.dto';
 import { DRIZZLE_DB } from 'src/db/constant';
 import { NodePgDatabase } from 'drizzle-orm/node-postgres';
 import { topic } from './db/topic.schema';
+import { zuvyQuestions } from 'src/questions/schema/zuvy-questions.schema';
 import { and, eq } from 'drizzle-orm';
 
 @Injectable()
@@ -227,5 +228,42 @@ export class TopicService {
     return allTags
       .filter((t) => tagIdSet.has(t.id))
       .map((t) => ({ tagId: t.id, topicName: t.tagName }));
+  }
+
+   async getAllTopicsWithDifficultyLevels(orgId: string) {
+    const scopedOrgId = this.requireOrgId(orgId);
+    const topicQuestions = await this.db
+      .select({
+        id: topic.id,
+        name: topic.name,
+        difficulty: zuvyQuestions.difficulty,
+      })
+      .from(topic)
+      .leftJoin(zuvyQuestions, eq(topic.name, zuvyQuestions.topicName))
+      .where(eq(topic.orgId, scopedOrgId));
+
+    const topicsById = new Map<
+      number,
+      {
+        name: string;
+        difficultyLevel: { easy: number; medium: number; hard: number };
+      }
+    >();
+
+    for (const { id, name, difficulty } of topicQuestions) {
+      const topicWithDifficulty = topicsById.get(id) ?? {
+        name,
+        difficultyLevel: { easy: 0, medium: 0, hard: 0 },
+      };
+      const normalizedDifficulty = difficulty?.trim().toLowerCase();
+
+      if (normalizedDifficulty === 'easy') topicWithDifficulty.difficultyLevel.easy += 1;
+      if (normalizedDifficulty === 'medium') topicWithDifficulty.difficultyLevel.medium += 1;
+      if (normalizedDifficulty === 'hard') topicWithDifficulty.difficultyLevel.hard += 1;
+
+      topicsById.set(id, topicWithDifficulty);
+    }
+
+    return [...topicsById.values()];
   }
 }

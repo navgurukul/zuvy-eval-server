@@ -11,6 +11,16 @@ import {
   ValidateIf,
   ValidateNested,
 } from 'class-validator';
+
+class PoolTopicDto {
+  @IsInt()
+  @Min(1)
+  id: number;
+
+  @IsString()
+  @IsNotEmpty()
+  name: string;
+}
 import { Type } from 'class-transformer';
 
 export type AssessmentScope = 'bootcamp' | 'domain';
@@ -54,10 +64,10 @@ export class CreateAiAssessmentDto {
 
   @IsOptional()
   @IsString()
-  description?: string;
+  description?: string | null;
 
   @IsOptional()
-  audience?: any;
+  audience?: any | null;
 
   @IsOptional()
   @IsString()
@@ -66,6 +76,16 @@ export class CreateAiAssessmentDto {
   @IsInt()
   @Min(1)
   totalNumberOfQuestions: number; // present//
+
+  @IsArray()
+  @ArrayMinSize(1)
+  chapterIds: number[];
+
+  @IsArray()
+  @ArrayMinSize(1)
+  @ValidateNested({ each: true })
+  @Type(() => PoolTopicDto)
+  poolTopics: PoolTopicDto[];
 
   @IsOptional()
   @IsDateString()

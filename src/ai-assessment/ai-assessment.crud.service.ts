@@ -355,6 +355,8 @@ export class AiAssessmentCrudService {
             objective: dto.objective,
             description: dto.description ?? null,
             audience: dto.audience ?? null,
+            chapterIds: dto.chapterIds ?? [],
+            poolTopics: dto.poolTopics ?? [],
             expectedOutcomes: dto.expectedOutcomes ?? null,
             totalNumberOfQuestions: dto.totalNumberOfQuestions,
             totalQuestionsWithBuffer: Math.floor(

@@ -48,6 +48,8 @@ export const aiAssessment = main.table("ai_assessment", {
   objective: varchar("objective", { length: 255 }).notNull(),
   expectedOutcomes: varchar("expected_outcomes", { length: 255 }),
   audience: jsonb("audience").default(null),
+  chapterIds: jsonb("chapter_ids").$type<number[]>().default([]),
+  poolTopics: jsonb("pool_topics").$type<Array<{ id: number; name: string }>>().default([]),
   totalNumberOfQuestions: integer("total_number_of_questions").notNull(),
   totalQuestionsWithBuffer: integer("total_questions_with_buffer").notNull(),
   startDatetime: timestamp('start_datetime', { withTimezone: true, mode: 'string' }),

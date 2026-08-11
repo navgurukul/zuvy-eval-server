@@ -49,25 +49,22 @@ export class QuestionsProcessor extends WorkerHost {
       `Processing job ${job.id}: topic=${topic}, count=${count}, levelId=${levelId ?? 'null'}`,
     );
 
-    const domainName = job.data.domainName ?? '';
     let existingTexts: string[] = [];
-    if (domainName) {
-      try {
-        existingTexts = await this.questionsService.getQuestionTextsByDomain(
-          domainName,
-          200,
-        );
-      } catch (err) {
-        this.logger.warn(
-          `Job ${job.id}: could not load existing questions for domain "${domainName}", continuing without them: ${
-            err instanceof Error ? err.message : String(err)
-          }`,
-        );
-      }
+    try {
+      existingTexts = await this.questionsService.getQuestionTextsByTopic(
+        topic,
+        200,
+      );
+    } catch (err) {
+      this.logger.warn(
+        `Job ${job.id}: could not load existing questions for topic "${topic}", continuing without them: ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      );
     }
     if (existingTexts.length > 0) {
       this.logger.log(
-        `Job ${job.id}: including ${existingTexts.length} existing questions for domain "${domainName}" in prompt to avoid duplicates.`,
+        `Job ${job.id}: including ${existingTexts.length} existing questions for topic "${topic}" in prompt to avoid duplicates.`,
       );
     }
 
@@ -109,7 +106,6 @@ export class QuestionsProcessor extends WorkerHost {
       }
     }
 
-    const domainNameForInsert = job.data.domainName ?? 'Unknown';
     const topicName = job.data.topicName ?? topic;
     const topicDescription = job.data.topicDescription ?? '';
 
@@ -132,7 +128,6 @@ export class QuestionsProcessor extends WorkerHost {
 
         return {
           orgId: orgId ?? undefined,
-          domainName: domainNameForInsert,
           topicName,
           topicDescription,
           subtopics: job.data.subtopics,

@@ -42,7 +42,8 @@ export const aiAssessment = main.table("ai_assessment", {
     .references(() => zuvyModuleChapter.id),
   scope: assessmentScopeEnum('scope').notNull().default('bootcamp'),
   status: assessmentStatusEnum('status').notNull().default('draft'),
-  domainId: integer('domain_id').references(() => zuvyCourseModules.id),
+  /** Course module id (DB column kept as domain_id for compatibility). */
+  moduleId: integer('domain_id').references(() => zuvyCourseModules.id),
   title: varchar("title", { length: 255 }).notNull(),
   description: text("description"),
   objective: varchar("objective", { length: 255 }).notNull(),

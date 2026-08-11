@@ -244,7 +244,7 @@ export class QuestionsService {
       .insert(zuvyQuestions)
       .values({
         orgId: orgId.trim(),
-        domainName: dto.domainName,
+        domainName: '',
         topicName: dto.topicName,
         topicDescription: dto.topicDescription,
         subtopics: dto.subtopics ?? null,
@@ -274,7 +274,7 @@ export class QuestionsService {
       .values(
         rows.map((r) => ({
           orgId: r.orgId ?? null,
-          domainName: r.domainName,
+          domainName: '',
           topicName: r.topicName,
           topicDescription: r.topicDescription,
           subtopics: r.subtopics ?? null,
@@ -310,7 +310,7 @@ export class QuestionsService {
         .values(
           rows.map((r) => ({
             orgId: r.orgId ?? null,
-            domainName: r.domainName,
+            domainName: '',
             topicName: r.topicName,
             topicDescription: r.topicDescription,
             subtopics: r.subtopics ?? null,
@@ -346,18 +346,18 @@ export class QuestionsService {
   }
 
   /**
-   * Fetch question texts for a given domain so we can include them in the LLM prompt
+   * Fetch question texts for a given topic so we can include them in the LLM prompt
    * and avoid generating exact duplicates.
    */
-  async getQuestionTextsByDomain(
-    domainName: string,
+  async getQuestionTextsByTopic(
+    topicName: string,
     limit = 200,
   ): Promise<string[]> {
-    if (!domainName?.trim()) return [];
+    if (!topicName?.trim()) return [];
     const rows = await this.db
       .select({ question: zuvyQuestions.question })
       .from(zuvyQuestions)
-      .where(eq(zuvyQuestions.domainName, domainName.trim()))
+      .where(eq(zuvyQuestions.topicName, topicName.trim()))
       .limit(limit);
     return rows.map((r) => r.question).filter(Boolean);
   }

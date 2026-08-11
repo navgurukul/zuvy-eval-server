@@ -52,7 +52,7 @@ export const submitAssessmentExample = {
 export const scoreSubmitExample = {
   assessmentId: 137,
   courseId: 1040,
-  domainId: 896,
+  moduleId: 896,
   chapterId: 6688,
   questions: [
     {
@@ -107,20 +107,9 @@ export const createAiAssessmentBootcamp = {
   expectedOutcomes: 'Identify areas of strength and improvement in JavaScript fundamentals',
   totalNumberOfQuestions: 10,
   chapterIds: [12, 13, 14],
+  moduleId: 806,
   poolTopics: [{ id: 1, name: 'JavaScript Basics' }],
   startDatetime: '2026-04-10T09:00:00+05:30',
   endDatetime: '2026-04-10T11:00:00+05:30',
 };
 
-export const createAiAssessmentDomain = {
-  bootcampId: 803,
-  chapterId: 6647,
-  scope: 'domain',
-  domainId: 5,
-  title: 'Data Structures Assessment',
-  description: 'Covers trees, linked lists, and graph traversal algorithms',
-  audience: 'Students who completed the DSA module',
-  totalNumberOfQuestions: 15,
-  startDatetime: '2026-04-15T14:00:00+05:30',
-  endDatetime: '2026-04-15T16:30:00+05:30',
-};

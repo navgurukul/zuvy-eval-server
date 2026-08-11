@@ -6,9 +6,6 @@ export class CreateQuestionDto {
   orgId?: string;
 
   @IsString()
-  domainName: string;
-
-  @IsString()
   topicName: string;
 
   @IsString()

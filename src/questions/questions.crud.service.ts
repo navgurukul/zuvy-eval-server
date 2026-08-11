@@ -19,7 +19,7 @@ export class QuestionsCrudService {
       .insert(zuvyQuestions)
       .values({
         orgId: orgId.trim(),
-        domainName: dto.domainName,
+        domainName: '',
         topicName: dto.topicName,
         topicDescription: dto.topicDescription,
         subtopics: dto.subtopics ?? null,
@@ -46,7 +46,6 @@ export class QuestionsCrudService {
     orgId: string;
     page?: number | string;
     limit?: number | string;
-    domainName?: string;
     difficulty?: string;
     topicName?: string;
   }): Promise<{
@@ -80,13 +79,11 @@ export class QuestionsCrudService {
       throw new BadRequestException('orgId is required');
     }
 
-    const domainName = params?.domainName?.trim();
     const difficulty = params?.difficulty?.trim();
     const topicName = params?.topicName?.trim();
 
     const conditions = [
       eq(zuvyQuestions.orgId, orgId),
-      domainName ? eq(zuvyQuestions.domainName, domainName) : undefined,
       difficulty ? eq(zuvyQuestions.difficulty, difficulty) : undefined,
       topicName ? eq(zuvyQuestions.topicName, topicName) : undefined,
     ].filter(Boolean);
@@ -149,7 +146,6 @@ export class QuestionsCrudService {
 
     const patch: Record<string, unknown> = {};
     const updatable: (keyof UpdateQuestionDto)[] = [
-      'domainName',
       'topicName',
       'topicDescription',
       'subtopics',

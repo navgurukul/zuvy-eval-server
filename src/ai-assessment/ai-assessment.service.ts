@@ -583,7 +583,7 @@ export class AiAssessmentService {
     userId: number,
     bootcampId: number | string,
     chapterId?: number | string,
-    domainId?: number | string,
+    moduleId?: number | string,
   ) {
     if (!userId) return [];
 
@@ -606,16 +606,16 @@ export class AiAssessmentService {
       chapterId !== undefined && chapterId !== null && chapterId !== ''
         ? Number(chapterId)
         : undefined;
-    const parsedDomainId =
-      domainId !== undefined && domainId !== null && domainId !== ''
-        ? Number(domainId)
+    const parsedModuleId =
+      moduleId !== undefined && moduleId !== null && moduleId !== ''
+        ? Number(moduleId)
         : undefined;
 
     if (typeof parsedChapterId === 'number' && !Number.isNaN(parsedChapterId)) {
       conditions.push(eq(aiAssessment.chapterId, parsedChapterId));
     }
-    if (typeof parsedDomainId === 'number' && !Number.isNaN(parsedDomainId)) {
-      conditions.push(eq(aiAssessment.domainId, parsedDomainId));
+    if (typeof parsedModuleId === 'number' && !Number.isNaN(parsedModuleId)) {
+      conditions.push(eq(aiAssessment.moduleId, parsedModuleId));
     }
 
     const assessments = await this.db
@@ -623,7 +623,7 @@ export class AiAssessmentService {
         id: aiAssessment.id,
         bootcampId: aiAssessment.bootcampId,
         chapterId: aiAssessment.chapterId,
-        domainId: aiAssessment.domainId,
+        moduleId: aiAssessment.moduleId,
         title: aiAssessment.title,
         description: aiAssessment.description,
         totalNumberOfQuestions: aiAssessment.totalNumberOfQuestions,

@@ -57,7 +57,6 @@ export class QuestionIndexProcessor extends WorkerHost {
           subtopics: zuvyQuestions.subtopics,
           difficulty: zuvyQuestions.difficulty,
           levelId: zuvyQuestions.levelId,
-          domainName: zuvyQuestions.domainName,
         })
         .from(zuvyQuestions)
         .where(inArray(zuvyQuestions.id, questionIds));
@@ -101,7 +100,6 @@ export class QuestionIndexProcessor extends WorkerHost {
             difficulty: row.difficulty ?? null,
             topicDescription: row.topicDescription ?? '',
             subtopics: Array.isArray(row.subtopics) ? row.subtopics : [],
-            domainName: row.domainName ?? '',
           },
         }))
         .filter((p) => p.vector.length > 0);

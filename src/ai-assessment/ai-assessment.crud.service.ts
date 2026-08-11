@@ -72,7 +72,7 @@ export class AiAssessmentCrudService {
     userId: number,
     bootcampId?: number | string,
     chapterId?: number | string,
-    domainId?: number | string,
+    moduleId?: number | string,
     status?: string,
   ) {
     const query = this.db.select().from(aiAssessment);
@@ -85,17 +85,17 @@ export class AiAssessmentCrudService {
       chapterId === undefined || chapterId === null || chapterId === ''
         ? undefined
         : Number(chapterId);
-    const parsedDomainId =
-      domainId === undefined || domainId === null || domainId === ''
+    const parsedModuleId =
+      moduleId === undefined || moduleId === null || moduleId === ''
         ? undefined
-        : Number(domainId);
+        : Number(moduleId);
 
     const hasBootcampFilter =
       typeof parsedBootcampId === 'number' && !Number.isNaN(parsedBootcampId);
     const hasChapterFilter =
       typeof parsedChapterId === 'number' && !Number.isNaN(parsedChapterId);
-    const hasDomainFilter =
-      typeof parsedDomainId === 'number' && !Number.isNaN(parsedDomainId);
+    const hasModuleFilter =
+      typeof parsedModuleId === 'number' && !Number.isNaN(parsedModuleId);
 
     const validStatuses = ['draft', 'scheduled', 'published'] as const;
     const normalizedStatus = status?.trim().toLowerCase();
@@ -105,7 +105,7 @@ export class AiAssessmentCrudService {
     const conditions = [
       hasBootcampFilter ? eq(aiAssessment.bootcampId, parsedBootcampId) : undefined,
       hasChapterFilter ? eq(aiAssessment.chapterId, parsedChapterId) : undefined,
-      hasDomainFilter ? eq(aiAssessment.domainId, parsedDomainId) : undefined,
+      hasModuleFilter ? eq(aiAssessment.moduleId, parsedModuleId) : undefined,
       hasStatusFilter ? eq(aiAssessment.status, normalizedStatus as any) : undefined,
     ].filter(Boolean);
 
@@ -340,8 +340,6 @@ export class AiAssessmentCrudService {
   // }
 
   async create(userId: number, dto: CreateAiAssessmentDto) {
-    const scope = dto.scope ?? 'bootcamp';
-
     const { inserted, enrolledStudentsCount } = await this.db.transaction(
       async (tx) => {
         const [aiRow] = await tx
@@ -349,8 +347,8 @@ export class AiAssessmentCrudService {
           .values({
             bootcampId: dto.bootcampId,
             chapterId: dto.chapterId,
-            scope,
-            domainId: scope === 'domain' ? (dto.domainId ?? null) : null,
+            scope: 'bootcamp',
+            moduleId: dto.moduleId ?? null,
             title: dto.title,
             objective: dto.objective,
             description: dto.description ?? null,

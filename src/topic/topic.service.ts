@@ -11,7 +11,7 @@ import { DRIZZLE_DB } from 'src/db/constant';
 import { NodePgDatabase } from 'drizzle-orm/node-postgres';
 import { topic } from './db/topic.schema';
 import { zuvyQuestions } from 'src/questions/schema/zuvy-questions.schema';
-import { and, eq } from 'drizzle-orm';
+import { and, eq, sql } from 'drizzle-orm';
 
 @Injectable()
 export class TopicService {
@@ -230,8 +230,14 @@ export class TopicService {
       .map((t) => ({ tagId: t.id, topicName: t.tagName }));
   }
 
-   async getAllTopicsWithDifficultyLevels(orgId: string) {
+   async getAllTopicsWithDifficultyLevels(orgId: string, search?: string) {
     const scopedOrgId = this.requireOrgId(orgId);
+    const conditions: any[] = [eq(topic.orgId, scopedOrgId)];
+    if (search && search.trim()) {
+      const pattern = `%${search.trim().toLowerCase()}%`;
+      conditions.push(sql`LOWER(${topic.name}) LIKE ${pattern}`);
+    }
+
     const topicQuestions = await this.db
       .select({
         id: topic.id,
@@ -240,7 +246,7 @@ export class TopicService {
       })
       .from(topic)
       .leftJoin(zuvyQuestions, eq(topic.name, zuvyQuestions.topicName))
-      .where(eq(topic.orgId, scopedOrgId));
+      .where(and(...conditions));
 
     const topicsById = new Map<
       number,

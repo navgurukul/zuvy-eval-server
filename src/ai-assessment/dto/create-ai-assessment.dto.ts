@@ -87,14 +87,6 @@ export class CreateAiAssessmentDto {
   @ValidateNested({ each: true })
   @Type(() => PoolTopicDto)
   poolTopics: PoolTopicDto[];
-
-  @IsOptional()
-  @IsDateString()
-  startDatetime?: string;
-
-  @IsOptional()
-  @IsDateString()
-  endDatetime?: string;
 }
 
 export class ScheduleAssessmentDto {

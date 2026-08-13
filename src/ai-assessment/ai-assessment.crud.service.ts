@@ -360,8 +360,6 @@ export class AiAssessmentCrudService {
             totalQuestionsWithBuffer: Math.floor(
               dto.totalNumberOfQuestions * 2.25,
             ),
-            startDatetime: dto.startDatetime,
-            endDatetime: dto.endDatetime,
           } as any)
           .returning();
 

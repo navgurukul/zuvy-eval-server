@@ -11,7 +11,10 @@ import { aiAssessment } from 'src/db/schema/ai-assessment';
 import { aiAssessmentQuestionSets } from './ai-assessment.question-set.schema';
 import { aiAssessmentQuestions } from './ai-assessment.questions.schema';
 import { zuvyQuestions } from 'src/questions/schema/zuvy-questions.schema';
-import { AiAssessmentMappingHelpers } from './ai-assessment.mapping.helpers';
+import {
+  AiAssessmentMappingHelpers,
+  MapQuestionsContext,
+} from './ai-assessment.mapping.helpers';
 
 @Injectable()
 export class AiAssessmentMappingService {
@@ -24,46 +27,59 @@ export class AiAssessmentMappingService {
 
   // ─── Map questions into sets ───────────────────────────────────────
 
-  async mapQuestionsForAssessment(aiAssessmentId: number) {
+  async mapQuestionsForAssessment(
+    aiAssessmentId: number,
+    ctx: MapQuestionsContext = { orgId: '' },
+  ) {
+    // Resolve topics outside the DB transaction (may call legacy HTTP APIs).
+    const assessment = await this.helpers.loadAssessment(this.db as any, aiAssessmentId);
+    const topicNames = await this.helpers.resolveAssessmentTopicNames(assessment, ctx);
+
+    if (topicNames.length === 0) {
+      this.logger.warn(
+        `No topics resolved for assessment id=${aiAssessmentId} (poolTopics + chapter tags empty)`,
+      );
+      return {
+        statusCode: 200,
+        aiAssessmentId,
+        setsCreated: 0,
+        totalQuestionsPerSet: assessment.totalNumberOfQuestions,
+        topicNames: [],
+        message:
+          'No topics found for this assessment. Provide poolTopics and/or chapterIds with moduleId.',
+      };
+    }
+
+    const queryVector = await this.helpers.buildScopedQueryVector(assessment, topicNames);
+
     return this.db.transaction(async (tx) => {
-      const assessment = await this.helpers.loadAssessment(tx, aiAssessmentId);
       const totalQuestions = assessment.totalNumberOfQuestions;
 
       await this.helpers.clearExistingSets(tx, aiAssessmentId);
       const isBaseline = await this.helpers.checkIsBaseline(tx, assessment);
 
-      const queryVector = await this.helpers.buildScopedQueryVector(tx, assessment);
       const { commonPerSet, uniquePerSet, neededTotal } =
         this.helpers.calculateSetSizes(totalQuestions, isBaseline);
 
-      let scopedIds: number[];
-
-      if (assessment.scope === 'bootcamp') {
-        scopedIds = await this.helpers.searchBootcampScoped(
-          tx,
-          assessment.bootcampId,
-          queryVector,
-          neededTotal,
-        );
-      } else {
-        scopedIds = await this.helpers.searchDomainScoped(
-          tx,
-          assessment,
-          queryVector,
-          neededTotal,
-        );
-      }
+      const scopedIds = await this.helpers.searchTopicScoped(
+        queryVector,
+        topicNames,
+        neededTotal,
+      );
 
       if (scopedIds.length === 0) {
-        this.logger.warn(`No vector results for assessment id=${aiAssessmentId}`);
+        this.logger.warn(
+          `No vector results for assessment id=${aiAssessmentId} topics=${topicNames.join(',')}`,
+        );
         return {
           statusCode: 200,
           aiAssessmentId,
           isBaseline,
           setsCreated: 0,
           totalQuestionsPerSet: totalQuestions,
+          topicNames,
           message:
-            'No questions found for this assessment scope. Please generate questions first before mapping.',
+            'No questions found for this assessment topics. Please generate questions first before mapping.',
         };
       }
 
@@ -122,7 +138,6 @@ export class AiAssessmentMappingService {
         options: zuvyQuestions.options,
         correctOption: zuvyQuestions.correctOption,
         levelId: zuvyQuestions.levelId,
-        domainName: zuvyQuestions.domainName,
         topicName: zuvyQuestions.topicName,
         topicDescription: zuvyQuestions.topicDescription,
       })
@@ -148,7 +163,6 @@ export class AiAssessmentMappingService {
         options: unknown;
         correctOption: number;
         levelId: string | null;
-        domainName: string;
         topicName: string;
         topicDescription: string;
       }>;
@@ -178,7 +192,6 @@ export class AiAssessmentMappingService {
         options: r.options,
         correctOption: r.correctOption,
         levelId: r.levelId,
-        domainName: r.domainName,
         topicName: r.topicName,
         topicDescription: r.topicDescription,
       });

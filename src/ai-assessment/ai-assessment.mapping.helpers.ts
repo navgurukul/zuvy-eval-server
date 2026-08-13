@@ -6,17 +6,22 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { NodePgDatabase } from 'drizzle-orm/node-postgres';
-import { and, eq, inArray, sql } from 'drizzle-orm';
+import { eq, inArray } from 'drizzle-orm';
 import { DRIZZLE_DB } from 'src/db/constant';
 import { aiAssessment } from 'src/db/schema/ai-assessment';
 import { aiAssessmentQuestionSets } from './ai-assessment.question-set.schema';
 import { aiAssessmentQuestions } from './ai-assessment.questions.schema';
 import { zuvyQuestions } from 'src/questions/schema/zuvy-questions.schema';
-import { topic } from 'src/topic/db/topic.schema';
 import { EmbeddingsService } from 'src/llm/embeddings.service';
 import { VectorService } from 'src/vector/vector.service';
+import { TopicService } from 'src/topic/topic.service';
 
 export type Tx = Parameters<Parameters<NodePgDatabase['transaction']>[0]>[0];
+
+export type MapQuestionsContext = {
+  orgId: string;
+  authorization?: string;
+};
 
 const QDRANT_QUESTIONS_COLLECTION = 'QUESTIONS';
 
@@ -39,6 +44,7 @@ export class AiAssessmentMappingHelpers {
     @Inject(DRIZZLE_DB) private readonly db: NodePgDatabase,
     private readonly embeddingsService: EmbeddingsService,
     private readonly vectorService: VectorService,
+    private readonly topicService: TopicService,
   ) {}
 
   // ─── Load & validate ───────────────────────────────────────────────
@@ -82,35 +88,69 @@ export class AiAssessmentMappingHelpers {
   // ─── Baseline detection ────────────────────────────────────────────
 
   async checkIsBaseline(tx: Tx, assessment: any): Promise<boolean> {
-    if (assessment.scope === 'bootcamp') {
-      const [first] = await tx
-        .select({ id: aiAssessment.id })
-        .from(aiAssessment)
-        .where(and(
-          eq(aiAssessment.bootcampId, assessment.bootcampId),
-          eq(aiAssessment.scope, 'bootcamp' as any),
-        ))
-        .orderBy(aiAssessment.id)
-        .limit(1);
-      return first?.id === assessment.id;
+    const [first] = await tx
+      .select({ id: aiAssessment.id })
+      .from(aiAssessment)
+      .where(eq(aiAssessment.bootcampId, assessment.bootcampId))
+      .orderBy(aiAssessment.id)
+      .limit(1);
+    return first?.id === assessment.id;
+  }
+
+  // ─── Topic resolution (poolTopics + chapter tags) ──────────────────
+
+  async resolveAssessmentTopicNames(
+    assessment: any,
+    ctx: MapQuestionsContext,
+  ): Promise<string[]> {
+    const poolNames = this.normalizeNames(
+      (Array.isArray(assessment.poolTopics) ? assessment.poolTopics : []).map(
+        (t: { name?: string }) => t?.name,
+      ),
+    );
+
+    const chapterIds = Array.isArray(assessment.chapterIds)
+      ? (assessment.chapterIds as number[]).filter(
+          (id) => typeof id === 'number' && Number.isFinite(id),
+        )
+      : [];
+
+    let chapterTopicNames: string[] = [];
+    if (chapterIds.length > 0) {
+      const moduleId = assessment.moduleId ?? null;
+      if (moduleId == null) {
+        this.logger.warn(
+          `Assessment id=${assessment.id} has chapterIds but no moduleId; skipping chapter tag resolve`,
+        );
+      } else if (!ctx.orgId?.trim()) {
+        this.logger.warn(
+          `Assessment id=${assessment.id}: orgId missing; skipping chapter tag resolve`,
+        );
+      } else {
+        try {
+          const tags = await this.topicService.resolveTagsFromChapterIds(
+            ctx.orgId,
+            {
+              chapterIds,
+              bootcampId: assessment.bootcampId,
+              moduleId: Number(moduleId),
+            },
+            ctx.authorization,
+          );
+          chapterTopicNames = this.normalizeNames(
+            (tags ?? []).map((t) => t.topicName),
+          );
+        } catch (err) {
+          this.logger.warn(
+            `Failed to resolve chapter tags for assessment id=${assessment.id}: ${
+              err instanceof Error ? err.message : String(err)
+            }`,
+          );
+        }
+      }
     }
 
-    if (assessment.scope === 'domain') {
-      const domainId = assessment.domainId ?? null;
-      const [first] = await tx
-        .select({ id: aiAssessment.id })
-        .from(aiAssessment)
-        .where(and(
-          eq(aiAssessment.bootcampId, assessment.bootcampId),
-          eq(aiAssessment.scope, 'domain' as any),
-          domainId === null ? sql`1=0` : eq(aiAssessment.domainId, domainId),
-        ))
-        .orderBy(aiAssessment.id)
-        .limit(1);
-      return first?.id === assessment.id;
-    }
-
-    return false;
+    return this.normalizeNames([...poolNames, ...chapterTopicNames]);
   }
 
   // ─── Embedding query ───────────────────────────────────────────────
@@ -123,15 +163,17 @@ export class AiAssessmentMappingHelpers {
     );
   }
 
-  async buildScopedQueryVector(tx: Tx, assessment: any): Promise<number[]> {
+  async buildScopedQueryVector(
+    assessment: any,
+    topicNames: string[],
+  ): Promise<number[]> {
     const audienceText =
       typeof assessment.audience === 'string'
         ? assessment.audience
         : JSON.stringify(assessment.audience ?? '');
-    const scopedTopics = await this.resolveScopedTopicNames(tx, assessment);
     const topicContext =
-      scopedTopics.length > 0
-        ? `Topics in scope: ${scopedTopics.slice(0, 80).join(', ')}`
+      topicNames.length > 0
+        ? `Topics in scope: ${topicNames.slice(0, 80).join(', ')}`
         : '';
 
     const queryText = [assessment.title ?? '', assessment.description ?? '', audienceText, topicContext]
@@ -149,27 +191,6 @@ export class AiAssessmentMappingHelpers {
     const distinctNeeded = commonPerSet + uniquePerSet * 6;
     const neededTotal = isBaseline ? totalQuestions : distinctNeeded * SAFETY_FACTOR;
     return { commonPerSet, uniquePerSet, neededTotal };
-  }
-
-  // ─── Qdrant filter for domain scope ────────────────────────────────
-
-  async resolveDomainFilter(
-    tx: Tx,
-    assessment: any,
-  ): Promise<Record<string, any> | undefined> {
-    const domainTopics = await tx
-      .select({ name: topic.name })
-      .from(topic);
-
-    if (domainTopics.length === 0) return undefined;
-
-    const [sample] = await tx
-      .select({ domainName: zuvyQuestions.domainName })
-      .from(zuvyQuestions)
-      .where(inArray(zuvyQuestions.topicName, domainTopics.map((t) => t.name)))
-      .limit(1);
-
-    return sample?.domainName ? { domainName: sample.domainName } : undefined;
   }
 
   // ─── Vector search ─────────────────────────────────────────────────
@@ -191,177 +212,13 @@ export class AiAssessmentMappingHelpers {
       .filter((id) => Number.isFinite(id));
   }
 
-  // ─── Per-domain Qdrant search for bootcamp scope ────────────────────
-
-  async searchPerDomain(
-    tx: Tx,
-    bootcampId: number,
+  /** Search QUESTIONS collection evenly across topic names (no domain filter). */
+  async searchTopicScoped(
     queryVector: number[],
+    topicNames: string[],
     neededTotal: number,
   ): Promise<number[]> {
-    const domainNames = await this.resolveBootcampDomainNames(tx, bootcampId);
-    if (domainNames.length === 0) return [];
-
-    const perDomain = Math.ceil(neededTotal / domainNames.length);
-    const seen = new Set<number>();
-    const result: number[] = [];
-
-    for (const domainName of domainNames) {
-      const ids = await this.searchQuestions(queryVector, perDomain, { domainName });
-      for (const id of ids) {
-        if (!seen.has(id)) {
-          seen.add(id);
-          result.push(id);
-        }
-      }
-    }
-
-    return result.slice(0, neededTotal);
-  }
-
-  async searchDomainScoped(
-    tx: Tx,
-    assessment: any,
-    queryVector: number[],
-    neededTotal: number,
-  ): Promise<number[]> {
-    const domain = await this.resolveDomainScope(tx, assessment);
-    if (!domain || domain.topics.length === 0) return [];
-    return this.searchEvenlyByTopics(queryVector, domain.topics, neededTotal, {
-      domainName: domain.domainName,
-    });
-  }
-
-  async searchBootcampScoped(
-    tx: Tx,
-    bootcampId: number,
-    queryVector: number[],
-    neededTotal: number,
-  ): Promise<number[]> {
-    const scoped = await this.resolveBootcampDomainsWithTopics(tx, bootcampId);
-    if (scoped.length === 0) return [];
-
-    const domainQuotas = this.allocateEvenly(neededTotal, scoped.length);
-    const globalSeen = new Set<number>();
-    const all: number[] = [];
-    const deficits: Array<{ domainName: string; missing: number }> = [];
-
-    for (let i = 0; i < scoped.length; i++) {
-      const { domainName, topics } = scoped[i];
-      const domainQuota = domainQuotas[i];
-      if (domainQuota <= 0) continue;
-
-      const domainIds = await this.searchEvenlyByTopics(
-        queryVector,
-        topics,
-        domainQuota,
-        { domainName },
-      );
-
-      for (const id of domainIds) {
-        if (!globalSeen.has(id)) {
-          globalSeen.add(id);
-          all.push(id);
-        }
-      }
-
-      if (domainIds.length < domainQuota) {
-        deficits.push({ domainName, missing: domainQuota - domainIds.length });
-      }
-    }
-
-    for (const d of deficits) {
-      if (all.length >= neededTotal) break;
-      const extra = await this.searchQuestions(
-        queryVector,
-        Math.max(d.missing * 3, d.missing),
-        { domainName: d.domainName },
-      );
-      for (const id of extra) {
-        if (all.length >= neededTotal) break;
-        if (!globalSeen.has(id)) {
-          globalSeen.add(id);
-          all.push(id);
-        }
-      }
-    }
-
-    return all.slice(0, neededTotal);
-  }
-
-  // ─── Resolve bootcamp domain names ──────────────────────────────────
-
-  private async resolveBootcampDomainNames(tx: Tx, bootcampId: number): Promise<string[]> {
-    const allTopics = await tx
-      .select({ name: topic.name })
-      .from(topic);
-
-    if (allTopics.length === 0) return [];
-
-    const samples = await tx
-      .selectDistinct({ domainName: zuvyQuestions.domainName })
-      .from(zuvyQuestions)
-      .where(inArray(zuvyQuestions.topicName, allTopics.map((t) => t.name)));
-
-    return samples.map((s) => s.domainName).filter(Boolean);
-  }
-
-  private async resolveScopedTopicNames(tx: Tx, assessment: any): Promise<string[]> {
-    const rows = await tx.select({ name: topic.name }).from(topic);
-    return this.normalizeNames(rows.map((r) => r.name));
-  }
-
-  private async resolveDomainScope(
-    tx: Tx,
-    assessment: any,
-  ): Promise<{ domainName: string; topics: string[] } | null> {
-    const domainTopics = await tx
-      .select({ name: topic.name })
-      .from(topic);
-    const topics = this.normalizeNames(domainTopics.map((t) => t.name));
-    if (topics.length === 0) return null;
-
-    const [sample] = await tx
-      .select({ domainName: zuvyQuestions.domainName })
-      .from(zuvyQuestions)
-      .where(inArray(zuvyQuestions.topicName, topics))
-      .limit(1);
-
-    if (!sample?.domainName) return null;
-    return { domainName: sample.domainName, topics };
-  }
-
-  private async resolveBootcampDomainsWithTopics(
-    tx: Tx,
-    bootcampId: number,
-  ): Promise<Array<{ domainName: string; topics: string[] }>> {
-    const allTopics = await tx
-      .select({ name: topic.name })
-      .from(topic);
-    const topicNames = this.normalizeNames(allTopics.map((t) => t.name));
-    if (topicNames.length === 0) return [];
-
-    const rows = await tx
-      .selectDistinct({
-        domainName: zuvyQuestions.domainName,
-        topicName: zuvyQuestions.topicName,
-      })
-      .from(zuvyQuestions)
-      .where(inArray(zuvyQuestions.topicName, topicNames));
-
-    const grouped = new Map<string, Set<string>>();
-    for (const row of rows) {
-      const domainName = (row.domainName ?? '').trim();
-      const topicName = (row.topicName ?? '').trim();
-      if (!domainName || !topicName) continue;
-      if (!grouped.has(domainName)) grouped.set(domainName, new Set<string>());
-      grouped.get(domainName)!.add(topicName);
-    }
-
-    return [...grouped.entries()].map(([domainName, topics]) => ({
-      domainName,
-      topics: [...topics],
-    }));
+    return this.searchEvenlyByTopics(queryVector, topicNames, neededTotal, {});
   }
 
   private async searchEvenlyByTopics(
@@ -717,22 +574,6 @@ export class AiAssessmentMappingHelpers {
     } as Record<'easy' | 'medium' | 'hard', number>;
 
     return { counts, order: profile.order, preference };
-  }
-
-  private getDifficultyPreferenceForSet(setLevelCode: string): Record<'easy' | 'medium' | 'hard', number> {
-    switch (setLevelCode) {
-      case 'A+':
-      case 'A':
-        return { hard: 3, medium: 2, easy: 1 };
-      case 'B':
-        return { medium: 3, hard: 2, easy: 1 };
-      case 'C':
-        return { medium: 3, easy: 2, hard: 1 };
-      case 'D':
-      case 'E':
-      default:
-        return { easy: 3, medium: 2, hard: 1 };
-    }
   }
 
   private normalizeDifficulty(value: string | null): 'easy' | 'medium' | 'hard' | null {

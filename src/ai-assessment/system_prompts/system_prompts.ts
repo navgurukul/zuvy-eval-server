@@ -151,7 +151,6 @@ export function generateMcqPrompt(
 export interface McqGenerationSpec {
   topic: string;
   count: number;
-  domainName?: string;
   topicName?: string;
   topicDescription?: string;
   subtopics?: string[];
@@ -172,7 +171,6 @@ export function generateMcqPromptFromSpec(
   const {
     topic,
     count,
-    domainName,
     topicName,
     topicDescription,
     subtopics,
@@ -209,7 +207,6 @@ export function generateMcqPromptFromSpec(
   sections.push('');
   
   sections.push('CONTEXT:');
-  if (domainName) sections.push(`- Domain: ${domainName}`);
   if (topicName) sections.push(`- Topic name: ${topicName}`);
   if (topicDescription) sections.push(`- Topic description: ${topicDescription}`);
   sections.push(`- Primary topic for this batch: ${topic}`);

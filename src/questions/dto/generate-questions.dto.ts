@@ -125,7 +125,6 @@ export interface GenerateTopicBatchJobPayload {
   requestedByUserId?: string;
   orgId?: string;
   levelId?: 'A+' | 'A' | 'B' | 'C' | 'D' | 'E' | null;
-  domainName?: string;
   topicName?: string;
   topicDescription?: string;
   subtopics?: string[];

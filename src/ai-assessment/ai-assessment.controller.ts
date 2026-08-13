@@ -12,6 +12,7 @@ import {
   HttpException,
   HttpStatus,
 } from '@nestjs/common';
+import { Request } from 'express';
 import { AiAssessmentService } from './ai-assessment.service';
 import {
   CreateAiAssessmentDto,
@@ -34,7 +35,6 @@ import {
 import { JwtAuthGuard } from 'src/auth/guards/jwt-auth.guard';
 import {
   createAiAssessmentBootcamp,
-  createAiAssessmentDomain,
   mapQuestionsExample,
   submitAssessmentExample,
   scoreSubmitExample,
@@ -68,13 +68,9 @@ export class AiAssessmentController {
   @ApiBody({
     type: CreateAiAssessmentDto,
     examples: {
-      bootcampScope: {
-        summary: 'Bootcamp-level assessment (scope defaults to "bootcamp")',
+      basicExample: {
+        summary: 'Create assessment with poolTopics and moduleId',
         value: createAiAssessmentBootcamp,
-      },
-      domainScope: {
-        summary: 'Domain-level assessment (scope: "domain", domainId required)',
-        value: createAiAssessmentDomain,
       },
     },
   })
@@ -164,18 +160,18 @@ export class AiAssessmentController {
   @Get()
   @ApiOperation({
     summary:
-      'Get all AI assessments (optionally filter by bootcampId, chapterId, domainId, and status)',
+      'Get all AI assessments (optionally filter by bootcampId, chapterId, moduleId, and status)',
   })
   @ApiQuery({ name: 'bootcampId', required: false, type: Number })
   @ApiQuery({ name: 'chapterId', required: false, type: Number })
-  @ApiQuery({ name: 'domainId', required: false, type: Number })
+  @ApiQuery({ name: 'moduleId', required: false, type: Number })
   @ApiQuery({ name: 'status', required: false, enum: ['draft', 'scheduled', 'published'] })
   @ApiResponse({ status: 200, description: 'List of AI assessments.' })
   findAll(
     @Req() req,
     @Query('bootcampId') bootcampId?: number,
     @Query('chapterId') chapterId?: number,
-    @Query('domainId') domainId?: number,
+    @Query('moduleId') moduleId?: number,
     @Query('status') status?: string,
   ) {
     const userId = req.user?.sub;
@@ -183,7 +179,7 @@ export class AiAssessmentController {
       userId,
       bootcampId,
       chapterId,
-      domainId,
+      moduleId,
       status,
     );
   }
@@ -191,7 +187,7 @@ export class AiAssessmentController {
   @Get('/by/studentId')
   @ApiOperation({
     summary:
-      'Get all available AI assessments for the current student, filtered by bootcamp and optionally by chapter/domain.',
+      'Get all available AI assessments for the current student, filtered by bootcamp and optionally by chapter/module.',
   })
   @ApiResponse({
     status: 200,
@@ -199,11 +195,11 @@ export class AiAssessmentController {
   })
   @ApiQuery({ name: 'bootcampId', required: true, type: Number })
   @ApiQuery({ name: 'chapterId', required: false, type: Number })
-  @ApiQuery({ name: 'domainId', required: false, type: Number })
+  @ApiQuery({ name: 'moduleId', required: false, type: Number })
   findAllAssessmentOfAStudent(
     @Query('bootcampId') bootcampId: number,
     @Query('chapterId') chapterId?: number,
-    @Query('domainId') domainId?: number,
+    @Query('moduleId') moduleId?: number,
     @Req() req?,
   ) {
     const userId = req.user?.sub;
@@ -211,7 +207,7 @@ export class AiAssessmentController {
       userId,
       bootcampId,
       chapterId,
-      domainId,
+      moduleId,
     );
   }
 
@@ -458,7 +454,7 @@ export class AiAssessmentController {
     summary:
       'Map (generate) question sets for an assessment via JSON body. ' +
       'Prerequisites: assessment must exist with totalNumberOfQuestions > 0, ' +
-      'topics array populated, and questions indexed in the QUESTIONS vector collection.',
+      'poolTopics and/or chapterIds+moduleId populated, and questions indexed in QUESTIONS.',
   })
   @ApiBody({
     type: MapQuestionsForAssessmentDto,
@@ -478,9 +474,14 @@ export class AiAssessmentController {
   @ApiResponse({ status: 404, description: 'Assessment not found.' })
   async mapQuestionsFromBody(
     @Body() dto: MapQuestionsForAssessmentDto,
+    @Req() req: Request & { user?: { orgId?: number | string } },
   ) {
     return this.aiAssessmentMappingService.mapQuestionsForAssessment(
       dto.aiAssessmentId,
+      {
+        orgId: req.user?.orgId != null ? String(req.user.orgId) : '',
+        authorization: req.headers?.authorization,
+      },
     );
   }
 
@@ -495,13 +496,20 @@ export class AiAssessmentController {
     description:
       'Question sets generated and mapped successfully for the given assessment.',
   })
-  async mapQuestions(@Param('id') id: string) {
+  async mapQuestions(
+    @Param('id') id: string,
+    @Req() req: Request & { user?: { orgId?: number | string } },
+  ) {
     const aiAssessmentId = Number(id);
     if (Number.isNaN(aiAssessmentId)) {
       throw new HttpException('Invalid assessment id', HttpStatus.BAD_REQUEST);
     }
     return this.aiAssessmentMappingService.mapQuestionsForAssessment(
       aiAssessmentId,
+      {
+        orgId: req.user?.orgId != null ? String(req.user.orgId) : '',
+        authorization: req.headers?.authorization,
+      },
     );
   }
 
@@ -510,13 +518,12 @@ export class AiAssessmentController {
   @ApiResponse({ status: 200, description: 'Indexes created successfully' })
   async createQdrantIndexes() {
     const collection = 'QUESTIONS';
-    await this.vectorService.createPayloadIndex(collection, 'domainName', 'keyword');
     await this.vectorService.createPayloadIndex(collection, 'topic', 'keyword');
     await this.vectorService.createPayloadIndex(collection, 'subtopics', 'keyword');
     await this.vectorService.createPayloadIndex(collection, 'difficulty', 'keyword');
     return {
       message: 'Qdrant payload indexes created on QUESTIONS collection',
-      fields: ['domainName', 'topic', 'subtopics', 'difficulty'],
+      fields: ['topic', 'subtopics', 'difficulty'],
     };
   }
 }

@@ -7,6 +7,7 @@ import { QuestionsByLlmModule } from 'src/questions-by-llm/questions-by-llm.modu
 import { DbModule } from 'src/db/db.module';
 import { StorageModule } from 'src/storage/storage.module';
 import { VectorModule } from 'src/vector/vector.module';
+import { TopicModule } from 'src/topic/topic.module';
 import { EmbeddingsService } from 'src/llm/embeddings.service';
 import { AiAssessmentMappingService } from './ai-assessment.mapping.service';
 import { AiAssessmentMappingHelpers } from './ai-assessment.mapping.helpers';
@@ -21,6 +22,7 @@ import { QuestionExplanationService } from './question-explanation.service';
     DbModule,
     StorageModule,
     VectorModule,
+    TopicModule,
   ],
   controllers: [AiAssessmentController],
   providers: [

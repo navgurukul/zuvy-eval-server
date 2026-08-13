@@ -2,7 +2,6 @@ import {
   ArrayMinSize,
   IsArray,
   IsDateString,
-  IsEnum,
   IsInt,
   IsNotEmpty,
   IsOptional,
@@ -11,9 +10,17 @@ import {
   ValidateIf,
   ValidateNested,
 } from 'class-validator';
-import { Type } from 'class-transformer';
 
-export type AssessmentScope = 'bootcamp' | 'domain';
+class PoolTopicDto {
+  @IsInt()
+  @Min(1)
+  id: number;
+
+  @IsString()
+  @IsNotEmpty()
+  name: string;
+}
+import { Type } from 'class-transformer';
 
 /*
 1.objective.
@@ -35,14 +42,14 @@ export class CreateAiAssessmentDto {
   @Min(1)
   chapterId: number;
 
-  @IsEnum(['bootcamp', 'domain'])
-  @IsOptional()
-  scope?: AssessmentScope = 'bootcamp';
-
-  @ValidateIf((o) => o.scope === 'domain')
+  /**
+   * Required when chapterIds is non-empty (legacy tag resolve needs it).
+   * Optional when mapping from poolTopics only.
+   */
+  @ValidateIf((o) => Array.isArray(o.chapterIds) && o.chapterIds.length > 0)
   @IsInt()
   @Min(1)
-  domainId?: number;
+  moduleId?: number;
 
   @IsString()
   @IsNotEmpty()
@@ -54,10 +61,10 @@ export class CreateAiAssessmentDto {
 
   @IsOptional()
   @IsString()
-  description?: string;
+  description?: string | null;
 
   @IsOptional()
-  audience?: any;
+  audience?: any | null;
 
   @IsOptional()
   @IsString()
@@ -66,6 +73,20 @@ export class CreateAiAssessmentDto {
   @IsInt()
   @Min(1)
   totalNumberOfQuestions: number; // present//
+
+  /** When set, moduleId is required so chapter tags can be resolved. */
+  @IsOptional()
+  @IsArray()
+  @ArrayMinSize(1)
+  @IsInt({ each: true })
+  @Min(1, { each: true })
+  chapterIds?: number[];
+
+  @IsArray()
+  @ArrayMinSize(1)
+  @ValidateNested({ each: true })
+  @Type(() => PoolTopicDto)
+  poolTopics: PoolTopicDto[];
 
   @IsOptional()
   @IsDateString()
@@ -148,7 +169,7 @@ export class ScoreSubmitDto {
 
   @IsInt()
   @Min(1)
-  domainId: number;
+  moduleId: number;
 
   @IsInt()
   @Min(1)

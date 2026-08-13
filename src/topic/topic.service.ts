@@ -230,11 +230,21 @@ export class TopicService {
       .map((t) => ({ tagId: t.id, topicName: t.tagName }));
   }
 
-   async getAllTopicsWithDifficultyLevels(orgId: string, search?: string) {
+  async getAllTopicsWithDifficultyLevels(orgId: string, search?: string, id?: number, limit?: number, offset?: number) {
     const scopedOrgId = this.requireOrgId(orgId);
     const conditions: any[] = [eq(topic.orgId, scopedOrgId)];
-    if (search && search.trim()) {
-      const pattern = `%${search.trim().toLowerCase()}%`;
+    const hasSearch = !!(search && search.trim());
+    const trimmed = hasSearch ? search!.trim() : '';
+    const pattern = hasSearch ? `%${trimmed.toLowerCase()}%` : null;
+
+    if (id != null && !Number.isNaN(Number(id))) {
+      // If both id and search provided, match either by name LIKE or by id
+      if (hasSearch) {
+        conditions.push(sql`(LOWER(${topic.name}) LIKE ${pattern} OR ${topic.id} = ${id})`);
+      } else {
+        conditions.push(eq(topic.id, id));
+      }
+    } else if (hasSearch) {
       conditions.push(sql`LOWER(${topic.name}) LIKE ${pattern}`);
     }
 
@@ -251,6 +261,7 @@ export class TopicService {
     const topicsById = new Map<
       number,
       {
+        id: number;
         name: string;
         difficultyLevel: { easy: number; medium: number; hard: number };
       }
@@ -258,6 +269,7 @@ export class TopicService {
 
     for (const { id, name, difficulty } of topicQuestions) {
       const topicWithDifficulty = topicsById.get(id) ?? {
+        id,
         name,
         difficultyLevel: { easy: 0, medium: 0, hard: 0 },
       };
@@ -270,6 +282,16 @@ export class TopicService {
       topicsById.set(id, topicWithDifficulty);
     }
 
-    return [...topicsById.values()];
+    let results = [...topicsById.values()];
+
+    // Apply offset then limit for pagination
+    if (typeof offset === 'number' && offset > 0) {
+      results = results.slice(offset);
+    }
+    if (typeof limit === 'number' && limit >= 0) {
+      results = results.slice(0, limit);
+    }
+
+    return results;
   }
 }

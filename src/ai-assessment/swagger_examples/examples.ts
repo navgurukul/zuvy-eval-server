@@ -109,7 +109,5 @@ export const createAiAssessmentBootcamp = {
   chapterIds: [12, 13, 14],
   moduleId: 806,
   poolTopics: [{ id: 1, name: 'JavaScript Basics' }],
-  startDatetime: '2026-04-10T09:00:00+05:30',
-  endDatetime: '2026-04-10T11:00:00+05:30',
 };
 

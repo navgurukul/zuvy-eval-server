@@ -8,10 +8,12 @@ import {
   Post,
   Req,
   UseGuards,
+  Query,
 } from '@nestjs/common';
 import {
   ApiBearerAuth,
   ApiBody,
+  ApiQuery,
   ApiOperation,
   ApiTags,
 } from '@nestjs/swagger';
@@ -60,10 +62,15 @@ export class TopicController {
 
   @Get('with-difficulty-levels')
   @ApiOperation({ summary: 'Get topics with difficulty levels' })
+  @ApiQuery({ name: 'search', required: false, type: String })
   getAllTopicsWithDifficultyLevels(
     @Req() req: Request & { user?: { orgId?: number | string } },
+    @Query('search') search?: string,
   ) {
-    return this.topicService.getAllTopicsWithDifficultyLevels(this.getOrgId(req));
+    return this.topicService.getAllTopicsWithDifficultyLevels(
+      this.getOrgId(req),
+      search,
+    );
   }
 
   @Get(':id')

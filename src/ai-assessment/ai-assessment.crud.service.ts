@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ConflictException,
   Inject,
   Injectable,
   InternalServerErrorException,
@@ -346,7 +347,7 @@ export class AiAssessmentCrudService {
         // updates that assessment instead of creating another row (and another
         // set of student-assessment assignments).
         const [existingAssessment] = await tx
-          .select({ id: aiAssessment.id })
+          .select()
           .from(aiAssessment)
           .where(eq(aiAssessment.chapterId, dto.chapterId))
           .limit(1);
@@ -370,6 +371,12 @@ export class AiAssessmentCrudService {
         };
 
         if (existingAssessment) {
+          if (this.hasSameAssessmentValues(existingAssessment, assessmentValues)) {
+            throw new ConflictException(
+              'An identical AI assessment already exists for this chapter',
+            );
+          }
+
           const [updatedAssessment] = await tx
             .update(aiAssessment)
             .set(assessmentValues as any)
@@ -422,6 +429,45 @@ export class AiAssessmentCrudService {
       data: inserted,
       totalAssignedStudents: enrolledStudentsCount,
     };
+  }
+
+  /**
+   * Compare only fields that can be changed through the create payload. System
+   * fields such as id, status, timestamps, and publication dates are ignored.
+   */
+  private hasSameAssessmentValues(existing: any, values: any): boolean {
+    return (
+      existing.bootcampId === values.bootcampId &&
+      existing.chapterId === values.chapterId &&
+      existing.moduleId === values.moduleId &&
+      existing.title === values.title &&
+      existing.objective === values.objective &&
+      existing.description === values.description &&
+      existing.expectedOutcomes === values.expectedOutcomes &&
+      existing.totalNumberOfQuestions === values.totalNumberOfQuestions &&
+      existing.totalQuestionsWithBuffer === values.totalQuestionsWithBuffer &&
+      this.stableJson(existing.audience) === this.stableJson(values.audience) &&
+      this.stableJson(existing.chapterIds ?? []) ===
+        this.stableJson(values.chapterIds ?? []) &&
+      this.stableJson(existing.poolTopics ?? []) ===
+        this.stableJson(values.poolTopics ?? [])
+    );
+  }
+
+  private stableJson(value: unknown): string {
+    if (value === null || typeof value !== 'object') {
+      return JSON.stringify(value);
+    }
+
+    if (Array.isArray(value)) {
+      return `[${value.map((item) => this.stableJson(item)).join(',')}]`;
+    }
+
+    const record = value as Record<string, unknown>;
+    return `{${Object.keys(record)
+      .sort()
+      .map((key) => `${JSON.stringify(key)}:${this.stableJson(record[key])}`)
+      .join(',')}}`;
   }
 
   private async loadAssessmentOrFail(aiAssessmentId: number) {

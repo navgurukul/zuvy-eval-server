@@ -1,4 +1,4 @@
-import { BadRequestException, Body, Controller, Delete, Get, Param, Patch, Post, Query, Req, UseGuards } from '@nestjs/common';
+import { BadRequestException, Body, Controller, Delete, Get, Param, Patch, Post, Put, Query, Req, UseGuards } from '@nestjs/common';
 import { ApiBearerAuth, ApiBody, ApiOperation, ApiQuery, ApiTags } from '@nestjs/swagger';
 import { Request } from 'express';
 import { JwtAuthGuard } from 'src/auth/guards/jwt-auth.guard';
@@ -7,6 +7,7 @@ import { QuestionsCrudService } from './questions.crud.service';
 import { CreateQuestionDto } from './dto/create-question.dto';
 import { UpdateQuestionDto } from './dto/update-question.dto';
 import { GenerateQuestionsDto } from './dto/generate-questions.dto';
+import { ReplaceQuestionDto } from './dto/replace-question.dto';
 import { generateQuestionsExample } from './swagger_examples/examples';
 
 @ApiTags('Questions')
@@ -111,6 +112,35 @@ export class QuestionsController {
   ) {
     const orgId = req.user?.orgId != null ? String(req.user.orgId) : undefined;
     return this.questionsCrudService.update(orgId ?? '', Number(id), updateQuestionDto);
+  }
+
+  @Put(':id/replace')
+  @UseGuards(JwtAuthGuard)
+  @ApiOperation({ summary: 'Replace a question in a question set' })
+  @ApiBody({ type: ReplaceQuestionDto })
+  replace(
+    @Req() req: Request & { user?: { orgId?: number | string } },
+    @Param('id') id: string,
+    @Body() body: ReplaceQuestionDto,
+  ) {
+    if (!body) {
+      throw new BadRequestException('Request body is required');
+    }
+
+    const { questionSetId, replacementQuestionId } = body as ReplaceQuestionDto;
+
+    if (!Number.isInteger(questionSetId) || questionSetId <= 0) {
+      throw new BadRequestException('questionSetId must be a positive integer');
+    }
+    if (!Number.isInteger(replacementQuestionId) || replacementQuestionId <= 0) {
+      throw new BadRequestException('replacementQuestionId must be a positive integer');
+    }
+
+    return this.questionsCrudService.replaceInQuestionSet(
+      Number(id),
+      Number(questionSetId),
+      Number(replacementQuestionId),
+    );
   }
 
   @Delete(':id')

@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ConflictException,
   Inject,
   Injectable,
   InternalServerErrorException,
@@ -340,26 +341,60 @@ export class AiAssessmentCrudService {
   // }
 
   async create(userId: number, dto: CreateAiAssessmentDto) {
-    const { inserted, enrolledStudentsCount } = await this.db.transaction(
+    const { inserted, enrolledStudentsCount, wasUpdated } = await this.db.transaction(
       async (tx) => {
+        // A chapter has one assessment. Reusing POST for an existing chapter
+        // updates that assessment instead of creating another row (and another
+        // set of student-assessment assignments).
+        const [existingAssessment] = await tx
+          .select()
+          .from(aiAssessment)
+          .where(eq(aiAssessment.chapterId, dto.chapterId))
+          .limit(1);
+
+        const assessmentValues = {
+          bootcampId: dto.bootcampId,
+          chapterId: dto.chapterId,
+          moduleId: dto.moduleId ?? null,
+          title: dto.title,
+          objective: dto.objective,
+          description: dto.description ?? null,
+          audience: dto.audience ?? null,
+          chapterIds: dto.chapterIds ?? [],
+          poolTopics: dto.poolTopics ?? [],
+          expectedOutcomes: dto.expectedOutcomes ?? null,
+          totalNumberOfQuestions: dto.totalNumberOfQuestions,
+          totalQuestionsWithBuffer: Math.floor(
+            dto.totalNumberOfQuestions * 2.25,
+          ),
+          updatedAt: new Date().toISOString(),
+        };
+
+        if (existingAssessment) {
+          if (this.hasSameAssessmentValues(existingAssessment, assessmentValues)) {
+            throw new ConflictException(
+              'An identical AI assessment already exists for this chapter',
+            );
+          }
+
+          const [updatedAssessment] = await tx
+            .update(aiAssessment)
+            .set(assessmentValues as any)
+            .where(eq(aiAssessment.id, existingAssessment.id))
+            .returning();
+
+          return {
+            inserted: updatedAssessment,
+            enrolledStudentsCount: 0,
+            wasUpdated: true,
+          };
+        }
+
         const [aiRow] = await tx
           .insert(aiAssessment)
           .values({
-            bootcampId: dto.bootcampId,
-            chapterId: dto.chapterId,
             scope: 'bootcamp',
-            moduleId: dto.moduleId ?? null,
-            title: dto.title,
-            objective: dto.objective,
-            description: dto.description ?? null,
-            audience: dto.audience ?? null,
-            chapterIds: dto.chapterIds ?? [],
-            poolTopics: dto.poolTopics ?? [],
-            expectedOutcomes: dto.expectedOutcomes ?? null,
-            totalNumberOfQuestions: dto.totalNumberOfQuestions,
-            totalQuestionsWithBuffer: Math.floor(
-              dto.totalNumberOfQuestions * 2.25,
-            ),
+            ...assessmentValues,
           } as any)
           .returning();
 
@@ -379,15 +414,60 @@ export class AiAssessmentCrudService {
           );
         }
 
-        return { inserted: aiRow, enrolledStudentsCount: enrolledStudents.length };
+        return {
+          inserted: aiRow,
+          enrolledStudentsCount: enrolledStudents.length,
+          wasUpdated: false,
+        };
       },
     );
 
     return {
-      message: 'AI Assessment created and assigned to all enrolled students',
+      message: wasUpdated
+        ? 'AI Assessment updated for this chapter'
+        : 'AI Assessment created and assigned to all enrolled students',
       data: inserted,
       totalAssignedStudents: enrolledStudentsCount,
     };
+  }
+
+  /**
+   * Compare only fields that can be changed through the create payload. System
+   * fields such as id, status, timestamps, and publication dates are ignored.
+   */
+  private hasSameAssessmentValues(existing: any, values: any): boolean {
+    return (
+      existing.bootcampId === values.bootcampId &&
+      existing.chapterId === values.chapterId &&
+      existing.moduleId === values.moduleId &&
+      existing.title === values.title &&
+      existing.objective === values.objective &&
+      existing.description === values.description &&
+      existing.expectedOutcomes === values.expectedOutcomes &&
+      existing.totalNumberOfQuestions === values.totalNumberOfQuestions &&
+      existing.totalQuestionsWithBuffer === values.totalQuestionsWithBuffer &&
+      this.stableJson(existing.audience) === this.stableJson(values.audience) &&
+      this.stableJson(existing.chapterIds ?? []) ===
+        this.stableJson(values.chapterIds ?? []) &&
+      this.stableJson(existing.poolTopics ?? []) ===
+        this.stableJson(values.poolTopics ?? [])
+    );
+  }
+
+  private stableJson(value: unknown): string {
+    if (value === null || typeof value !== 'object') {
+      return JSON.stringify(value);
+    }
+
+    if (Array.isArray(value)) {
+      return `[${value.map((item) => this.stableJson(item)).join(',')}]`;
+    }
+
+    const record = value as Record<string, unknown>;
+    return `{${Object.keys(record)
+      .sort()
+      .map((key) => `${JSON.stringify(key)}:${this.stableJson(record[key])}`)
+      .join(',')}}`;
   }
 
   private async loadAssessmentOrFail(aiAssessmentId: number) {

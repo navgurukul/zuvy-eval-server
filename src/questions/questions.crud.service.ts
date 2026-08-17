@@ -2,6 +2,7 @@ import { BadRequestException, Injectable, NotFoundException, Inject } from '@nes
 import { DRIZZLE_DB } from 'src/db/constant';
 import { NodePgDatabase } from 'drizzle-orm/node-postgres';
 import { and, desc, eq, ne, sql } from 'drizzle-orm';
+import { aiAssessmentQuestions } from 'src/ai-assessment/ai-assessment.questions.schema';
 import { zuvyQuestions } from './schema/zuvy-questions.schema';
 import { CreateQuestionDto } from './dto/create-question.dto';
 import { UpdateQuestionDto } from './dto/update-question.dto';
@@ -259,5 +260,40 @@ export class QuestionsCrudService {
     }
 
     return { data, total: data.length };
+  }
+
+  async replaceInQuestionSet(oldQuestionId: number, questionSetId: number, newQuestionId: number) {
+    if (!Number.isInteger(oldQuestionId) || oldQuestionId <= 0) {
+      throw new BadRequestException('oldQuestionId must be a positive integer');
+    }
+    if (!Number.isInteger(newQuestionId) || newQuestionId <= 0) {
+      throw new BadRequestException('replacementQuestionId must be a positive integer');
+    }
+    if (!Number.isInteger(questionSetId) || questionSetId <= 0) {
+      throw new BadRequestException('questionSetId must be a positive integer');
+    }
+
+    // Ensure replacement isn't already present in the set (unique constraint)
+    const existing = await this.db
+      .select()
+      .from(aiAssessmentQuestions)
+      .where(and(eq(aiAssessmentQuestions.questionSetId, questionSetId), eq(aiAssessmentQuestions.questionId, newQuestionId)))
+      .limit(1);
+
+    if (existing.length > 0) {
+      throw new BadRequestException('Replacement question already exists in the set');
+    }
+
+    const [row] = await this.db
+      .update(aiAssessmentQuestions)
+      .set({ questionId: newQuestionId, updatedAt: sql`now()` } as any)
+      .where(and(eq(aiAssessmentQuestions.questionSetId, questionSetId), eq(aiAssessmentQuestions.questionId, oldQuestionId)))
+      .returning();
+
+    if (!row) {
+      throw new NotFoundException('Question not found in the requested set');
+    }
+
+    return row;
   }
 }

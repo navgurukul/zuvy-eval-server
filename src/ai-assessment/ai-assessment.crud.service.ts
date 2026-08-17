@@ -340,26 +340,54 @@ export class AiAssessmentCrudService {
   // }
 
   async create(userId: number, dto: CreateAiAssessmentDto) {
-    const { inserted, enrolledStudentsCount } = await this.db.transaction(
+    const { inserted, enrolledStudentsCount, wasUpdated } = await this.db.transaction(
       async (tx) => {
+        // A chapter has one assessment. Reusing POST for an existing chapter
+        // updates that assessment instead of creating another row (and another
+        // set of student-assessment assignments).
+        const [existingAssessment] = await tx
+          .select({ id: aiAssessment.id })
+          .from(aiAssessment)
+          .where(eq(aiAssessment.chapterId, dto.chapterId))
+          .limit(1);
+
+        const assessmentValues = {
+          bootcampId: dto.bootcampId,
+          chapterId: dto.chapterId,
+          moduleId: dto.moduleId ?? null,
+          title: dto.title,
+          objective: dto.objective,
+          description: dto.description ?? null,
+          audience: dto.audience ?? null,
+          chapterIds: dto.chapterIds ?? [],
+          poolTopics: dto.poolTopics ?? [],
+          expectedOutcomes: dto.expectedOutcomes ?? null,
+          totalNumberOfQuestions: dto.totalNumberOfQuestions,
+          totalQuestionsWithBuffer: Math.floor(
+            dto.totalNumberOfQuestions * 2.25,
+          ),
+          updatedAt: new Date().toISOString(),
+        };
+
+        if (existingAssessment) {
+          const [updatedAssessment] = await tx
+            .update(aiAssessment)
+            .set(assessmentValues as any)
+            .where(eq(aiAssessment.id, existingAssessment.id))
+            .returning();
+
+          return {
+            inserted: updatedAssessment,
+            enrolledStudentsCount: 0,
+            wasUpdated: true,
+          };
+        }
+
         const [aiRow] = await tx
           .insert(aiAssessment)
           .values({
-            bootcampId: dto.bootcampId,
-            chapterId: dto.chapterId,
             scope: 'bootcamp',
-            moduleId: dto.moduleId ?? null,
-            title: dto.title,
-            objective: dto.objective,
-            description: dto.description ?? null,
-            audience: dto.audience ?? null,
-            chapterIds: dto.chapterIds ?? [],
-            poolTopics: dto.poolTopics ?? [],
-            expectedOutcomes: dto.expectedOutcomes ?? null,
-            totalNumberOfQuestions: dto.totalNumberOfQuestions,
-            totalQuestionsWithBuffer: Math.floor(
-              dto.totalNumberOfQuestions * 2.25,
-            ),
+            ...assessmentValues,
           } as any)
           .returning();
 
@@ -379,12 +407,18 @@ export class AiAssessmentCrudService {
           );
         }
 
-        return { inserted: aiRow, enrolledStudentsCount: enrolledStudents.length };
+        return {
+          inserted: aiRow,
+          enrolledStudentsCount: enrolledStudents.length,
+          wasUpdated: false,
+        };
       },
     );
 
     return {
-      message: 'AI Assessment created and assigned to all enrolled students',
+      message: wasUpdated
+        ? 'AI Assessment updated for this chapter'
+        : 'AI Assessment created and assigned to all enrolled students',
       data: inserted,
       totalAssignedStudents: enrolledStudentsCount,
     };

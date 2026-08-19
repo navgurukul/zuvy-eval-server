@@ -212,7 +212,7 @@ export class QuestionsCrudService {
     difficulty: string;
     questionSetId: number;
     excludeId?: number;
-  }): Promise<{ data: unknown[]; total: number }> {
+  }): Promise<{ data: unknown[]; total: number; message?: string }> {
     const orgId = params.orgId?.trim();
     if (!orgId) {
       throw new BadRequestException('orgId is required');
@@ -267,13 +267,14 @@ export class QuestionsCrudService {
       .where(whereClause as any)
       .orderBy(desc(zuvyQuestions.createdAt));
 
-    if (data.length === 0) {
-      throw new NotFoundException(
-        `No questions found for topic "${topicName}" with difficulty "${difficulty}"`,
-      );
-    }
-
-    return { data, total: data.length };
+    return {
+      data,
+      total: data.length,
+      message:
+        data.length === 0
+          ? 'No replacement questions are available for this topic and difficulty.'
+          : undefined,
+    };
   }
 
   async replaceInQuestionSet(oldQuestionId: number, questionSetId: number, newQuestionId: number) {

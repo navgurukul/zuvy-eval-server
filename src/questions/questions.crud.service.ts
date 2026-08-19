@@ -1,7 +1,7 @@
 import { BadRequestException, Injectable, NotFoundException, Inject } from '@nestjs/common';
 import { DRIZZLE_DB } from 'src/db/constant';
 import { NodePgDatabase } from 'drizzle-orm/node-postgres';
-import { and, desc, eq, ne, sql } from 'drizzle-orm';
+import { and, desc, eq, ne, notInArray, sql } from 'drizzle-orm';
 import { aiAssessmentQuestions } from 'src/ai-assessment/ai-assessment.questions.schema';
 import { zuvyQuestions } from './schema/zuvy-questions.schema';
 import { CreateQuestionDto } from './dto/create-question.dto';
@@ -210,6 +210,7 @@ export class QuestionsCrudService {
     orgId: string;
     topicName: string;
     difficulty: string;
+    questionSetId: number;
     excludeId?: number;
   }): Promise<{ data: unknown[]; total: number }> {
     const orgId = params.orgId?.trim();
@@ -226,6 +227,14 @@ export class QuestionsCrudService {
     if (!difficulty) {
       throw new BadRequestException('difficulty is required');
     }
+    if (!Number.isInteger(params.questionSetId) || params.questionSetId <= 0) {
+      throw new BadRequestException('questionSetId must be a positive integer');
+    }
+
+    const existingSetQuestions = await this.db
+      .select({ questionId: aiAssessmentQuestions.questionId })
+      .from(aiAssessmentQuestions)
+      .where(eq(aiAssessmentQuestions.questionSetId, params.questionSetId));
 
     const conditions: any[] = [
       eq(zuvyQuestions.orgId, orgId),
@@ -235,6 +244,11 @@ export class QuestionsCrudService {
 
     if (params.excludeId && Number.isInteger(params.excludeId) && params.excludeId > 0) {
       conditions.push(ne(zuvyQuestions.id, params.excludeId));
+    }
+
+    const existingQuestionIds = existingSetQuestions.map(({ questionId }) => questionId);
+    if (existingQuestionIds.length > 0) {
+      conditions.push(notInArray(zuvyQuestions.id, existingQuestionIds));
     }
 
     const whereClause = and(...conditions);
@@ -284,6 +298,19 @@ export class QuestionsCrudService {
       throw new BadRequestException('Replacement question already exists in the set');
     }
 
+    const [[replacedQuestion], [replacementQuestion]] = await Promise.all([
+      this.db
+        .select({ id: zuvyQuestions.id, question: zuvyQuestions.question })
+        .from(zuvyQuestions)
+        .where(eq(zuvyQuestions.id, oldQuestionId))
+        .limit(1),
+      this.db
+        .select({ id: zuvyQuestions.id, question: zuvyQuestions.question })
+        .from(zuvyQuestions)
+        .where(eq(zuvyQuestions.id, newQuestionId))
+        .limit(1),
+    ]);
+
     const [row] = await this.db
       .update(aiAssessmentQuestions)
       .set({ questionId: newQuestionId, updatedAt: sql`now()` } as any)
@@ -294,6 +321,12 @@ export class QuestionsCrudService {
       throw new NotFoundException('Question not found in the requested set');
     }
 
-    return row;
+    return {
+      ...row,
+      replacedQuestionId: oldQuestionId,
+      replacementQuestionId: newQuestionId,
+      replacedQuestion,
+      replacementQuestion,
+    };
   }
 }

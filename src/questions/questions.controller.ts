@@ -1,5 +1,5 @@
 import { BadRequestException, Body, Controller, Delete, Get, Param, Patch, Post, Put, Query, Req, UseGuards } from '@nestjs/common';
-import { ApiBearerAuth, ApiBody, ApiOperation, ApiQuery, ApiTags } from '@nestjs/swagger';
+import { ApiBearerAuth, ApiBody, ApiOperation, ApiParam, ApiQuery, ApiTags } from '@nestjs/swagger';
 import { Request } from 'express';
 import { JwtAuthGuard } from 'src/auth/guards/jwt-auth.guard';
 import { QuestionsService } from './questions.service';
@@ -54,11 +54,13 @@ export class QuestionsController {
   @ApiOperation({ summary: 'Get replacement questions filtered by topic and difficulty (used by Review → Replace)' })
   @ApiQuery({ name: 'topicName', required: true, type: String, example: 'HTML & CSS' })
   @ApiQuery({ name: 'difficulty', required: true, type: String, example: 'easy' })
+  @ApiQuery({ name: 'questionSetId', required: true, type: Number, example: 253, description: 'Question set whose existing questions must be excluded' })
   @ApiQuery({ name: 'excludeId', required: false, type: Number, example: 42, description: 'ID of the current question to exclude' })
   findReplacement(
     @Req() req: Request & { user?: { orgId?: number | string } },
     @Query('topicName') topicName: string,
     @Query('difficulty') difficulty: string,
+    @Query('questionSetId') questionSetId: string,
     @Query('excludeId') excludeId?: string,
   ) {
     const orgId = req.user?.orgId != null ? String(req.user.orgId) : undefined;
@@ -66,6 +68,7 @@ export class QuestionsController {
       orgId: orgId ?? '',
       topicName,
       difficulty,
+      questionSetId: Number(questionSetId),
       excludeId: excludeId ? Number(excludeId) : undefined,
     });
   }
@@ -114,13 +117,14 @@ export class QuestionsController {
     return this.questionsCrudService.update(orgId ?? '', Number(id), updateQuestionDto);
   }
 
-  @Put(':id/replace')
+  @Put(':oldQuestionId/replace')
   @UseGuards(JwtAuthGuard)
   @ApiOperation({ summary: 'Replace a question in a question set' })
+  @ApiParam({ name: 'oldQuestionId', type: Number, description: 'ID of the existing question that will be replaced in the set', example: 1503 })
   @ApiBody({ type: ReplaceQuestionDto })
   replace(
     @Req() req: Request & { user?: { orgId?: number | string } },
-    @Param('id') id: string,
+    @Param('oldQuestionId') oldQuestionId: string,
     @Body() body: ReplaceQuestionDto,
   ) {
     if (!body) {
@@ -137,7 +141,7 @@ export class QuestionsController {
     }
 
     return this.questionsCrudService.replaceInQuestionSet(
-      Number(id),
+      Number(oldQuestionId),
       Number(questionSetId),
       Number(replacementQuestionId),
     );

@@ -345,15 +345,37 @@ export class AiAssessmentController {
       'Instructor preview: all generated question sets with full MCQs (includes correct answers). Use after map-questions.',
   })
   @ApiParam({ name: 'id', type: Number })
+  @ApiQuery({ name: 'setId', required: false, type: Number, description: 'Filter by question-set ID' })
+  @ApiQuery({ name: 'setIndex', required: false, type: Number, description: 'Filter by set index' })
+  @ApiQuery({ name: 'levelCode', required: false, type: String, example: 'E', description: 'Filter by set level code' })
+  @ApiQuery({ name: 'topicName', required: false, type: String, description: 'Filter questions by topic name' })
+  @ApiQuery({ name: 'difficulty', required: false, type: String, example: 'easy', description: 'Filter questions by difficulty' })
+  @ApiQuery({ name: 'questionId', required: false, type: Number, description: 'Filter by question ID' })
   @ApiResponse({ status: 200, description: 'Question sets and questions for the assessment.' })
   @ApiResponse({ status: 404, description: 'Assessment not found.' })
-  async getQuestionSetsForInstructor(@Param('id') id: string) {
+  async getQuestionSetsForInstructor(
+    @Param('id') id: string,
+    @Query('setId') setId?: string,
+    @Query('setIndex') setIndex?: string,
+    @Query('levelCode') levelCode?: string,
+    @Query('topicName') topicName?: string,
+    @Query('difficulty') difficulty?: string,
+    @Query('questionId') questionId?: string,
+  ) {
     const aiAssessmentId = Number(id);
     if (Number.isNaN(aiAssessmentId)) {
       throw new HttpException('Invalid assessment id', HttpStatus.BAD_REQUEST);
     }
     return this.aiAssessmentMappingService.getInstructorQuestionSetsPreview(
       aiAssessmentId,
+      {
+        setId: setId ? Number(setId) : undefined,
+        setIndex: setIndex ? Number(setIndex) : undefined,
+        levelCode,
+        topicName,
+        difficulty,
+        questionId: questionId ? Number(questionId) : undefined,
+      },
     );
   }
 

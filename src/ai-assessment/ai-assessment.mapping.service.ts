@@ -1,11 +1,12 @@
 import {
+  BadRequestException,
   Inject,
   Injectable,
   Logger,
   NotFoundException,
 } from '@nestjs/common';
 import { NodePgDatabase } from 'drizzle-orm/node-postgres';
-import { asc, eq } from 'drizzle-orm';
+import { and, asc, eq, ilike } from 'drizzle-orm';
 import { DRIZZLE_DB } from 'src/db/constant';
 import { aiAssessment } from 'src/db/schema/ai-assessment';
 import { aiAssessmentQuestionSets } from './ai-assessment.question-set.schema';
@@ -102,7 +103,17 @@ export class AiAssessmentMappingService {
 
   // ─── Instructor preview ────────────────────────────────────────────
 
-  async getInstructorQuestionSetsPreview(aiAssessmentId: number) {
+  async getInstructorQuestionSetsPreview(
+    aiAssessmentId: number,
+    filters: {
+      setId?: number;
+      setIndex?: number;
+      levelCode?: string;
+      topicName?: string;
+      difficulty?: string;
+      questionId?: number;
+    } = {},
+  ) {
     const [assessmentRow] = await this.db
       .select({
         id: aiAssessment.id,
@@ -121,6 +132,24 @@ export class AiAssessmentMappingService {
     if (!assessmentRow) {
       throw new NotFoundException(`AI assessment with id=${aiAssessmentId} not found`);
     }
+
+    for (const [name, value] of Object.entries({
+      setId: filters.setId,
+      setIndex: filters.setIndex,
+      questionId: filters.questionId,
+    })) {
+      if (value !== undefined && (!Number.isInteger(value) || value <= 0)) {
+        throw new BadRequestException(`${name} must be a positive integer`);
+      }
+    }
+
+    const conditions: any[] = [eq(aiAssessmentQuestionSets.aiAssessmentId, aiAssessmentId)];
+    if (filters.setId !== undefined) conditions.push(eq(aiAssessmentQuestionSets.id, filters.setId));
+    if (filters.setIndex !== undefined) conditions.push(eq(aiAssessmentQuestionSets.setIndex, filters.setIndex));
+    if (filters.levelCode?.trim()) conditions.push(ilike(aiAssessmentQuestionSets.levelCode, filters.levelCode.trim()));
+    if (filters.topicName?.trim()) conditions.push(ilike(zuvyQuestions.topicName, filters.topicName.trim()));
+    if (filters.difficulty?.trim()) conditions.push(ilike(zuvyQuestions.difficulty, filters.difficulty.trim()));
+    if (filters.questionId !== undefined) conditions.push(eq(zuvyQuestions.id, filters.questionId));
 
     const rows = await this.db
       .select({
@@ -144,7 +173,7 @@ export class AiAssessmentMappingService {
       .from(aiAssessmentQuestionSets)
       .innerJoin(aiAssessmentQuestions, eq(aiAssessmentQuestions.questionSetId, aiAssessmentQuestionSets.id))
       .innerJoin(zuvyQuestions, eq(zuvyQuestions.id, aiAssessmentQuestions.questionId))
-      .where(eq(aiAssessmentQuestionSets.aiAssessmentId, aiAssessmentId))
+      .where(and(...conditions))
       .orderBy(asc(aiAssessmentQuestionSets.setIndex), asc(aiAssessmentQuestions.position));
 
     type SetAgg = {

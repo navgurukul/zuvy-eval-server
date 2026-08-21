@@ -9,6 +9,7 @@ import {
   Req,
   UseGuards,
   Query,
+  HttpCode,
   HttpException,
   HttpStatus,
 } from '@nestjs/common';
@@ -472,6 +473,7 @@ export class AiAssessmentController {
   }
 
   @Post('map-questions')
+  @HttpCode(HttpStatus.OK)
   @ApiOperation({
     summary:
       'Map (generate) question sets for an assessment via JSON body. ' +
@@ -493,7 +495,10 @@ export class AiAssessmentController {
       'Question sets generated and mapped successfully for the given assessment.',
   })
   @ApiResponse({ status: 400, description: 'Invalid or missing aiAssessmentId, or totalNumberOfQuestions <= 0.' })
-  @ApiResponse({ status: 404, description: 'Assessment not found.' })
+  @ApiResponse({
+    status: 404,
+    description: 'Assessment not found, or no indexed questions match its topics.',
+  })
   async mapQuestionsFromBody(
     @Body() dto: MapQuestionsForAssessmentDto,
     @Req() req: Request & { user?: { orgId?: number | string } },
@@ -508,6 +513,7 @@ export class AiAssessmentController {
   }
 
   @Post(':id/map-questions')
+  @HttpCode(HttpStatus.OK)
   @ApiOperation({
     summary:
       'Map (generate) question sets for an assessment (path-param variant, kept for backward compatibility)',

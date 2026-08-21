@@ -72,8 +72,8 @@ export class AiAssessmentMappingService {
         this.logger.warn(
           `No vector results for assessment id=${aiAssessmentId} topics=${topicNames.join(',')}`,
         );
-        return {
-          statusCode: 200,
+        throw new NotFoundException({
+          statusCode: 404,
           aiAssessmentId,
           isBaseline,
           setsCreated: 0,
@@ -81,7 +81,7 @@ export class AiAssessmentMappingService {
           topicNames,
           message:
             'No questions found for this assessment topics. Please generate questions first before mapping.',
-        };
+        });
       }
 
       // Reset to draft so the instructor must review before publishing

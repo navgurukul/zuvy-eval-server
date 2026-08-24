@@ -108,6 +108,29 @@ export class QuestionsController {
 
   @Patch(':id')
   @UseGuards(JwtAuthGuard)
+  @ApiOperation({ summary: 'Update a question, its MCQ options, or the correct option' })
+  @ApiParam({ name: 'id', type: Number, description: 'Question ID', example: 1503 })
+  @ApiBody({
+    type: UpdateQuestionDto,
+    examples: {
+      correctAnswerOnly: {
+        summary: 'Correct an AI-selected answer',
+        value: { correctOption: 3 },
+      },
+      updateOptionsAndAnswer: {
+        summary: 'Update MCQ options and correct answer',
+        value: {
+          options: {
+            '1': 'Option A',
+            '2': 'Option B',
+            '3': 'Corrected option C',
+            '4': 'Option D',
+          },
+          correctOption: 3,
+        },
+      },
+    },
+  })
   update(
     @Req() req: Request & { user?: { orgId?: number | string } },
     @Param('id') id: string,

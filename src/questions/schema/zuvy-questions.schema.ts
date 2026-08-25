@@ -9,6 +9,7 @@ export const zuvyQuestions = main.table('zuvy_questions', {
   domainName: varchar('domain_name', { length: 255 }).notNull(),
   topicName: varchar('topic_name', { length: 255 }).notNull(),
   topicDescription: text('topic_description').notNull(),
+  subtopics: jsonb('subtopics'),
 
   learningObjectives: text('learning_objectives'),
   targetAudience: varchar('target_audience', { length: 255 }),

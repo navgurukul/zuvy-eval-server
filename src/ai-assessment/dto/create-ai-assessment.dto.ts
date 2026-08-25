@@ -2,7 +2,6 @@ import {
   ArrayMinSize,
   IsArray,
   IsDateString,
-  IsEnum,
   IsInt,
   IsNotEmpty,
   IsOptional,
@@ -11,9 +10,28 @@ import {
   ValidateIf,
   ValidateNested,
 } from 'class-validator';
+
+class PoolTopicDto {
+  @IsInt()
+  @Min(1)
+  id: number;
+
+  @IsString()
+  @IsNotEmpty()
+  name: string;
+}
 import { Type } from 'class-transformer';
 
-export type AssessmentScope = 'bootcamp' | 'domain';
+/*
+1.objective.
+2.expectedOutcomes
+3. asseementType   ["checkpoint","milestone"]
+4. targetLevel   nullable.
+5.timeLimit
+6.Proctoring {blockCopyandPaste:boolean  , flagTabChanges: boolean  }
+
+
+*/
 
 export class CreateAiAssessmentDto {
   @IsInt()
@@ -24,37 +42,51 @@ export class CreateAiAssessmentDto {
   @Min(1)
   chapterId: number;
 
-  @IsEnum(['bootcamp', 'domain'])
-  @IsOptional()
-  scope?: AssessmentScope = 'bootcamp';
-
-  @ValidateIf((o) => o.scope === 'domain')
+  /**
+   * Required when chapterIds is non-empty (legacy tag resolve needs it).
+   * Optional when mapping from poolTopics only.
+   */
+  @ValidateIf((o) => Array.isArray(o.chapterIds) && o.chapterIds.length > 0)
   @IsInt()
   @Min(1)
-  domainId?: number;
+  moduleId?: number;
 
   @IsString()
   @IsNotEmpty()
-  title: string;
+  title: string; //present//
+
+  @IsString()
+  @IsNotEmpty()
+  objective: string;
 
   @IsOptional()
   @IsString()
-  description?: string;
+  description?: string | null;
 
   @IsOptional()
-  audience?: any;
+  audience?: any | null;
+
+  @IsOptional()
+  @IsString()
+  expectedOutcomes?: string;
 
   @IsInt()
   @Min(1)
-  totalNumberOfQuestions: number;
+  totalNumberOfQuestions: number; // present//
 
+  /** When set, moduleId is required so chapter tags can be resolved. */
   @IsOptional()
-  @IsDateString()
-  startDatetime?: string;
+  @IsArray()
+  @ArrayMinSize(1)
+  @IsInt({ each: true })
+  @Min(1, { each: true })
+  chapterIds?: number[];
 
-  @IsOptional()
-  @IsDateString()
-  endDatetime?: string;
+  @IsArray()
+  @ArrayMinSize(1)
+  @ValidateNested({ each: true })
+  @Type(() => PoolTopicDto)
+  poolTopics: PoolTopicDto[];
 }
 
 export class ScheduleAssessmentDto {
@@ -129,7 +161,7 @@ export class ScoreSubmitDto {
 
   @IsInt()
   @Min(1)
-  domainId: number;
+  moduleId: number;
 
   @IsInt()
   @Min(1)

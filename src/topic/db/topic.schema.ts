@@ -1,5 +1,6 @@
 import {
   integer,
+  jsonb,
   serial,
   text,
   timestamp,
@@ -17,11 +18,11 @@ export const zuvyCourseModules = main.table('zuvy_course_modules', {
 
 export const topic = main.table('topic', {
   id: serial('id').primaryKey().notNull(),
-  moduleId: integer('module_id')
-    .notNull()
-    .references(() => zuvyCourseModules.id, { onDelete: 'cascade' }),
+  // Topics are tenant-owned. All reads and mutations must be scoped by this value.
+  orgId: varchar('org_id', { length: 255 }).notNull(),
   name: varchar('name', { length: 255 }).notNull(),
   description: text('description'),
+  subtopic: jsonb('subtopic'),
   createdAt: timestamp('created_at', {
     withTimezone: true,
     mode: 'string',
@@ -31,4 +32,3 @@ export const topic = main.table('topic', {
     mode: 'string',
   }).defaultNow(),
 });
-

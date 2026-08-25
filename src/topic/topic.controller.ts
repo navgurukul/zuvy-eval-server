@@ -1,5 +1,4 @@
 import {
-  BadRequestException,
   Controller,
   Body,
   Delete,
@@ -7,15 +6,15 @@ import {
   Param,
   Patch,
   Post,
-  Query,
   Req,
   UseGuards,
+  Query,
 } from '@nestjs/common';
 import {
   ApiBearerAuth,
   ApiBody,
-  ApiOperation,
   ApiQuery,
+  ApiOperation,
   ApiTags,
 } from '@nestjs/swagger';
 import { Request } from 'express';
@@ -23,7 +22,12 @@ import { JwtAuthGuard } from 'src/auth/guards/jwt-auth.guard';
 import { TopicService } from './topic.service';
 import { CreateTopicDto } from './dto/create-topic.dto';
 import { UpdateTopicDto } from './dto/update-topic.dto';
-import { createTopicExample, updateTopicExample } from './swagger_examples/examples';
+import { AddSubtopicDto } from './dto/add-subtopic.dto';
+import { GetTopicDto } from './dto/get-topic.dto';
+import {
+  createTopicExample,
+  updateTopicExample,
+} from './swagger_examples/examples';
 
 @ApiTags('Topic')
 @ApiBearerAuth('JWT-auth')
@@ -32,93 +36,63 @@ import { createTopicExample, updateTopicExample } from './swagger_examples/examp
 export class TopicController {
   constructor(private readonly topicService: TopicService) {}
 
-  private parseBootcampId(bootcampId: string): string {
-    const parsed = bootcampId?.trim();
-    if (!parsed) {
-      throw new BadRequestException('Valid bootcampId query param is required');
-    }
-    return parsed;
-  }
-
   @Post()
-  @ApiOperation({ summary: 'Create topic under a module' })
-  @ApiQuery({
-    name: 'bootcampId',
-    required: true,
-    type: String,
-    example: '803',
-    description: 'Bootcamp id under which the module/topic belongs',
-  })
+  @ApiOperation({ summary: 'Create a topic' })
   @ApiBody({
     type: CreateTopicDto,
     examples: {
       basicExample: {
-        summary: 'Create a new topic under module',
+        summary: 'Create a new topic',
         value: createTopicExample,
       },
     },
   })
   create(
-    @Req() req: Request & { user?: { orgId?: string | number } },
-    @Query('bootcampId') bootcampId: string,
+    @Req() req: Request & { user?: { orgId?: number | string } },
     @Body() createTopicDto: CreateTopicDto,
   ) {
-    const orgId = req.user?.orgId;
-    return this.topicService.create(
-      this.parseBootcampId(bootcampId),
-      orgId ?? '',
-      createTopicDto,
-    );
+    return this.topicService.create(this.getOrgId(req), createTopicDto);
   }
 
   @Get()
-  @ApiOperation({ summary: 'List topics in a bootcamp' })
-  @ApiQuery({
-    name: 'bootcampId',
-    required: true,
-    type: String,
-    example: '803',
-    description: 'Bootcamp id for filtering topics',
-  })
-  findAll(
-    @Req() req: Request & { user?: { orgId?: string | number } },
-    @Query('bootcampId') bootcampId: string,
-  ) {
-    const orgId = req.user?.orgId;
-    return this.topicService.findAll(this.parseBootcampId(bootcampId), orgId ?? '');
+  @ApiOperation({ summary: 'List topics' })
+  findAll(@Req() req: Request & { user?: { orgId?: number | string } }) {
+    return this.topicService.findAll(this.getOrgId(req));
   }
 
-  @Get(':id')
-  @ApiOperation({ summary: 'Get a single topic in a bootcamp' })
-  @ApiQuery({
-    name: 'bootcampId',
-    required: true,
-    type: String,
-    example: '803',
-    description: 'Bootcamp id for topic ownership check',
-  })
-  findOne(
-    @Req() req: Request & { user?: { orgId?: string | number } },
-    @Query('bootcampId') bootcampId: string,
-    @Param('id') id: string,
+  @Get('with-difficulty-levels')
+  @ApiOperation({ summary: 'Get topics with difficulty levels' })
+  @ApiQuery({ name: 'search', required: false, type: String })
+  @ApiQuery({ name: 'id', required: false, type: Number })
+  @ApiQuery({ name: 'limit', required: false, type: Number })
+  @ApiQuery({ name: 'offset', required: false, type: Number })
+  getAllTopicsWithDifficultyLevels(
+    @Req() req: Request & { user?: { orgId?: number | string } },
+    @Query('search') search?: string,
+    @Query('id') id?: string,
+    @Query('limit') limit?: string,
+    @Query('offset') offset?: string,
   ) {
-    const orgId = req.user?.orgId;
-    return this.topicService.findOne(
-      this.parseBootcampId(bootcampId),
-      orgId ?? '',
-      +id,
+    return this.topicService.getAllTopicsWithDifficultyLevels(
+      this.getOrgId(req),
+      search,
+      id != null && id !== '' ? Number(id) : undefined,
+      limit != null && limit !== '' ? Number(limit) : undefined,
+      offset != null && offset !== '' ? Number(offset) : undefined,
     );
   }
 
+  @Get(':id')
+  @ApiOperation({ summary: 'Get a single topic' })
+  findOne(
+    @Req() req: Request & { user?: { orgId?: number | string } },
+    @Param('id') id: string,
+  ) {
+    return this.topicService.findOne(this.getOrgId(req), +id);
+  }
+
   @Patch(':id')
-  @ApiOperation({ summary: 'Update a topic in a bootcamp' })
-  @ApiQuery({
-    name: 'bootcampId',
-    required: true,
-    type: String,
-    example: '803',
-    description: 'Bootcamp id for topic ownership check',
-  })
+  @ApiOperation({ summary: 'Update a topic' })
   @ApiBody({
     type: UpdateTopicDto,
     examples: {
@@ -129,57 +103,75 @@ export class TopicController {
     },
   })
   update(
-    @Req() req: Request & { user?: { orgId?: string | number } },
-    @Query('bootcampId') bootcampId: string,
+    @Req() req: Request & { user?: { orgId?: number | string } },
     @Param('id') id: string,
     @Body() updateTopicDto: UpdateTopicDto,
   ) {
-    const orgId = req.user?.orgId;
-    return this.topicService.update(
-      this.parseBootcampId(bootcampId),
-      orgId ?? '',
+    return this.topicService.update(this.getOrgId(req), +id, updateTopicDto);
+  }
+
+  @Post(':id/subtopics')
+  @ApiOperation({ summary: 'Add a subtopic to an existing topic' })
+  @ApiBody({
+    type: AddSubtopicDto,
+    examples: {
+      addSubtopic: {
+        summary: 'Add one subtopic',
+        value: {
+          subtopic: 'Investment Planning',
+        },
+      },
+    },
+  })
+  addSubtopic(
+    @Req() req: Request & { user?: { orgId?: number | string } },
+    @Param('id') id: string,
+    @Body() addSubtopicDto: AddSubtopicDto,
+  ) {
+    return this.topicService.addSubtopic(
+      this.getOrgId(req),
       +id,
-      updateTopicDto,
+      addSubtopicDto,
     );
   }
 
   @Delete(':id')
-  @ApiOperation({ summary: 'Delete a topic in a bootcamp' })
-  @ApiQuery({
-    name: 'bootcampId',
-    required: true,
-    type: String,
-    example: '803',
-    description: 'Bootcamp id for topic ownership check',
-  })
+  @ApiOperation({ summary: 'Delete a topic' })
   remove(
-    @Req() req: Request & { user?: { orgId?: string | number } },
-    @Query('bootcampId') bootcampId: string,
+    @Req() req: Request & { user?: { orgId?: number | string } },
     @Param('id') id: string,
   ) {
-    const orgId = req.user?.orgId;
-    return this.topicService.remove(this.parseBootcampId(bootcampId), orgId ?? '', +id);
+    return this.topicService.remove(this.getOrgId(req), +id);
   }
 
-  @Get('by-module/:moduleId')
-  @ApiOperation({ summary: 'List topics for a domain/module (for dropdowns)' })
-  @ApiQuery({
-    name: 'bootcampId',
-    required: true,
-    type: String,
-    example: '803',
-    description: 'Bootcamp id that owns the domain/module',
+  private getOrgId(req: Request & { user?: { orgId?: number | string } }): string {
+    return req.user?.orgId != null ? String(req.user.orgId) : '';
+  }
+
+  @Post('resolve-tags-from-chapter-ids')
+  @ApiOperation({ summary: 'Resolve tags from chapter IDs' })
+  @ApiBody({
+    description: 'Provide chapter IDs to resolve associated tags',
+    type: GetTopicDto,
+    examples: {
+      resolveTagsFromChapterIds: {
+        summary: 'Resolve tags from chapter IDs',
+        value: {
+          chapterIds: [6157, 6158, 6159],
+          bootcampId: 873,
+          moduleId: 806,
+        },
+      },
+    },
   })
-  findByModule(
-    @Req() req: Request & { user?: { orgId?: string | number } },
-    @Query('bootcampId') bootcampId: string,
-    @Param('moduleId') moduleId: string,
+  resolveTagsFromChapterIds(
+    @Req() req: Request & { user?: { orgId?: number | string } },
+    @Body() body: GetTopicDto,
   ) {
-    const orgId = req.user?.orgId;
-    return this.topicService.findByModule(
-      this.parseBootcampId(bootcampId),
-      orgId ?? '',
-      Number(moduleId),
+    return this.topicService.resolveTagsFromChapterIds(
+      this.getOrgId(req),
+      body,
+      req.headers.authorization,
     );
   }
 }

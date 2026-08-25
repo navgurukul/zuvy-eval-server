@@ -1,4 +1,4 @@
-import { IsInt, Min } from 'class-validator';
+import { IsArray, IsInt, Min } from 'class-validator';
 
 export class MapQuestionsForAssessmentDto {
   @IsInt()

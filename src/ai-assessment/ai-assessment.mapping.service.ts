@@ -1,17 +1,21 @@
 import {
+  BadRequestException,
   Inject,
   Injectable,
   Logger,
   NotFoundException,
 } from '@nestjs/common';
 import { NodePgDatabase } from 'drizzle-orm/node-postgres';
-import { asc, eq } from 'drizzle-orm';
+import { and, asc, eq, ilike } from 'drizzle-orm';
 import { DRIZZLE_DB } from 'src/db/constant';
 import { aiAssessment } from 'src/db/schema/ai-assessment';
 import { aiAssessmentQuestionSets } from './ai-assessment.question-set.schema';
 import { aiAssessmentQuestions } from './ai-assessment.questions.schema';
 import { zuvyQuestions } from 'src/questions/schema/zuvy-questions.schema';
-import { AiAssessmentMappingHelpers } from './ai-assessment.mapping.helpers';
+import {
+  AiAssessmentMappingHelpers,
+  MapQuestionsContext,
+} from './ai-assessment.mapping.helpers';
 
 @Injectable()
 export class AiAssessmentMappingService {
@@ -24,47 +28,60 @@ export class AiAssessmentMappingService {
 
   // ─── Map questions into sets ───────────────────────────────────────
 
-  async mapQuestionsForAssessment(aiAssessmentId: number) {
+  async mapQuestionsForAssessment(
+    aiAssessmentId: number,
+    ctx: MapQuestionsContext = { orgId: '' },
+  ) {
+    // Resolve topics outside the DB transaction (may call legacy HTTP APIs).
+    const assessment = await this.helpers.loadAssessment(this.db as any, aiAssessmentId);
+    const topicNames = await this.helpers.resolveAssessmentTopicNames(assessment, ctx);
+
+    if (topicNames.length === 0) {
+      this.logger.warn(
+        `No topics resolved for assessment id=${aiAssessmentId} (poolTopics + chapter tags empty)`,
+      );
+      return {
+        statusCode: 200,
+        aiAssessmentId,
+        setsCreated: 0,
+        totalQuestionsPerSet: assessment.totalNumberOfQuestions,
+        topicNames: [],
+        message:
+          'No topics found for this assessment. Provide poolTopics and/or chapterIds with moduleId.',
+      };
+    }
+
+    const queryVector = await this.helpers.buildScopedQueryVector(assessment, topicNames);
+
     return this.db.transaction(async (tx) => {
-      const assessment = await this.helpers.loadAssessment(tx, aiAssessmentId);
       const totalQuestions = assessment.totalNumberOfQuestions;
 
       await this.helpers.clearExistingSets(tx, aiAssessmentId);
       const isBaseline = await this.helpers.checkIsBaseline(tx, assessment);
 
-      const queryVector = await this.helpers.buildScopedQueryVector(tx, assessment);
       const { commonPerSet, uniquePerSet, neededTotal } =
         this.helpers.calculateSetSizes(totalQuestions, isBaseline);
 
-      let scopedIds: number[];
-
-      if (assessment.scope === 'bootcamp') {
-        scopedIds = await this.helpers.searchBootcampScoped(
-          tx,
-          assessment.bootcampId,
-          queryVector,
-          neededTotal,
-        );
-      } else {
-        scopedIds = await this.helpers.searchDomainScoped(
-          tx,
-          assessment,
-          queryVector,
-          neededTotal,
-        );
-      }
+      const scopedIds = await this.helpers.searchTopicScoped(
+        queryVector,
+        topicNames,
+        neededTotal,
+      );
 
       if (scopedIds.length === 0) {
-        this.logger.warn(`No vector results for assessment id=${aiAssessmentId}`);
-        return {
-          statusCode: 200,
+        this.logger.warn(
+          `No vector results for assessment id=${aiAssessmentId} topics=${topicNames.join(',')}`,
+        );
+        throw new NotFoundException({
+          statusCode: 404,
           aiAssessmentId,
           isBaseline,
           setsCreated: 0,
           totalQuestionsPerSet: totalQuestions,
+          topicNames,
           message:
-            'No questions found for this assessment scope. Please generate questions first before mapping.',
-        };
+            'No questions found for this assessment topics. Please generate questions first before mapping.',
+        });
       }
 
       // Reset to draft so the instructor must review before publishing
@@ -86,7 +103,17 @@ export class AiAssessmentMappingService {
 
   // ─── Instructor preview ────────────────────────────────────────────
 
-  async getInstructorQuestionSetsPreview(aiAssessmentId: number) {
+  async getInstructorQuestionSetsPreview(
+    aiAssessmentId: number,
+    filters: {
+      setId?: number;
+      setIndex?: number;
+      levelCode?: string;
+      topicName?: string;
+      difficulty?: string;
+      questionId?: number;
+    } = {},
+  ) {
     const [assessmentRow] = await this.db
       .select({
         id: aiAssessment.id,
@@ -106,6 +133,24 @@ export class AiAssessmentMappingService {
       throw new NotFoundException(`AI assessment with id=${aiAssessmentId} not found`);
     }
 
+    for (const [name, value] of Object.entries({
+      setId: filters.setId,
+      setIndex: filters.setIndex,
+      questionId: filters.questionId,
+    })) {
+      if (value !== undefined && (!Number.isInteger(value) || value <= 0)) {
+        throw new BadRequestException(`${name} must be a positive integer`);
+      }
+    }
+
+    const conditions: any[] = [eq(aiAssessmentQuestionSets.aiAssessmentId, aiAssessmentId)];
+    if (filters.setId !== undefined) conditions.push(eq(aiAssessmentQuestionSets.id, filters.setId));
+    if (filters.setIndex !== undefined) conditions.push(eq(aiAssessmentQuestionSets.setIndex, filters.setIndex));
+    if (filters.levelCode?.trim()) conditions.push(ilike(aiAssessmentQuestionSets.levelCode, filters.levelCode.trim()));
+    if (filters.topicName?.trim()) conditions.push(ilike(zuvyQuestions.topicName, filters.topicName.trim()));
+    if (filters.difficulty?.trim()) conditions.push(ilike(zuvyQuestions.difficulty, filters.difficulty.trim()));
+    if (filters.questionId !== undefined) conditions.push(eq(zuvyQuestions.id, filters.questionId));
+
     const rows = await this.db
       .select({
         setId: aiAssessmentQuestionSets.id,
@@ -122,14 +167,13 @@ export class AiAssessmentMappingService {
         options: zuvyQuestions.options,
         correctOption: zuvyQuestions.correctOption,
         levelId: zuvyQuestions.levelId,
-        domainName: zuvyQuestions.domainName,
         topicName: zuvyQuestions.topicName,
         topicDescription: zuvyQuestions.topicDescription,
       })
       .from(aiAssessmentQuestionSets)
       .innerJoin(aiAssessmentQuestions, eq(aiAssessmentQuestions.questionSetId, aiAssessmentQuestionSets.id))
       .innerJoin(zuvyQuestions, eq(zuvyQuestions.id, aiAssessmentQuestions.questionId))
-      .where(eq(aiAssessmentQuestionSets.aiAssessmentId, aiAssessmentId))
+      .where(and(...conditions))
       .orderBy(asc(aiAssessmentQuestionSets.setIndex), asc(aiAssessmentQuestions.position));
 
     type SetAgg = {
@@ -148,7 +192,6 @@ export class AiAssessmentMappingService {
         options: unknown;
         correctOption: number;
         levelId: string | null;
-        domainName: string;
         topicName: string;
         topicDescription: string;
       }>;
@@ -178,7 +221,6 @@ export class AiAssessmentMappingService {
         options: r.options,
         correctOption: r.correctOption,
         levelId: r.levelId,
-        domainName: r.domainName,
         topicName: r.topicName,
         topicDescription: r.topicDescription,
       });

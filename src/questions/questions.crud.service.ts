@@ -1,7 +1,8 @@
 import { BadRequestException, Injectable, NotFoundException, Inject } from '@nestjs/common';
 import { DRIZZLE_DB } from 'src/db/constant';
 import { NodePgDatabase } from 'drizzle-orm/node-postgres';
-import { and, desc, eq, sql } from 'drizzle-orm';
+import { and, desc, eq, ne, notInArray, sql } from 'drizzle-orm';
+import { aiAssessmentQuestions } from 'src/ai-assessment/ai-assessment.questions.schema';
 import { zuvyQuestions } from './schema/zuvy-questions.schema';
 import { CreateQuestionDto } from './dto/create-question.dto';
 import { UpdateQuestionDto } from './dto/update-question.dto';
@@ -19,9 +20,10 @@ export class QuestionsCrudService {
       .insert(zuvyQuestions)
       .values({
         orgId: orgId.trim(),
-        domainName: dto.domainName,
+        domainName: '',
         topicName: dto.topicName,
         topicDescription: dto.topicDescription,
+        subtopics: dto.subtopics ?? null,
         learningObjectives: dto.learningObjectives ?? null,
         targetAudience: dto.targetAudience ?? null,
         focusAreas: dto.focusAreas ?? null,
@@ -45,7 +47,6 @@ export class QuestionsCrudService {
     orgId: string;
     page?: number | string;
     limit?: number | string;
-    domainName?: string;
     difficulty?: string;
     topicName?: string;
   }): Promise<{
@@ -79,13 +80,11 @@ export class QuestionsCrudService {
       throw new BadRequestException('orgId is required');
     }
 
-    const domainName = params?.domainName?.trim();
     const difficulty = params?.difficulty?.trim();
     const topicName = params?.topicName?.trim();
 
     const conditions = [
       eq(zuvyQuestions.orgId, orgId),
-      domainName ? eq(zuvyQuestions.domainName, domainName) : undefined,
       difficulty ? eq(zuvyQuestions.difficulty, difficulty) : undefined,
       topicName ? eq(zuvyQuestions.topicName, topicName) : undefined,
     ].filter(Boolean);
@@ -148,9 +147,9 @@ export class QuestionsCrudService {
 
     const patch: Record<string, unknown> = {};
     const updatable: (keyof UpdateQuestionDto)[] = [
-      'domainName',
       'topicName',
       'topicDescription',
+      'subtopics',
       'question',
       'difficulty',
       'language',
@@ -205,5 +204,130 @@ export class QuestionsCrudService {
 
     return row;
   }
-}
 
+
+  async findReplacements(params: {
+    orgId: string;
+    topicName: string;
+    difficulty: string;
+    questionSetId: number;
+    excludeId?: number;
+  }): Promise<{ data: unknown[]; total: number; message?: string }> {
+    const orgId = params.orgId?.trim();
+    if (!orgId) {
+      throw new BadRequestException('orgId is required');
+    }
+
+    const topicName = params.topicName?.trim();
+    if (!topicName) {
+      throw new BadRequestException('topicName is required');
+    }
+
+    const difficulty = params.difficulty?.trim();
+    if (!difficulty) {
+      throw new BadRequestException('difficulty is required');
+    }
+    if (!Number.isInteger(params.questionSetId) || params.questionSetId <= 0) {
+      throw new BadRequestException('questionSetId must be a positive integer');
+    }
+
+    const existingSetQuestions = await this.db
+      .select({ questionId: aiAssessmentQuestions.questionId })
+      .from(aiAssessmentQuestions)
+      .where(eq(aiAssessmentQuestions.questionSetId, params.questionSetId));
+
+    const conditions: any[] = [
+      eq(zuvyQuestions.orgId, orgId),
+      sql`LOWER(${zuvyQuestions.topicName}) = LOWER(${topicName})`,
+      sql`LOWER(${zuvyQuestions.difficulty}) = LOWER(${difficulty})`,
+    ];
+
+    if (params.excludeId && Number.isInteger(params.excludeId) && params.excludeId > 0) {
+      conditions.push(ne(zuvyQuestions.id, params.excludeId));
+    }
+
+    const existingQuestionIds = existingSetQuestions.map(({ questionId }) => questionId);
+    if (existingQuestionIds.length > 0) {
+      conditions.push(notInArray(zuvyQuestions.id, existingQuestionIds));
+    }
+
+    const whereClause = and(...conditions);
+
+    const data = await this.db
+      .select({
+        id: zuvyQuestions.id,
+        topicName: zuvyQuestions.topicName,
+        difficulty: zuvyQuestions.difficulty,
+        question: zuvyQuestions.question,
+        options: zuvyQuestions.options,
+        correctOption: zuvyQuestions.correctOption,
+        levelId: zuvyQuestions.levelId,
+      })
+      .from(zuvyQuestions)
+      .where(whereClause as any)
+      .orderBy(desc(zuvyQuestions.createdAt));
+
+    return {
+      data,
+      total: data.length,
+      message:
+        data.length === 0
+          ? 'No replacement questions are available for this topic and difficulty.'
+          : undefined,
+    };
+  }
+
+  async replaceInQuestionSet(oldQuestionId: number, questionSetId: number, newQuestionId: number) {
+    if (!Number.isInteger(oldQuestionId) || oldQuestionId <= 0) {
+      throw new BadRequestException('oldQuestionId must be a positive integer');
+    }
+    if (!Number.isInteger(newQuestionId) || newQuestionId <= 0) {
+      throw new BadRequestException('replacementQuestionId must be a positive integer');
+    }
+    if (!Number.isInteger(questionSetId) || questionSetId <= 0) {
+      throw new BadRequestException('questionSetId must be a positive integer');
+    }
+
+    // Ensure replacement isn't already present in the set (unique constraint)
+    const existing = await this.db
+      .select()
+      .from(aiAssessmentQuestions)
+      .where(and(eq(aiAssessmentQuestions.questionSetId, questionSetId), eq(aiAssessmentQuestions.questionId, newQuestionId)))
+      .limit(1);
+
+    if (existing.length > 0) {
+      throw new BadRequestException('Replacement question already exists in the set');
+    }
+
+    const [[replacedQuestion], [replacementQuestion]] = await Promise.all([
+      this.db
+        .select({ id: zuvyQuestions.id, question: zuvyQuestions.question })
+        .from(zuvyQuestions)
+        .where(eq(zuvyQuestions.id, oldQuestionId))
+        .limit(1),
+      this.db
+        .select({ id: zuvyQuestions.id, question: zuvyQuestions.question })
+        .from(zuvyQuestions)
+        .where(eq(zuvyQuestions.id, newQuestionId))
+        .limit(1),
+    ]);
+
+    const [row] = await this.db
+      .update(aiAssessmentQuestions)
+      .set({ questionId: newQuestionId, updatedAt: sql`now()` } as any)
+      .where(and(eq(aiAssessmentQuestions.questionSetId, questionSetId), eq(aiAssessmentQuestions.questionId, oldQuestionId)))
+      .returning();
+
+    if (!row) {
+      throw new NotFoundException('Question not found in the requested set');
+    }
+
+    return {
+      ...row,
+      replacedQuestionId: oldQuestionId,
+      replacementQuestionId: newQuestionId,
+      replacedQuestion,
+      replacementQuestion,
+    };
+  }
+}

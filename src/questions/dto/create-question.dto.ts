@@ -1,4 +1,4 @@
-import { IsIn, IsInt, IsObject, IsOptional, IsString, Min } from 'class-validator';
+import { IsIn, IsInt, IsObject, IsOptional, IsString, Min , IsArray} from 'class-validator';
 
 export class CreateQuestionDto {
   @IsOptional()
@@ -6,13 +6,15 @@ export class CreateQuestionDto {
   orgId?: string;
 
   @IsString()
-  domainName: string;
-
-  @IsString()
   topicName: string;
 
   @IsString()
   topicDescription: string;
+
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  subtopics?: string[];
 
   @IsString()
   question: string;

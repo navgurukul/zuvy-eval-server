@@ -31,57 +31,104 @@ const PARENT = [
   'zuvy_course_modules',
 ];
 
-const MIGRATION_FILE = '001_eval_tables.sql';
-
 function targetSchema() {
   return process.env.ENV_NOTE === 'stage' ? 'stage' : 'main';
 }
 
-function splitStatements(sql) {
-  return sql
-    .split(/;\s*\n/)
-    .map((s) => s.trim())
-    .filter((s) => s.length && !s.split('\n').every((line) => line.trim().startsWith('--')));
+function migrationFiles() {
+  const dir = path.join(__dirname, '..', 'migrations');
+  return fs
+    .readdirSync(dir)
+    .filter((f) => /^\d+_.*\.sql$/.test(f))
+    .sort()
+    .map((filename) => ({
+      filename,
+      raw: fs.readFileSync(path.join(dir, filename), 'utf8'),
+    }));
 }
 
-function assertSqlSafe(sql, schema) {
+function stripCommentLines(sql) {
+  return sql
+    .split('\n')
+    .filter((line) => !line.trim().startsWith('--'))
+    .join('\n');
+}
+
+function splitStatements(sql) {
+  return stripCommentLines(sql)
+    .split(';')
+    .map((s) => s.trim())
+    .filter(Boolean);
+}
+
+function normalize(sql) {
+  return sql.replace(/\s+/g, ' ').trim();
+}
+
+function substituteSchema(raw, schema) {
+  return raw.replaceAll('"__SCHEMA__"', `"${schema}"`).replaceAll('__SCHEMA__', schema);
+}
+
+function assertSqlSafe(sql, schema, filename) {
   if (sql.includes('__SCHEMA__')) {
-    throw new Error('SQL still contains __SCHEMA__ placeholder');
+    throw new Error(`${filename} still contains __SCHEMA__ placeholder`);
   }
   const forbidden = sql.match(
-    /\b(DROP\s+TABLE|DROP\s+SCHEMA|TRUNCATE|DELETE\s+FROM|UPDATE\s+|GRANT\s+|REVOKE\s+|ALTER\s+TABLE)\b/gi,
+    /\b(DROP\s+TABLE|DROP\s+SCHEMA|TRUNCATE|DELETE\s+FROM|UPDATE\s+|GRANT\s+|REVOKE\s+)\b/gi,
   );
   if (forbidden) {
-    throw new Error(`SQL contains forbidden keyword: ${forbidden.join(', ')}`);
+    throw new Error(`${filename} contains forbidden keyword: ${forbidden.join(', ')}`);
   }
-  const tables = [...sql.matchAll(/CREATE TABLE IF NOT EXISTS\s+"([^"]+)"\."([^"]+)"/g)];
-  for (const [, sch, name] of tables) {
-    if (sch !== schema) {
-      throw new Error(`CREATE TABLE targets schema ${sch}, expected ${schema}`);
+
+  if (filename.startsWith('001_')) {
+    const alter = sql.match(/\bALTER\s+TABLE\b/gi);
+    if (alter) {
+      throw new Error(`${filename} must not ALTER TABLE`);
     }
-    if (!ALLOWLIST.includes(name)) {
-      throw new Error(`Refusing to create non-eval table ${sch}.${name}`);
+    const tables = [...sql.matchAll(/CREATE TABLE IF NOT EXISTS\s+"([^"]+)"\."([^"]+)"/g)];
+    for (const [, sch, name] of tables) {
+      if (sch !== schema) {
+        throw new Error(`${filename} CREATE TABLE targets schema ${sch}, expected ${schema}`);
+      }
+      if (!ALLOWLIST.includes(name)) {
+        throw new Error(`Refusing to create non-eval table ${sch}.${name}`);
+      }
     }
+    if (tables.length !== ALLOWLIST.length) {
+      throw new Error(
+        `${filename}: expected ${ALLOWLIST.length} CREATE TABLE statements, found ${tables.length}`,
+      );
+    }
+    return;
   }
-  if (tables.length !== ALLOWLIST.length) {
-    throw new Error(
-      `Expected ${ALLOWLIST.length} CREATE TABLE statements, found ${tables.length}`,
+
+  for (const stmt of splitStatements(sql)) {
+    const m = normalize(stmt).match(
+      /^ALTER TABLE "([^"]+)"\."([^"]+)" ALTER COLUMN "([^"]+)" DROP NOT NULL$/i,
     );
+    if (!m) {
+      throw new Error(`Refusing statement in ${filename}: ${stmt}`);
+    }
+    if (m[1] !== schema) {
+      throw new Error(`${filename} ALTER targets schema ${m[1]}, expected ${schema}`);
+    }
+    if (!ALLOWLIST.includes(m[2])) {
+      throw new Error(`Refusing ALTER on non-eval table ${m[1]}.${m[2]}`);
+    }
   }
 }
 
 async function counts(client, schema, names) {
   const out = {};
   for (const name of names) {
-    const exists = await client.query(
-      `SELECT to_regclass($1) AS reg`,
-      [`${schema}.${name}`],
-    );
+    const exists = await client.query(`SELECT to_regclass($1) AS reg`, [`${schema}.${name}`]);
     if (!exists.rows[0].reg) {
       out[`${schema}.${name}`] = null;
       continue;
     }
-    const r = await client.query(`SELECT count(*)::bigint AS n FROM ${quote(schema)}.${quote(name)}`);
+    const r = await client.query(
+      `SELECT count(*)::bigint AS n FROM ${quote(schema)}.${quote(name)}`,
+    );
     out[`${schema}.${name}`] = r.rows[0].n;
   }
   return out;
@@ -91,6 +138,21 @@ function quote(name) {
   return `"${String(name).replace(/"/g, '""')}"`;
 }
 
+async function allAllowlistedExist(client, schema) {
+  const r = await client.query(
+    `
+    SELECT count(*)::int AS n
+    FROM pg_class c
+    JOIN pg_namespace n ON n.oid = c.relnamespace
+    WHERE n.nspname = $1
+      AND c.relkind = 'r'
+      AND c.relname = ANY($2)
+    `,
+    [schema, ALLOWLIST],
+  );
+  return r.rows[0].n === ALLOWLIST.length;
+}
+
 async function main() {
   const schema = targetSchema();
   const dbName = process.env.DB_NAME;
@@ -98,16 +160,11 @@ async function main() {
   if (!['stage', 'main'].includes(schema)) {
     throw new Error(`Refusing unknown schema ${schema}`);
   }
-  if (schema === 'main' && dbName === 'dev' && process.env.FORCE_EVAL_MAIN_ON_DEV !== '1') {
-    throw new Error(
-      'Refusing to apply eval DDL to schema "main" on database "dev". Set ENV_NOTE=stage for staging, or FORCE_EVAL_MAIN_ON_DEV=1 only if you intend to no-op against existing main tables.',
-    );
-  }
 
-  const file = path.join(__dirname, '..', 'migrations', MIGRATION_FILE);
-  const raw = fs.readFileSync(file, 'utf8');
-  const sql = raw.replaceAll('"__SCHEMA__"', `"${schema}"`).replaceAll('__SCHEMA__', schema);
-  assertSqlSafe(sql, schema);
+  const files = migrationFiles();
+  if (!files.length) {
+    throw new Error('No migration files found');
+  }
 
   const client = new Client({
     host: process.env.DB_HOST,
@@ -118,10 +175,11 @@ async function main() {
     ssl: { rejectUnauthorized: false },
   });
   await client.connect();
-  console.log(`Applying ${MIGRATION_FILE} to schema "${schema}" on database "${dbName}"`);
+  console.log(`Applying eval migrations to schema "${schema}" on database "${dbName}"`);
 
   const beforeMainEval = await counts(client, 'main', ALLOWLIST);
-  const beforeStageParent = await counts(client, schema === 'stage' ? 'stage' : 'main', PARENT);
+  const parentSchema = schema === 'stage' ? 'stage' : 'main';
+  const beforeParent = await counts(client, parentSchema, PARENT);
 
   await client.query('BEGIN');
   try {
@@ -131,40 +189,62 @@ async function main() {
         applied_at timestamptz NOT NULL DEFAULT now()
       )
     `);
-    const already = await client.query(
-      `SELECT 1 FROM ${quote(schema)}.eval_schema_migrations WHERE filename = $1`,
-      [MIGRATION_FILE],
-    );
-    if (already.rowCount) {
-      console.log(`${MIGRATION_FILE} already recorded for schema ${schema}; skipping`);
-      await client.query('COMMIT');
-      await client.end();
-      return;
-    }
 
-    for (const stmt of splitStatements(sql)) {
-      await client.query(stmt);
-    }
-
-    await client.query(
-      `INSERT INTO ${quote(schema)}.eval_schema_migrations (filename) VALUES ($1)`,
-      [MIGRATION_FILE],
+    const applied = await client.query(
+      `SELECT filename FROM ${quote(schema)}.eval_schema_migrations`,
     );
+    const done = new Set(applied.rows.map((r) => r.filename));
+
+    for (const file of files) {
+      if (done.has(file.filename)) {
+        console.log(`${file.filename} already recorded for schema ${schema}; skipping`);
+        continue;
+      }
+
+      if (file.filename.startsWith('001_')) {
+        const exists = await allAllowlistedExist(client, schema);
+        if (exists) {
+          await client.query(
+            `INSERT INTO ${quote(schema)}.eval_schema_migrations (filename) VALUES ($1)`,
+            [file.filename],
+          );
+          console.log(
+            `${file.filename} baseline recorded for schema ${schema} (tables already present); not re-run`,
+          );
+          continue;
+        }
+        if (schema === 'main' && dbName === 'dev' && process.env.FORCE_EVAL_MAIN_ON_DEV !== '1') {
+          throw new Error(
+            'Refusing to CREATE eval tables on schema "main" in database "dev". Set ENV_NOTE=stage for staging.',
+          );
+        }
+      }
+
+      const sql = substituteSchema(file.raw, schema);
+      assertSqlSafe(sql, schema, file.filename);
+
+      for (const stmt of splitStatements(sql)) {
+        await client.query(stmt);
+      }
+      await client.query(
+        `INSERT INTO ${quote(schema)}.eval_schema_migrations (filename) VALUES ($1)`,
+        [file.filename],
+      );
+      console.log(`applied ${file.filename}`);
+    }
 
     const afterMainEval = await counts(client, 'main', ALLOWLIST);
-    const parentSchema = schema === 'stage' ? 'stage' : 'main';
     const afterParent = await counts(client, parentSchema, PARENT);
-    const afterTargetEval = await counts(client, schema, ALLOWLIST);
 
     const changedMain = ALLOWLIST.filter(
       (t) => String(beforeMainEval[`main.${t}`]) !== String(afterMainEval[`main.${t}`]),
     );
-    if (schema === 'stage' && changedMain.length) {
+    if (changedMain.length) {
       throw new Error(`main eval row counts changed: ${changedMain.join(', ')}`);
     }
     const changedParent = PARENT.filter(
       (t) =>
-        String(beforeStageParent[`${parentSchema}.${t}`]) !==
+        String(beforeParent[`${parentSchema}.${t}`]) !==
         String(afterParent[`${parentSchema}.${t}`]),
     );
     if (changedParent.length) {
@@ -173,8 +253,7 @@ async function main() {
 
     await client.query('COMMIT');
     console.log('parent counts (unchanged):', afterParent);
-    console.log('target eval counts:', afterTargetEval);
-    console.log('main eval counts (must be unchanged when targeting stage):', afterMainEval);
+    console.log('main eval counts (unchanged):', afterMainEval);
   } catch (err) {
     await client.query('ROLLBACK');
     throw err;

@@ -6,7 +6,7 @@ export const zuvyQuestions = main.table('zuvy_questions', {
 
   orgId: varchar('orgId', { length: 255 }),
 
-  domainName: varchar('domain_name', { length: 255 }).notNull(),
+  domainName: varchar('domain_name', { length: 255 }),
   topicName: varchar('topic_name', { length: 255 }).notNull(),
   topicDescription: text('topic_description').notNull(),
   subtopics: jsonb('subtopics'),

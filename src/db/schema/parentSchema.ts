@@ -1,6 +1,7 @@
 import { bigserial, integer, pgSchema, serial, text, unique, varchar } from "drizzle-orm/pg-core";
+import { DB_SCHEMA_NAME } from '../schemaName';
 
-export const main = pgSchema("main");
+export const main = pgSchema(DB_SCHEMA_NAME);
 
 export const zuvyOrganizations = main.table('zuvy_organizations', {
   id: serial('id').primaryKey().notNull(),

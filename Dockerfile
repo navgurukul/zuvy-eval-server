@@ -26,6 +26,8 @@ ENV NODE_ENV=production \
 COPY --chown=node:node package*.json ./
 COPY --chown=node:node --from=prod-deps /app/node_modules ./node_modules
 COPY --chown=node:node --from=build /app/dist ./dist
+COPY --chown=node:node migrations ./migrations
+COPY --chown=node:node scripts/apply-eval-migrations.js ./scripts/apply-eval-migrations.js
 USER node
 EXPOSE 5000
-CMD ["node", "dist/main"]
+CMD ["sh", "-c", "node scripts/apply-eval-migrations.js && node dist/main"]

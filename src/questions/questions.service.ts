@@ -244,7 +244,7 @@ export class QuestionsService {
       .insert(zuvyQuestions)
       .values({
         orgId: orgId.trim(),
-        domainName: '',
+        domainName: null,
         topicName: dto.topicName,
         topicDescription: dto.topicDescription,
         subtopics: dto.subtopics ?? null,
@@ -274,7 +274,7 @@ export class QuestionsService {
       .values(
         rows.map((r) => ({
           orgId: r.orgId ?? null,
-          domainName: '',
+          domainName: null,
           topicName: r.topicName,
           topicDescription: r.topicDescription,
           subtopics: r.subtopics ?? null,
@@ -310,7 +310,7 @@ export class QuestionsService {
         .values(
           rows.map((r) => ({
             orgId: r.orgId ?? null,
-            domainName: '',
+            domainName: null,
             topicName: r.topicName,
             topicDescription: r.topicDescription,
             subtopics: r.subtopics ?? null,

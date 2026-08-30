@@ -16,6 +16,8 @@ jobs:
           key: ${{ secrets.SSH_KEY }}
           script: |
             cd /home/ubuntu/zuvy-eval-server
+            git fetch origin
+            git checkout main
             git pull origin main
             docker stop zuvy-eval-server
             docker rm zuvy-eval-server

@@ -31,6 +31,13 @@ const PARENT = [
   'zuvy_course_modules',
 ];
 
+function shouldSkipMigrations() {
+  const value = String(process.env.SKIP_EVAL_MIGRATIONS || '')
+    .trim()
+    .toLowerCase();
+  return value === '1' || value === 'true' || value === 'yes';
+}
+
 function targetSchema() {
   return process.env.ENV_NOTE === 'stage' ? 'stage' : 'main';
 }
@@ -154,6 +161,11 @@ async function allAllowlistedExist(client, schema) {
 }
 
 async function main() {
+  if (shouldSkipMigrations()) {
+    console.log('SKIP_EVAL_MIGRATIONS is set; not applying migrations');
+    return;
+  }
+
   const schema = targetSchema();
   const dbName = process.env.DB_NAME;
 

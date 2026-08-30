@@ -16,6 +16,7 @@ services:
       NODE_ENV: ${NODE_ENV:-production}
       REDIS_HOST: 172.31.26.195    # <-- This now works because of network_mode: host
       REDIS_PORT: 6379
+      SKIP_EVAL_MIGRATIONS: ${SKIP_EVAL_MIGRATIONS:-}
     # REMOVE the 'ports' and 'expose' sections completely
     logging:
       driver: "json-file"

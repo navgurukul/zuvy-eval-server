@@ -1,0 +1,26 @@
+# Stage instance only. Dev keeps using docker-compose.yml + .env.docker.
+# Usage (on the zuvy-stage EC2 box):
+#   docker compose -f docker-compose.stage.yml --env-file .env.stage up -d --force-recreate
+services:
+  api:
+    container_name: zuvy-eval-server
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: production
+      args:
+        NODE_VERSION: ${NODE_VERSION:-20.18.0}
+    image: ${DOCKER_IMAGE:-zuvy-eval-server}:${DOCKER_TAG:-stage}
+    restart: unless-stopped
+    network_mode: "host"
+    env_file:
+      - .env.stage
+    environment:
+      NODE_ENV: ${NODE_ENV:-production}
+      REDIS_HOST: 172.31.26.195
+      REDIS_PORT: 6379
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "5"

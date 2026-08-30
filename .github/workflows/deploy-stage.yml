@@ -1,4 +1,4 @@
-name: deploy-stage
+name: "[STAGING]"
 
 on:
   push:
@@ -9,7 +9,7 @@ jobs:
   deploy:
     runs-on: ubuntu-latest
     steps:
-      - name: SSH deploy stage something
+      - name: "[STAGING] SSH Deploy"
         uses: appleboy/ssh-action@v1.0.3
         with:
           host: ${{ secrets.EC2_IP }}

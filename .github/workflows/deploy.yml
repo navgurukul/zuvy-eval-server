@@ -4,6 +4,12 @@ on:
   push:
     branches: ["dev"]
   workflow_dispatch:
+    inputs:
+      branch:
+        description: "Branch to put on the dev box. Use 'dev' to apply migrations. Any other branch skips migrations."
+        required: true
+        default: "dev"
+        type: string
 
 jobs:
   deploy:
@@ -11,15 +17,34 @@ jobs:
     steps:
       - name: "[DEV] SSH Deploy"
         uses: appleboy/ssh-action@v1.0.3
+        env:
+          DEPLOY_BRANCH: ${{ github.event_name == 'workflow_dispatch' && inputs.branch || 'dev' }}
         with:
           host: ${{ secrets.EC2_IP }}
           username: ubuntu
           key: ${{ secrets.SSH_KEY }}
+          envs: DEPLOY_BRANCH
+          command_timeout: 30m
+          script_stop: true
           script: |
+            set -euo pipefail
             cd /home/ubuntu/zuvy-eval-server
-            git fetch origin
-            git checkout dev
-            git pull origin dev
-            docker stop zuvy-eval-server
-            docker rm zuvy-eval-server
-            docker compose up -d --build
+            BRANCH="${DEPLOY_BRANCH}"
+            if ! printf '%s' "$BRANCH" | grep -Eq '^[A-Za-z0-9._/-]+$'; then
+              echo "Invalid branch name: $BRANCH"
+              exit 1
+            fi
+            git fetch --prune origin
+            git checkout -B "$BRANCH" "origin/$BRANCH"
+            git reset --hard "origin/$BRANCH"
+            docker stop zuvy-eval-server || true
+            docker rm zuvy-eval-server || true
+            if [ "$BRANCH" = "dev" ]; then
+              unset SKIP_EVAL_MIGRATIONS
+              docker compose up -d --build --force-recreate
+            else
+              OVERRIDE="/tmp/zuvy-eval-skip-migrate.yml"
+              printf '%s\n' 'services:' '  api:' '    command: ["node", "dist/main"]' > "$OVERRIDE"
+              SKIP_EVAL_MIGRATIONS=1 docker compose -f docker-compose.yml -f "$OVERRIDE" up -d --build --force-recreate
+            fi
+            docker compose ps

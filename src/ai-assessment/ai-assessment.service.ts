@@ -643,14 +643,7 @@ export class AiAssessmentService {
 
     return assessments.map(({ chapterIds, ...assessment }) => ({
       ...assessment,
-      // `chapterId` is the assessment's primary chapter. Include it even for
-      // assessments created before the optional chapter_ids field was saved.
-      selectedChapterids: Array.from(
-        new Set([
-          assessment.chapterId,
-          ...(Array.isArray(chapterIds) ? chapterIds : []),
-        ]),
-      ),
+      selectedChapterids: Array.isArray(chapterIds) ? chapterIds : [],
     }));
   }
 

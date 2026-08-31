@@ -623,6 +623,7 @@ export class AiAssessmentService {
         id: aiAssessment.id,
         bootcampId: aiAssessment.bootcampId,
         chapterId: aiAssessment.chapterId,
+        chapterIds: aiAssessment.chapterIds,
         moduleId: aiAssessment.moduleId,
         title: aiAssessment.title,
         description: aiAssessment.description,
@@ -640,7 +641,17 @@ export class AiAssessmentService {
       )
       .where(and(...conditions));
 
-    return assessments;
+    return assessments.map(({ chapterIds, ...assessment }) => ({
+      ...assessment,
+      // `chapterId` is the assessment's primary chapter. Include it even for
+      // assessments created before the optional chapter_ids field was saved.
+      selectedChapterids: Array.from(
+        new Set([
+          assessment.chapterId,
+          ...(Array.isArray(chapterIds) ? chapterIds : []),
+        ]),
+      ),
+    }));
   }
 
   async getStudentQuestions(userId: number, aiAssessmentId: number) {

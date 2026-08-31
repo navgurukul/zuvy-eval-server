@@ -19,28 +19,21 @@ jobs:
           key: ${{ secrets.SSH_KEY }}
           envs: DEPLOY_BRANCH
           command_timeout: 30m
-          script_stop: true
           script: |
             set -euo pipefail
             cd /home/ubuntu/zuvy-eval-server
             BRANCH="${DEPLOY_BRANCH}"
             echo "Deploying branch: ${BRANCH}"
-            if ! printf '%s' "$BRANCH" | grep -Eq '^[A-Za-z0-9._/-]+$'; then
-              echo "Invalid branch name: $BRANCH"
-              exit 1
-            fi
+            printf '%s' "$BRANCH" | grep -Eq '^[A-Za-z0-9._/-]+$'
             git fetch --prune origin
             git checkout -B "$BRANCH" "origin/$BRANCH"
             git reset --hard "origin/$BRANCH"
             git log -1 --oneline
             docker stop zuvy-eval-server || true
             docker rm zuvy-eval-server || true
-            if [ "$BRANCH" = "dev" ]; then
-              unset SKIP_EVAL_MIGRATIONS || true
-              docker compose up -d --build --force-recreate
-            else
-              echo "Feature deploy: skipping migrations"
-              export SKIP_EVAL_MIGRATIONS=1
-              docker compose up -d --build --force-recreate
-            fi
+            SKIP_EVAL_MIGRATIONS=
+            [ "$BRANCH" = "dev" ] || SKIP_EVAL_MIGRATIONS=1
+            export SKIP_EVAL_MIGRATIONS
+            echo "SKIP_EVAL_MIGRATIONS=${SKIP_EVAL_MIGRATIONS:-}"
+            docker compose up -d --build --force-recreate
             docker compose ps

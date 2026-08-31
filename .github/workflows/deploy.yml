@@ -36,11 +36,11 @@ jobs:
             docker stop zuvy-eval-server || true
             docker rm zuvy-eval-server || true
             if [ "$BRANCH" = "dev" ]; then
-              unset SKIP_EVAL_MIGRATIONS
+              unset SKIP_EVAL_MIGRATIONS || true
               docker compose up -d --build --force-recreate
             else
-              OVERRIDE="/tmp/zuvy-eval-skip-migrate.yml"
-              printf '%s\n' 'services:' '  api:' '    command: ["node", "dist/main"]' > "$OVERRIDE"
-              SKIP_EVAL_MIGRATIONS=1 docker compose -f docker-compose.yml -f "$OVERRIDE" up -d --build --force-recreate
+              echo "Feature deploy: skipping migrations"
+              export SKIP_EVAL_MIGRATIONS=1
+              docker compose up -d --build --force-recreate
             fi
             docker compose ps

@@ -1,0 +1,29 @@
+# Staging stack on the same EC2 as dev. Does not replace docker-compose.yml.
+#   docker compose -p zuvy-eval-stage -f docker-compose.stage.yml --env-file .env.stage up -d --force-recreate
+name: zuvy-eval-stage
+
+services:
+  api:
+    container_name: zuvy-eval-server-stage
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: production
+      args:
+        NODE_VERSION: ${NODE_VERSION:-20.18.0}
+    image: ${DOCKER_IMAGE:-zuvy-eval-server}:${DOCKER_TAG:-stage}
+    restart: unless-stopped
+    network_mode: "host"
+    env_file:
+      - .env.stage
+    environment:
+      NODE_ENV: ${NODE_ENV:-production}
+      REDIS_HOST: 172.31.26.195
+      REDIS_PORT: 6379
+      # Host network: cannot share PORT 5000 with the dev container.
+      PORT: "5001"
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "5"

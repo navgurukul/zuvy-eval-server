@@ -1,0 +1,27 @@
+name: "[STAGING]"
+
+on:
+  push:
+    branches: ["stage"]
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: "[STAGING] SSH Deploy"
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.EC2_IP }}
+          username: ubuntu
+          key: ${{ secrets.SSH_KEY }}
+          command_timeout: 30m
+          script_stop: true
+          script: |
+            set -euo pipefail
+            cd /home/ubuntu/zuvy-eval-server
+            git fetch origin
+            git checkout stage
+            git reset --hard origin/stage
+            docker compose -p zuvy-eval-stage -f docker-compose.stage.yml --env-file .env.stage up -d --build --force-recreate
+            docker compose -p zuvy-eval-stage -f docker-compose.stage.yml --env-file .env.stage ps

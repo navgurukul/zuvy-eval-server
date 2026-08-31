@@ -20,7 +20,7 @@ export class QuestionsCrudService {
       .insert(zuvyQuestions)
       .values({
         orgId: orgId.trim(),
-        domainName: '',
+        domainName: null,
         topicName: dto.topicName,
         topicDescription: dto.topicDescription,
         subtopics: dto.subtopics ?? null,

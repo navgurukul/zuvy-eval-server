@@ -39,7 +39,7 @@ function shouldSkipMigrations() {
 }
 
 function targetSchema() {
-  return process.env.ENV_NOTE === 'stage' ? 'stage' : 'main';
+  return process.env.ENV_NOTE === 'stage_template' ? 'stage_template' : 'main';
 }
 
 function migrationFiles() {
@@ -227,7 +227,7 @@ async function main() {
         }
         if (schema === 'main' && dbName === 'dev' && process.env.FORCE_EVAL_MAIN_ON_DEV !== '1') {
           throw new Error(
-            'Refusing to CREATE eval tables on schema "main" in database "dev". Set ENV_NOTE=stage for staging.',
+            'Refusing to CREATE eval tables on schema "main" in database "dev". Set ENV_NOTE=stage_template for staging.',
           );
         }
       }

@@ -169,7 +169,7 @@ async function main() {
   const schema = targetSchema();
   const dbName = process.env.DB_NAME;
 
-  if (!['stage', 'main'].includes(schema)) {
+  if (!['stage_template', 'main'].includes(schema)) {
     throw new Error(`Refusing unknown schema ${schema}`);
   }
 
@@ -190,7 +190,7 @@ async function main() {
   console.log(`Applying eval migrations to schema "${schema}" on database "${dbName}"`);
 
   const beforeMainEval = await counts(client, 'main', ALLOWLIST);
-  const parentSchema = schema === 'stage' ? 'stage' : 'main';
+  const parentSchema = schema === 'stage_template' ? 'stage_template' : 'main';
   const beforeParent = await counts(client, parentSchema, PARENT);
 
   await client.query('BEGIN');

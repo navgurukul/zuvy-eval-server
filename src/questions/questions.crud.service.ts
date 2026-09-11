@@ -6,6 +6,7 @@ import { aiAssessmentQuestions } from 'src/ai-assessment/ai-assessment.questions
 import { zuvyQuestions } from './schema/zuvy-questions.schema';
 import { CreateQuestionDto } from './dto/create-question.dto';
 import { UpdateQuestionDto } from './dto/update-question.dto';
+import { topicNameEquals, normalizeTopicName } from 'src/topic/topic-name.util';
 
 @Injectable()
 export class QuestionsCrudService {
@@ -21,7 +22,7 @@ export class QuestionsCrudService {
       .values({
         orgId: orgId.trim(),
         domainName: null,
-        topicName: dto.topicName,
+        topicName: normalizeTopicName(dto.topicName),
         topicDescription: dto.topicDescription,
         subtopics: dto.subtopics ?? null,
         learningObjectives: dto.learningObjectives ?? null,
@@ -86,7 +87,7 @@ export class QuestionsCrudService {
     const conditions = [
       eq(zuvyQuestions.orgId, orgId),
       difficulty ? eq(zuvyQuestions.difficulty, difficulty) : undefined,
-      topicName ? eq(zuvyQuestions.topicName, topicName) : undefined,
+      topicName ? topicNameEquals(zuvyQuestions.topicName, topicName) : undefined,
     ].filter(Boolean);
 
     const whereClause = and(...(conditions as any));
@@ -170,6 +171,10 @@ export class QuestionsCrudService {
       if (v !== undefined) patch[key] = v;
     }
 
+    if (typeof patch.topicName === 'string') {
+      patch.topicName = normalizeTopicName(patch.topicName);
+    }
+
     patch.updatedAt = sql`now()`;
 
     const [row] = await this.db
@@ -238,7 +243,7 @@ export class QuestionsCrudService {
 
     const conditions: any[] = [
       eq(zuvyQuestions.orgId, orgId),
-      sql`LOWER(${zuvyQuestions.topicName}) = LOWER(${topicName})`,
+      topicNameEquals(zuvyQuestions.topicName, topicName),
       sql`LOWER(${zuvyQuestions.difficulty}) = LOWER(${difficulty})`,
     ];
 

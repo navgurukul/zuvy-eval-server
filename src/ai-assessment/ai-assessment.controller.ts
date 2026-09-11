@@ -506,7 +506,7 @@ export class AiAssessmentController {
     return this.aiAssessmentMappingService.mapQuestionsForAssessment(
       dto.aiAssessmentId,
       {
-        orgId: req.user?.orgId != null ? String(req.user.orgId) : '',
+        orgId: req.user?.orgId != null ? Number(req.user.orgId) : 0,
         authorization: req.headers?.authorization,
       },
     );
@@ -535,7 +535,7 @@ export class AiAssessmentController {
     return this.aiAssessmentMappingService.mapQuestionsForAssessment(
       aiAssessmentId,
       {
-        orgId: req.user?.orgId != null ? String(req.user.orgId) : '',
+        orgId: req.user?.orgId != null ? Number(req.user.orgId) : 0,
         authorization: req.headers?.authorization,
       },
     );

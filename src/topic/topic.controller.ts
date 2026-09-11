@@ -144,8 +144,8 @@ export class TopicController {
     return this.topicService.remove(this.getOrgId(req), +id);
   }
 
-  private getOrgId(req: Request & { user?: { orgId?: number | string } }): string {
-    return req.user?.orgId != null ? String(req.user.orgId) : '';
+  private getOrgId(req: Request & { user?: { orgId?: number | string } }): number {
+    return req.user?.orgId != null ? Number(req.user.orgId) : 0;
   }
 
   @Post('resolve-tags-from-chapter-ids')

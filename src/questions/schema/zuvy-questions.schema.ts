@@ -1,10 +1,10 @@
 import { integer, jsonb, serial, text, timestamp, varchar } from 'drizzle-orm/pg-core';
-import { main } from 'src/db/schema/parentSchema';
+import { main, zuvyOrganizations } from 'src/db/schema/parentSchema';
 
 export const zuvyQuestions = main.table('zuvy_questions', {
   id: serial('id').primaryKey().notNull(),
 
-  orgId: varchar('orgId', { length: 255 }),
+  orgId: integer('orgId').notNull() .references(() => zuvyOrganizations.id, { onDelete: 'cascade' }),
 
   domainName: varchar('domain_name', { length: 255 }),
   topicName: varchar('topic_name', { length: 255 }).notNull(),

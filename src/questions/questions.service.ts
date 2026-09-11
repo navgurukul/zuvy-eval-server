@@ -33,7 +33,7 @@ export class QuestionsService {
 
   expandPayloadToJobs(
     payload: GenerateQuestionsDto,
-    orgId: string,
+    orgId: number,
   ): GenerateTopicBatchJobPayload[] {
     const jobs: GenerateTopicBatchJobPayload[] = [];
     const {
@@ -209,7 +209,7 @@ export class QuestionsService {
 
   async enqueueGeneration(
     payload: GenerateQuestionsDto,
-    orgId: string,
+    orgId: number,
     requestedByUserId?: string,
   ): Promise<{
     message: string;
@@ -235,15 +235,15 @@ export class QuestionsService {
     };
   }
 
-  async create(orgId: string, dto: CreateQuestionDto) {
-    if (!orgId?.trim()) {
+  async create(orgId: number, dto: CreateQuestionDto) {
+    if (!orgId) {
       throw new BadRequestException('orgId is required');
     }
 
     const [row] = await this.db
       .insert(zuvyQuestions)
       .values({
-        orgId: orgId.trim(),
+        orgId,
         domainName: null,
         topicName: dto.topicName,
         topicDescription: dto.topicDescription,
@@ -269,11 +269,14 @@ export class QuestionsService {
 
   async createMany(rows: CreateQuestionDto[]) {
     if (!rows || rows.length === 0) return [];
+    if (rows.some((r) => !r.orgId)) {
+      throw new BadRequestException('orgId is required for each row');
+    }
     return this.db
       .insert(zuvyQuestions)
       .values(
         rows.map((r) => ({
-          orgId: r.orgId ?? null,
+          orgId: r.orgId as number,
           domainName: null,
           topicName: r.topicName,
           topicDescription: r.topicDescription,
@@ -303,13 +306,16 @@ export class QuestionsService {
    */
   async createManyWithOutbox(rows: CreateQuestionDto[], requestedByUserId?: string) {
     if (!rows || rows.length === 0) return [];
+    if (rows.some((r) => !r.orgId)) {
+      throw new BadRequestException('orgId is required for each row');
+    }
 
     return this.db.transaction(async (tx) => {
       const inserted = await tx
         .insert(zuvyQuestions)
         .values(
           rows.map((r) => ({
-            orgId: r.orgId ?? null,
+            orgId: r.orgId as number,
             domainName: null,
             topicName: r.topicName,
             topicDescription: r.topicDescription,

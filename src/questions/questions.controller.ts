@@ -26,27 +26,28 @@ export class QuestionsController {
     type: GenerateQuestionsDto,
     examples: generateQuestionsExample,
   })
-  @ApiQuery({ name: 'orgId', required: true, type: String })
+  @ApiQuery({ name: 'orgId', required: true, type: Number, example: 123, description: 'Organization ID (tenant) for which questions are being generated' })
   async enqueueGeneration(
     @Req() req: Request & { user?: { sub?: string } },
-    @Query('orgId') orgId: string,
+    @Query('orgId') orgIdParam: string,
     @Body() payload: GenerateQuestionsDto,
   ) {
-    if (!orgId?.trim()) {
+    const orgId = Number(orgIdParam);
+    if (!orgIdParam || Number.isNaN(orgId)) {
       throw new BadRequestException('orgId (query param) is required');
     }
     const requestedByUserId = req.user?.sub != null ? String(req.user.sub) : undefined;
-    return this.questionsService.enqueueGeneration(payload, orgId.trim(), requestedByUserId);
+    return this.questionsService.enqueueGeneration(payload, orgId, requestedByUserId);
   }
 
   @Post()
   @UseGuards(JwtAuthGuard)
   create(
-    @Req() req: Request & { user?: { orgId?: number | string } },
+    @Req() req: Request & { user?: { orgId?: number} },
     @Body() createQuestionDto: CreateQuestionDto,
   ) {
-    const orgId = req.user?.orgId != null ? String(req.user.orgId) : undefined;
-    return this.questionsCrudService.create(orgId ?? '', createQuestionDto);
+    const orgId = req.user?.orgId != null ? Number(req.user.orgId) : undefined;
+    return this.questionsCrudService.create(orgId ?? 0, createQuestionDto);
   }
 
   @Get('replace')
@@ -63,9 +64,9 @@ export class QuestionsController {
     @Query('questionSetId') questionSetId: string,
     @Query('excludeId') excludeId?: string,
   ) {
-    const orgId = req.user?.orgId != null ? String(req.user.orgId) : undefined;
+    const orgId = req.user?.orgId != null ? Number(req.user.orgId) : undefined;
     return this.questionsCrudService.findReplacements({
-      orgId: orgId ?? '',
+      orgId: orgId ?? 0,
       topicName,
       difficulty,
       questionSetId: Number(questionSetId),
@@ -86,9 +87,9 @@ export class QuestionsController {
     @Query('difficulty') difficulty?: string,
     @Query('topicName') topicName?: string,
   ) {
-    const orgId = req.user?.orgId != null ? String(req.user.orgId) : undefined;
+    const orgId = req.user?.orgId != null ? Number(req.user.orgId) : undefined;
     return this.questionsCrudService.findAll({
-      orgId: orgId ?? '',
+      orgId: orgId ?? 0,
       page,
       limit,
       difficulty,
@@ -102,8 +103,8 @@ export class QuestionsController {
     @Req() req: Request & { user?: { orgId?: number | string } },
     @Param('id') id: string,
   ) {
-    const orgId = req.user?.orgId != null ? String(req.user.orgId) : undefined;
-    return this.questionsCrudService.findOne(orgId ?? '', Number(id));
+    const orgId = req.user?.orgId != null ? Number(req.user.orgId) : undefined;
+    return this.questionsCrudService.findOne(orgId ?? 0, Number(id));
   }
 
   @Patch(':id')
@@ -136,8 +137,8 @@ export class QuestionsController {
     @Param('id') id: string,
     @Body() updateQuestionDto: UpdateQuestionDto,
   ) {
-    const orgId = req.user?.orgId != null ? String(req.user.orgId) : undefined;
-    return this.questionsCrudService.update(orgId ?? '', Number(id), updateQuestionDto);
+    const orgId = req.user?.orgId != null ? Number(req.user.orgId) : undefined;
+    return this.questionsCrudService.update(orgId ?? 0, Number(id), updateQuestionDto);
   }
 
   @Put(':oldQuestionId/replace')
@@ -176,7 +177,7 @@ export class QuestionsController {
     @Req() req: Request & { user?: { orgId?: number | string } },
     @Param('id') id: string,
   ) {
-    const orgId = req.user?.orgId != null ? String(req.user.orgId) : undefined;
-    return this.questionsCrudService.remove(orgId ?? '', Number(id));
+    const orgId = req.user?.orgId != null ? Number(req.user.orgId) : undefined;
+    return this.questionsCrudService.remove(orgId ?? 0, Number(id));
   }
 }

@@ -12,6 +12,7 @@ import { NodePgDatabase } from 'drizzle-orm/node-postgres';
 import { topic } from './db/topic.schema';
 import { zuvyQuestions } from 'src/questions/schema/zuvy-questions.schema';
 import { and, eq, sql } from 'drizzle-orm';
+import { topicNamesMatch } from './topic-name.util';
 
 @Injectable()
 export class TopicService {
@@ -255,7 +256,13 @@ export class TopicService {
         difficulty: zuvyQuestions.difficulty,
       })
       .from(topic)
-      .leftJoin(zuvyQuestions, eq(topic.name, zuvyQuestions.topicName))
+      .leftJoin(
+        zuvyQuestions,
+        and(
+          topicNamesMatch(topic.name, zuvyQuestions.topicName),
+          eq(zuvyQuestions.orgId, scopedOrgId),
+        ),
+      )
       .where(and(...conditions));
 
     const topicsById = new Map<

@@ -2,6 +2,7 @@ import { BadRequestException, Body, Controller, Delete, Get, Param, Patch, Post,
 import { ApiBearerAuth, ApiBody, ApiOperation, ApiParam, ApiQuery, ApiTags } from '@nestjs/swagger';
 import { Request } from 'express';
 import { JwtAuthGuard } from 'src/auth/guards/jwt-auth.guard';
+import { resolveOrgId } from 'src/auth/resolve-org-id';
 import { QuestionsService } from './questions.service';
 import { QuestionsCrudService } from './questions.crud.service';
 import { CreateQuestionDto } from './dto/create-question.dto';
@@ -12,6 +13,13 @@ import { generateQuestionsExample } from './swagger_examples/examples';
 
 @ApiTags('Questions')
 @ApiBearerAuth('JWT-auth')
+@ApiQuery({
+  name: 'orgId',
+  required: false,
+  type: Number,
+  description:
+    'Required for super admin (no orgId in token). Other roles use orgId from the JWT.',
+})
 @Controller('questions')
 export class QuestionsController {
   constructor(
@@ -26,16 +34,11 @@ export class QuestionsController {
     type: GenerateQuestionsDto,
     examples: generateQuestionsExample,
   })
-  @ApiQuery({ name: 'orgId', required: true, type: Number, example: 123, description: 'Organization ID (tenant) for which questions are being generated' })
   async enqueueGeneration(
-    @Req() req: Request & { user?: { sub?: string } },
-    @Query('orgId') orgIdParam: string,
+    @Req() req: Request & { user?: { sub?: string; orgId?: number | string } },
     @Body() payload: GenerateQuestionsDto,
   ) {
-    const orgId = Number(orgIdParam);
-    if (!orgIdParam || Number.isNaN(orgId)) {
-      throw new BadRequestException('orgId (query param) is required');
-    }
+    const orgId = resolveOrgId(req);
     const requestedByUserId = req.user?.sub != null ? String(req.user.sub) : undefined;
     return this.questionsService.enqueueGeneration(payload, orgId, requestedByUserId);
   }
@@ -46,8 +49,7 @@ export class QuestionsController {
     @Req() req: Request & { user?: { orgId?: number} },
     @Body() createQuestionDto: CreateQuestionDto,
   ) {
-    const orgId = req.user?.orgId != null ? Number(req.user.orgId) : undefined;
-    return this.questionsCrudService.create(orgId ?? 0, createQuestionDto);
+    return this.questionsCrudService.create(resolveOrgId(req), createQuestionDto);
   }
 
   @Get('replace')
@@ -64,9 +66,8 @@ export class QuestionsController {
     @Query('questionSetId') questionSetId: string,
     @Query('excludeId') excludeId?: string,
   ) {
-    const orgId = req.user?.orgId != null ? Number(req.user.orgId) : undefined;
     return this.questionsCrudService.findReplacements({
-      orgId: orgId ?? 0,
+      orgId: resolveOrgId(req),
       topicName,
       difficulty,
       questionSetId: Number(questionSetId),
@@ -87,9 +88,8 @@ export class QuestionsController {
     @Query('difficulty') difficulty?: string,
     @Query('topicName') topicName?: string,
   ) {
-    const orgId = req.user?.orgId != null ? Number(req.user.orgId) : undefined;
     return this.questionsCrudService.findAll({
-      orgId: orgId ?? 0,
+      orgId: resolveOrgId(req),
       page,
       limit,
       difficulty,
@@ -103,8 +103,7 @@ export class QuestionsController {
     @Req() req: Request & { user?: { orgId?: number | string } },
     @Param('id') id: string,
   ) {
-    const orgId = req.user?.orgId != null ? Number(req.user.orgId) : undefined;
-    return this.questionsCrudService.findOne(orgId ?? 0, Number(id));
+    return this.questionsCrudService.findOne(resolveOrgId(req), Number(id));
   }
 
   @Patch(':id')
@@ -137,8 +136,7 @@ export class QuestionsController {
     @Param('id') id: string,
     @Body() updateQuestionDto: UpdateQuestionDto,
   ) {
-    const orgId = req.user?.orgId != null ? Number(req.user.orgId) : undefined;
-    return this.questionsCrudService.update(orgId ?? 0, Number(id), updateQuestionDto);
+    return this.questionsCrudService.update(resolveOrgId(req), Number(id), updateQuestionDto);
   }
 
   @Put(':oldQuestionId/replace')
@@ -177,7 +175,6 @@ export class QuestionsController {
     @Req() req: Request & { user?: { orgId?: number | string } },
     @Param('id') id: string,
   ) {
-    const orgId = req.user?.orgId != null ? Number(req.user.orgId) : undefined;
-    return this.questionsCrudService.remove(orgId ?? 0, Number(id));
+    return this.questionsCrudService.remove(resolveOrgId(req), Number(id));
   }
 }

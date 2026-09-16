@@ -19,6 +19,7 @@ import {
 } from '@nestjs/swagger';
 import { Request } from 'express';
 import { JwtAuthGuard } from 'src/auth/guards/jwt-auth.guard';
+import { resolveOrgId } from 'src/auth/resolve-org-id';
 import { TopicService } from './topic.service';
 import { CreateTopicDto } from './dto/create-topic.dto';
 import { UpdateTopicDto } from './dto/update-topic.dto';
@@ -31,6 +32,13 @@ import {
 
 @ApiTags('Topic')
 @ApiBearerAuth('JWT-auth')
+@ApiQuery({
+  name: 'orgId',
+  required: false,
+  type: Number,
+  description:
+    'Required for super admin (no orgId in token). Other roles use orgId from the JWT.',
+})
 @UseGuards(JwtAuthGuard)
 @Controller('topic')
 export class TopicController {
@@ -144,8 +152,8 @@ export class TopicController {
     return this.topicService.remove(this.getOrgId(req), +id);
   }
 
-  private getOrgId(req: Request & { user?: { orgId?: number | string } }): string {
-    return req.user?.orgId != null ? String(req.user.orgId) : '';
+  private getOrgId(req: Request & { user?: { orgId?: number | string } }): number {
+    return resolveOrgId(req);
   }
 
   @Post('resolve-tags-from-chapter-ids')

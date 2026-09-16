@@ -21,7 +21,7 @@ import { normalizeTopicName, topicNameEquals, topicNameKey } from 'src/topic/top
 export type Tx = Parameters<Parameters<NodePgDatabase['transaction']>[0]>[0];
 
 export type MapQuestionsContext = {
-  orgId: string;
+  orgId: number;
   authorization?: string;
 };
 
@@ -124,7 +124,7 @@ export class AiAssessmentMappingHelpers {
         this.logger.warn(
           `Assessment id=${assessment.id} has chapterIds but no moduleId; skipping chapter tag resolve`,
         );
-      } else if (!ctx.orgId?.trim()) {
+      } else if (!ctx.orgId) {
         this.logger.warn(
           `Assessment id=${assessment.id}: orgId missing; skipping chapter tag resolve`,
         );

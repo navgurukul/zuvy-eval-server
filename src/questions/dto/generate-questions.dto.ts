@@ -123,7 +123,7 @@ export interface GenerateTopicBatchJobPayload {
   count: number;
   /** User id (e.g. JWT sub) who triggered generation; propagated to outbox for per-user WS notification. */
   requestedByUserId?: string;
-  orgId?: string;
+  orgId?: number;
   levelId?: 'A+' | 'A' | 'B' | 'C' | 'D' | 'E' | null;
   topicName?: string;
   topicDescription?: string;

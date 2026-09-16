@@ -57,10 +57,10 @@ describe('QuestionsService', () => {
       ],
     } as GenerateQuestionsDto;
 
-    const jobs = service.expandPayloadToJobs(payload, 'org-1');
+    const jobs = service.expandPayloadToJobs(payload, 1);
     expect(jobs).toHaveLength(2);
     expect(jobs.every((job) => job.count === 10)).toBe(true);
-    expect(jobs.every((job) => job.orgId === 'org-1')).toBe(true);
+    expect(jobs.every((job) => job.orgId === 1)).toBe(true);
   });
 
   it('reuses the org topic spelling so a later generate stays in the same pool', async () => {
@@ -68,7 +68,7 @@ describe('QuestionsService', () => {
       mockSelect([{ name: 'HTML & CSS', description: 'Frontend' }]),
     );
 
-    const resolved = await service.resolveCanonicalTopic('org-1', 'html & css');
+    const resolved = await service.resolveCanonicalTopic(1, 'html & css');
     expect(resolved).toEqual({
       topicName: 'HTML & CSS',
       topicDescription: 'Frontend',
@@ -82,7 +82,7 @@ describe('QuestionsService', () => {
         mockSelect([{ topicName: 'REST APIs', topicDescription: 'HTTP' }]),
       );
 
-    const resolved = await service.resolveCanonicalTopic('org-1', 'rest apis');
+    const resolved = await service.resolveCanonicalTopic(1, 'rest apis');
     expect(resolved.topicName).toBe('REST APIs');
   });
 
@@ -91,7 +91,7 @@ describe('QuestionsService', () => {
       mockSelect([{ question: 'What is REST?' }, { question: 'What is HTTP?' }]),
     );
 
-    const texts = await service.getQuestionTextsByTopic('rest apis', 'org-1', 200);
+    const texts = await service.getQuestionTextsByTopic('rest apis', 1, 200);
     expect(texts).toEqual(['What is REST?', 'What is HTTP?']);
     expect(db.delete).not.toHaveBeenCalled();
   });
@@ -110,7 +110,7 @@ describe('QuestionsService', () => {
     const inserted = await service.createManyWithOutbox(
       [
         {
-          orgId: 'org-1',
+          orgId: 1,
           topicName: 'REST APIs',
           topicDescription: 'HTTP APIs',
           question: 'New Q',
@@ -144,7 +144,7 @@ describe('QuestionsService', () => {
           },
         ],
       } as GenerateQuestionsDto,
-      'org-1',
+      1,
       'user-1',
     );
 
@@ -152,6 +152,6 @@ describe('QuestionsService', () => {
     const jobPayload = queue.add.mock.calls[0][1];
     expect(jobPayload.topic).toBe('HTML & CSS');
     expect(jobPayload.topicName).toBe('HTML & CSS');
-    expect(jobPayload.orgId).toBe('org-1');
+    expect(jobPayload.orgId).toBe(1);
   });
 });

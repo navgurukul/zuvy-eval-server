@@ -214,7 +214,7 @@ export class QuestionsService {
    * Generation always appends; this keeps new rows in the same pool as old ones.
    */
   async resolveCanonicalTopic(
-    orgId: string | undefined,
+    orgId: number | undefined,
     topicName: string,
   ): Promise<{ topicName: string; topicDescription: string | null }> {
     const trimmed = normalizeTopicName(topicName);
@@ -222,7 +222,7 @@ export class QuestionsService {
       return { topicName: '', topicDescription: null };
     }
 
-    const scopedOrgId = orgId?.trim();
+    const scopedOrgId = orgId;
     if (!scopedOrgId) {
       return { topicName: trimmed, topicDescription: null };
     }
@@ -425,14 +425,14 @@ export class QuestionsService {
    */
   async getQuestionTextsByTopic(
     topicName: string,
-    orgId?: string,
+    orgId?: number,
     limit = 200,
   ): Promise<string[]> {
     const normalizedTopic = normalizeTopicName(topicName);
     if (!normalizedTopic) return [];
 
     const conditions = [topicNameEquals(zuvyQuestions.topicName, normalizedTopic)];
-    const scopedOrgId = orgId?.trim();
+    const scopedOrgId = orgId;
     if (scopedOrgId) {
       conditions.push(eq(zuvyQuestions.orgId, scopedOrgId));
     }

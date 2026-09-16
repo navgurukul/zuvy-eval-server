@@ -66,6 +66,7 @@ export class AiAssessmentMappingService {
         queryVector,
         topicNames,
         neededTotal,
+        ctx.orgId,
       );
 
       if (scopedIds.length === 0) {

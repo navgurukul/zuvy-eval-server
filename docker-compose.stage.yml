@@ -20,6 +20,7 @@ services:
       NODE_ENV: ${NODE_ENV:-production}
       REDIS_HOST: 172.31.26.195
       REDIS_PORT: 6379
+      BULLMQ_PREFIX: zuvy-eval-stage   # keep isolated from the dev stack sharing this Redis
       # Host network: cannot share PORT 5000 with the dev container.
       PORT: "5001"
     logging:

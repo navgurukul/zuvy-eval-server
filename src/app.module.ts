@@ -28,7 +28,8 @@ import { TopicModule } from './topic/topic.module';
       connection: {
         host: process.env.REDIS_HOST,
         port: Number(process.env.REDIS_PORT)
-      }
+      },
+      prefix: process.env.BULLMQ_PREFIX || 'zuvy-eval',
     }),
     AiAssessmentModule, 
     LlmModule, 

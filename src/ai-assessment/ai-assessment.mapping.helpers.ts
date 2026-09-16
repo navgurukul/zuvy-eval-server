@@ -219,20 +219,20 @@ export class AiAssessmentMappingHelpers {
     queryVector: number[],
     topicNames: string[],
     neededTotal: number,
-    orgId?: string,
+    orgId?: number,
   ): Promise<number[]> {
     return this.searchEvenlyByTopics(queryVector, topicNames, neededTotal, {}, orgId);
   }
 
   private async getTopicNameVariants(
-    orgId: string | undefined,
+    orgId: number | undefined,
     topicName: string,
   ): Promise<string[]> {
     const variants = new Set<string>();
     const trimmed = normalizeTopicName(topicName);
     if (trimmed) variants.add(trimmed);
 
-    const scopedOrgId = orgId?.trim();
+    const scopedOrgId = orgId;
     if (!scopedOrgId || !trimmed) return [...variants];
 
     const questionRows = await this.db
@@ -287,7 +287,7 @@ export class AiAssessmentMappingHelpers {
     topicNames: string[],
     totalNeeded: number,
     baseFilter: Record<string, any>,
-    orgId?: string,
+    orgId?: number,
   ): Promise<number[]> {
     const topics = this.normalizeNames(topicNames);
     if (topics.length === 0 || totalNeeded <= 0) return [];

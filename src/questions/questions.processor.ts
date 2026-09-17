@@ -8,6 +8,7 @@ import { EmbeddingsService } from 'src/llm/embeddings.service';
 import { VectorService } from 'src/vector/vector.service';
 import { GenerateTopicBatchJobPayload } from './dto/generate-questions.dto';
 import { QuestionsService } from './questions.service';
+import { shuffleMcqOptionOrder } from './mcq-option-shuffle.util';
 
 const JOB_NAME = 'generate-topic-batch';
 const QDRANT_QUESTIONS_COLLECTION = 'QUESTIONS';
@@ -135,6 +136,12 @@ export class QuestionsProcessor extends WorkerHost {
               ? (String(levelId).toUpperCase() as (typeof allowedBands)[number])
               : null;
 
+        const { options: shuffledOptions, correctOption: shuffledCorrectOption } =
+          shuffleMcqOptionOrder(
+            q.options as Record<string, string>,
+            Number(q.correctOption),
+          );
+
         return {
           orgId: orgId ?? undefined,
           topicName,
@@ -151,8 +158,8 @@ export class QuestionsProcessor extends WorkerHost {
           question: q.question,
           difficulty: q.difficulty,
           language: q.language,
-          options: q.options as any,
-          correctOption: Number(q.correctOption),
+          options: shuffledOptions as any,
+          correctOption: shuffledCorrectOption,
         };
       }),
       requestedByUserId,

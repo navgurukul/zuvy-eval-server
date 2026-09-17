@@ -288,16 +288,19 @@ export function generateMcqPromptFromSpec(
   sections.push('7. "correctOption" MUST correspond to the correct answer.');
   sections.push('8. For numerical questions, one option must exactly equal the internally computed final answer (same units/rounding), and "correctOption" must point to it.');
   sections.push('9. Options MUST be mutually exclusive and non-overlapping.');
-  sections.push('10. Do NOT include explanations, ids, or extra keys.');
-  sections.push('11. Avoid "All of the above" or "None of the above".');
-  sections.push('12. Avoid vague or ambiguous wording.');
-  sections.push('13. If you cannot ensure correctness, return: { "error": "GENERATION_FAILED", "reason": "<short reason>" }');
+  sections.push(
+    '10. Vary the position of the correct answer across this batch: do NOT default to placing it at the same option number (e.g. always "1" or always "2") for most questions. Distribute correctOption roughly evenly across 1, 2, 3, and 4 across the batch.'
+  );
+  sections.push('11. Do NOT include explanations, ids, or extra keys.');
+  sections.push('12. Avoid "All of the above" or "None of the above".');
+  sections.push('13. Avoid vague or ambiguous wording.');
+  sections.push('14. If you cannot ensure correctness, return: { "error": "GENERATION_FAILED", "reason": "<short reason>" }');
   if (hasRequiredDifficultyCounts) {
     sections.push(
-      `14. FINAL BATCH CHECK (MANDATORY): Before output, count difficulties across all generated items. You MUST have easy=${requiredEasyCount}, medium=${requiredMediumCount}, hard=${requiredHardCount}, total=${count}.`
+      `15. FINAL BATCH CHECK (MANDATORY): Before output, count difficulties across all generated items. You MUST have easy=${requiredEasyCount}, medium=${requiredMediumCount}, hard=${requiredHardCount}, total=${count}.`
     );
     sections.push(
-      '15. If final difficulty counts do not match exactly, regenerate/rebalance before output. Do not output partial or mismatched distribution.'
+      '16. If final difficulty counts do not match exactly, regenerate/rebalance before output. Do not output partial or mismatched distribution.'
     );
   }
   

@@ -6,7 +6,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { NodePgDatabase } from 'drizzle-orm/node-postgres';
-import { eq, inArray } from 'drizzle-orm';
+import { and, eq, inArray } from 'drizzle-orm';
 import { DRIZZLE_DB } from 'src/db/constant';
 import { aiAssessment } from 'src/db/schema/ai-assessment';
 import { aiAssessmentQuestionSets } from './ai-assessment.question-set.schema';
@@ -15,11 +15,13 @@ import { zuvyQuestions } from 'src/questions/schema/zuvy-questions.schema';
 import { EmbeddingsService } from 'src/llm/embeddings.service';
 import { VectorService } from 'src/vector/vector.service';
 import { TopicService } from 'src/topic/topic.service';
+import { topic } from 'src/topic/db/topic.schema';
+import { normalizeTopicName, topicNameEquals, topicNameKey } from 'src/topic/topic-name.util';
 
 export type Tx = Parameters<Parameters<NodePgDatabase['transaction']>[0]>[0];
 
 export type MapQuestionsContext = {
-  orgId: string;
+  orgId: number;
   authorization?: string;
 };
 
@@ -122,7 +124,7 @@ export class AiAssessmentMappingHelpers {
         this.logger.warn(
           `Assessment id=${assessment.id} has chapterIds but no moduleId; skipping chapter tag resolve`,
         );
-      } else if (!ctx.orgId?.trim()) {
+      } else if (!ctx.orgId) {
         this.logger.warn(
           `Assessment id=${assessment.id}: orgId missing; skipping chapter tag resolve`,
         );
@@ -217,8 +219,67 @@ export class AiAssessmentMappingHelpers {
     queryVector: number[],
     topicNames: string[],
     neededTotal: number,
+    orgId?: number,
   ): Promise<number[]> {
-    return this.searchEvenlyByTopics(queryVector, topicNames, neededTotal, {});
+    return this.searchEvenlyByTopics(queryVector, topicNames, neededTotal, {}, orgId);
+  }
+
+  private async getTopicNameVariants(
+    orgId: number | undefined,
+    topicName: string,
+  ): Promise<string[]> {
+    const variants = new Set<string>();
+    const trimmed = normalizeTopicName(topicName);
+    if (trimmed) variants.add(trimmed);
+
+    const scopedOrgId = orgId;
+    if (!scopedOrgId || !trimmed) return [...variants];
+
+    const questionRows = await this.db
+      .selectDistinct({ topicName: zuvyQuestions.topicName })
+      .from(zuvyQuestions)
+      .where(
+        and(
+          eq(zuvyQuestions.orgId, scopedOrgId),
+          topicNameEquals(zuvyQuestions.topicName, trimmed),
+        ),
+      );
+    for (const row of questionRows) {
+      const name = normalizeTopicName(row.topicName);
+      if (name) variants.add(name);
+    }
+
+    const [ownedTopic] = await this.db
+      .select({ name: topic.name })
+      .from(topic)
+      .where(and(eq(topic.orgId, scopedOrgId), topicNameEquals(topic.name, trimmed)))
+      .limit(1);
+    if (ownedTopic?.name) variants.add(ownedTopic.name);
+
+    return [...variants];
+  }
+
+  private async searchQuestionsForTopicVariants(
+    queryVector: number[],
+    variants: string[],
+    limit: number,
+    baseFilter: Record<string, any>,
+    seen: Set<number>,
+  ): Promise<number[]> {
+    const ids: number[] = [];
+    for (const variant of variants) {
+      const found = await this.searchQuestions(queryVector, limit, {
+        ...baseFilter,
+        topic: variant,
+      });
+      for (const id of found) {
+        if (!seen.has(id)) {
+          seen.add(id);
+          ids.push(id);
+        }
+      }
+    }
+    return ids;
   }
 
   private async searchEvenlyByTopics(
@@ -226,6 +287,7 @@ export class AiAssessmentMappingHelpers {
     topicNames: string[],
     totalNeeded: number,
     baseFilter: Record<string, any>,
+    orgId?: number,
   ): Promise<number[]> {
     const topics = this.normalizeNames(topicNames);
     if (topics.length === 0 || totalNeeded <= 0) return [];
@@ -233,46 +295,40 @@ export class AiAssessmentMappingHelpers {
     const perTopic = this.allocateEvenly(totalNeeded, topics.length);
     const seen = new Set<number>();
     const result: number[] = [];
-    const deficits: Array<{ topicName: string; missing: number }> = [];
+    const deficits: Array<{ variants: string[]; missing: number }> = [];
 
     for (let i = 0; i < topics.length; i++) {
       const topicName = topics[i];
       const quota = perTopic[i];
       if (quota <= 0) continue;
 
-      const ids = await this.searchQuestions(queryVector, quota, {
-        ...baseFilter,
-        topic: topicName,
-      });
-
-      for (const id of ids) {
-        if (!seen.has(id)) {
-          seen.add(id);
-          result.push(id);
-        }
-      }
+      const variants = await this.getTopicNameVariants(orgId, topicName);
+      const ids = await this.searchQuestionsForTopicVariants(
+        queryVector,
+        variants,
+        quota,
+        baseFilter,
+        seen,
+      );
+      result.push(...ids);
 
       if (ids.length < quota) {
-        deficits.push({ topicName, missing: quota - ids.length });
+        deficits.push({ variants, missing: quota - ids.length });
       }
     }
 
     for (const deficit of deficits) {
       if (result.length >= totalNeeded) break;
-      const extra = await this.searchQuestions(
+      const extra = await this.searchQuestionsForTopicVariants(
         queryVector,
+        deficit.variants,
         Math.max(deficit.missing * 3, deficit.missing),
-        {
-          ...baseFilter,
-          topic: deficit.topicName,
-        },
+        baseFilter,
+        seen,
       );
       for (const id of extra) {
         if (result.length >= totalNeeded) break;
-        if (!seen.has(id)) {
-          seen.add(id);
-          result.push(id);
-        }
+        result.push(id);
       }
     }
 
@@ -290,9 +346,11 @@ export class AiAssessmentMappingHelpers {
     const seen = new Set<string>();
     const out: string[] = [];
     for (const v of values) {
-      const t = (v ?? '').trim();
-      if (!t || seen.has(t)) continue;
-      seen.add(t);
+      const t = normalizeTopicName(v);
+      if (!t) continue;
+      const key = topicNameKey(t);
+      if (seen.has(key)) continue;
+      seen.add(key);
       out.push(t);
     }
     return out;

@@ -4,13 +4,15 @@ import { Queue } from 'bullmq';
 import { Inject } from '@nestjs/common';
 import { DRIZZLE_DB } from 'src/db/constant';
 import { NodePgDatabase } from 'drizzle-orm/node-postgres';
-import { eq } from 'drizzle-orm';
+import { and, eq } from 'drizzle-orm';
 import { CreateQuestionDto } from './dto/create-question.dto';
 import {
   GenerateQuestionsDto,
   GenerateTopicBatchJobPayload,
 } from './dto/generate-questions.dto';
 import { questionIndexOutbox, zuvyQuestions } from './schema/zuvy-questions.schema';
+import { topic } from 'src/topic/db/topic.schema';
+import { normalizeTopicName, topicNameEquals } from 'src/topic/topic-name.util';
 
 const BATCH_SIZE = 10;
 const JOB_NAME = 'generate-topic-batch';
@@ -33,7 +35,7 @@ export class QuestionsService {
 
   expandPayloadToJobs(
     payload: GenerateQuestionsDto,
-    orgId: string,
+    orgId: number,
   ): GenerateTopicBatchJobPayload[] {
     const jobs: GenerateTopicBatchJobPayload[] = [];
     const {
@@ -207,9 +209,63 @@ export class QuestionsService {
     return counts.easy + counts.medium + counts.hard;
   }
 
+  /**
+   * Map a requested topic string onto the org's existing topic/question spelling.
+   * Generation always appends; this keeps new rows in the same pool as old ones.
+   */
+  async resolveCanonicalTopic(
+    orgId: number | undefined,
+    topicName: string,
+  ): Promise<{ topicName: string; topicDescription: string | null }> {
+    const trimmed = normalizeTopicName(topicName);
+    if (!trimmed) {
+      return { topicName: '', topicDescription: null };
+    }
+
+    const scopedOrgId = orgId;
+    if (!scopedOrgId) {
+      return { topicName: trimmed, topicDescription: null };
+    }
+
+    const [ownedTopic] = await this.db
+      .select({ name: topic.name, description: topic.description })
+      .from(topic)
+      .where(and(eq(topic.orgId, scopedOrgId), topicNameEquals(topic.name, trimmed)))
+      .limit(1);
+    if (ownedTopic?.name) {
+      return {
+        topicName: ownedTopic.name,
+        topicDescription: ownedTopic.description ?? null,
+      };
+    }
+
+    const [existingQuestion] = await this.db
+      .select({
+        topicName: zuvyQuestions.topicName,
+        topicDescription: zuvyQuestions.topicDescription,
+      })
+      .from(zuvyQuestions)
+      .where(
+        and(
+          eq(zuvyQuestions.orgId, scopedOrgId),
+          topicNameEquals(zuvyQuestions.topicName, trimmed),
+        ),
+      )
+      .orderBy(zuvyQuestions.createdAt)
+      .limit(1);
+    if (existingQuestion?.topicName) {
+      return {
+        topicName: existingQuestion.topicName,
+        topicDescription: existingQuestion.topicDescription ?? null,
+      };
+    }
+
+    return { topicName: trimmed, topicDescription: null };
+  }
+
   async enqueueGeneration(
     payload: GenerateQuestionsDto,
-    orgId: string,
+    orgId: number,
     requestedByUserId?: string,
   ): Promise<{
     message: string;
@@ -220,6 +276,18 @@ export class QuestionsService {
     const jobIds: string[] = [];
 
     for (let i = 0; i < jobs.length; i++) {
+      const resolved = await this.resolveCanonicalTopic(
+        orgId,
+        jobs[i].topicName ?? jobs[i].topic,
+      );
+      if (resolved.topicName) {
+        jobs[i].topic = resolved.topicName;
+        jobs[i].topicName = resolved.topicName;
+      }
+      if (!jobs[i].topicDescription?.trim() && resolved.topicDescription) {
+        jobs[i].topicDescription = resolved.topicDescription;
+      }
+
       const jobPayload = { ...jobs[i], requestedByUserId };
       const job = await this.queue.add(JOB_NAME, jobPayload, {
         jobId: `gen-${Date.now()}-${i}-${jobs[i].topic}-${jobs[i].count}`,
@@ -235,17 +303,17 @@ export class QuestionsService {
     };
   }
 
-  async create(orgId: string, dto: CreateQuestionDto) {
-    if (!orgId?.trim()) {
+  async create(orgId: number, dto: CreateQuestionDto) {
+    if (!orgId) {
       throw new BadRequestException('orgId is required');
     }
 
     const [row] = await this.db
       .insert(zuvyQuestions)
       .values({
-        orgId: orgId.trim(),
+        orgId,
         domainName: null,
-        topicName: dto.topicName,
+        topicName: normalizeTopicName(dto.topicName),
         topicDescription: dto.topicDescription,
         subtopics: dto.subtopics ?? null,
         learningObjectives: dto.learningObjectives ?? null,
@@ -269,13 +337,16 @@ export class QuestionsService {
 
   async createMany(rows: CreateQuestionDto[]) {
     if (!rows || rows.length === 0) return [];
+    if (rows.some((r) => !r.orgId)) {
+      throw new BadRequestException('orgId is required for each row');
+    }
     return this.db
       .insert(zuvyQuestions)
       .values(
         rows.map((r) => ({
-          orgId: r.orgId ?? null,
+          orgId: r.orgId as number,
           domainName: null,
-          topicName: r.topicName,
+          topicName: normalizeTopicName(r.topicName),
           topicDescription: r.topicDescription,
           subtopics: r.subtopics ?? null,
           learningObjectives: r.learningObjectives ?? null,
@@ -303,15 +374,18 @@ export class QuestionsService {
    */
   async createManyWithOutbox(rows: CreateQuestionDto[], requestedByUserId?: string) {
     if (!rows || rows.length === 0) return [];
+    if (rows.some((r) => !r.orgId)) {
+      throw new BadRequestException('orgId is required for each row');
+    }
 
     return this.db.transaction(async (tx) => {
       const inserted = await tx
         .insert(zuvyQuestions)
         .values(
           rows.map((r) => ({
-            orgId: r.orgId ?? null,
+            orgId: r.orgId as number,
             domainName: null,
-            topicName: r.topicName,
+            topicName: normalizeTopicName(r.topicName),
             topicDescription: r.topicDescription,
             subtopics: r.subtopics ?? null,
             learningObjectives: r.learningObjectives ?? null,
@@ -347,17 +421,26 @@ export class QuestionsService {
 
   /**
    * Fetch question texts for a given topic so we can include them in the LLM prompt
-   * and avoid generating exact duplicates.
+   * and avoid generating exact duplicates. Scoped by org and case-insensitive topic.
    */
   async getQuestionTextsByTopic(
     topicName: string,
+    orgId?: number,
     limit = 200,
   ): Promise<string[]> {
-    if (!topicName?.trim()) return [];
+    const normalizedTopic = normalizeTopicName(topicName);
+    if (!normalizedTopic) return [];
+
+    const conditions = [topicNameEquals(zuvyQuestions.topicName, normalizedTopic)];
+    const scopedOrgId = orgId;
+    if (scopedOrgId) {
+      conditions.push(eq(zuvyQuestions.orgId, scopedOrgId));
+    }
+
     const rows = await this.db
       .select({ question: zuvyQuestions.question })
       .from(zuvyQuestions)
-      .where(eq(zuvyQuestions.topicName, topicName.trim()))
+      .where(and(...conditions))
       .limit(limit);
     return rows.map((r) => r.question).filter(Boolean);
   }

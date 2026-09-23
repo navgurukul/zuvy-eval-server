@@ -1,3 +1,4 @@
+import { numeric } from 'drizzle-orm/pg-core';
 import {
   integer,
   jsonb,
@@ -6,7 +7,8 @@ import {
   timestamp,
   varchar,
 } from 'drizzle-orm/pg-core';
-import { main, zuvyBootcamps } from 'src/db/schema/parentSchema';
+import { main, zuvyBootcamps, zuvyOrganizations } from 'src/db/schema/parentSchema';
+import { number } from 'zod';
 
 // Local reference only — owned by another service/module.
 export const zuvyCourseModules = main.table('zuvy_course_modules', {
@@ -19,7 +21,7 @@ export const zuvyCourseModules = main.table('zuvy_course_modules', {
 export const topic = main.table('topic', {
   id: serial('id').primaryKey().notNull(),
   // Topics are tenant-owned. All reads and mutations must be scoped by this value.
-  orgId: varchar('org_id', { length: 255 }).notNull(),
+  orgId: integer('org_id').notNull() .references(() => zuvyOrganizations.id, { onDelete: 'cascade' }),
   name: varchar('name', { length: 255 }).notNull(),
   description: text('description'),
   subtopic: jsonb('subtopic'),

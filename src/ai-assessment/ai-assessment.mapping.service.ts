@@ -30,7 +30,7 @@ export class AiAssessmentMappingService {
 
   async mapQuestionsForAssessment(
     aiAssessmentId: number,
-    ctx: MapQuestionsContext = { orgId: '' },
+    ctx: MapQuestionsContext = { orgId: 0 },
   ) {
     // Resolve topics outside the DB transaction (may call legacy HTTP APIs).
     const assessment = await this.helpers.loadAssessment(this.db as any, aiAssessmentId);
@@ -66,6 +66,7 @@ export class AiAssessmentMappingService {
         queryVector,
         topicNames,
         neededTotal,
+        ctx.orgId,
       );
 
       if (scopedIds.length === 0) {

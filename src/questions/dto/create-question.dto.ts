@@ -2,8 +2,8 @@ import { IsIn, IsInt, IsObject, IsOptional, IsString, Min , IsArray} from 'class
 
 export class CreateQuestionDto {
   @IsOptional()
-  @IsString()
-  orgId?: string;
+  @IsInt()
+  orgId?: number;
 
   @IsString()
   topicName: string;

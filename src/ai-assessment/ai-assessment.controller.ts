@@ -34,6 +34,7 @@ import {
   ApiQuery,
 } from '@nestjs/swagger';
 import { JwtAuthGuard } from 'src/auth/guards/jwt-auth.guard';
+import { resolveOrgId } from 'src/auth/resolve-org-id';
 import {
   createAiAssessmentBootcamp,
   mapQuestionsExample,
@@ -499,6 +500,13 @@ export class AiAssessmentController {
     status: 404,
     description: 'Assessment not found, or no indexed questions match its topics.',
   })
+  @ApiQuery({
+    name: 'orgId',
+    required: false,
+    type: Number,
+    description:
+      'Required for super admin (no orgId in token). Other roles use orgId from the JWT.',
+  })
   async mapQuestionsFromBody(
     @Body() dto: MapQuestionsForAssessmentDto,
     @Req() req: Request & { user?: { orgId?: number | string } },
@@ -506,7 +514,7 @@ export class AiAssessmentController {
     return this.aiAssessmentMappingService.mapQuestionsForAssessment(
       dto.aiAssessmentId,
       {
-        orgId: req.user?.orgId != null ? String(req.user.orgId) : '',
+        orgId: resolveOrgId(req),
         authorization: req.headers?.authorization,
       },
     );
@@ -519,6 +527,13 @@ export class AiAssessmentController {
       'Map (generate) question sets for an assessment (path-param variant, kept for backward compatibility)',
   })
   @ApiParam({ name: 'id', type: Number })
+  @ApiQuery({
+    name: 'orgId',
+    required: false,
+    type: Number,
+    description:
+      'Required for super admin (no orgId in token). Other roles use orgId from the JWT.',
+  })
   @ApiResponse({
     status: 200,
     description:
@@ -535,7 +550,7 @@ export class AiAssessmentController {
     return this.aiAssessmentMappingService.mapQuestionsForAssessment(
       aiAssessmentId,
       {
-        orgId: req.user?.orgId != null ? String(req.user.orgId) : '',
+        orgId: resolveOrgId(req),
         authorization: req.headers?.authorization,
       },
     );

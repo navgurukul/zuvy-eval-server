@@ -12,12 +12,13 @@ import { NodePgDatabase } from 'drizzle-orm/node-postgres';
 import { topic } from './db/topic.schema';
 import { zuvyQuestions } from 'src/questions/schema/zuvy-questions.schema';
 import { and, eq, sql } from 'drizzle-orm';
+import { topicNamesMatch } from './topic-name.util';
 
 @Injectable()
 export class TopicService {
   constructor(@Inject(DRIZZLE_DB) private readonly db: NodePgDatabase) {}
 
-  async create(orgId: string, createTopicDto: CreateTopicDto) {
+  async create(orgId: number, createTopicDto: CreateTopicDto) {
     const scopedOrgId = this.requireOrgId(orgId);
     const [created] = await this.db
       .insert(topic)
@@ -31,7 +32,7 @@ export class TopicService {
     return this.withNormalizedSubtopics(created);
   }
 
-  async findAll(orgId: string) {
+  async findAll(orgId: number) {
     const scopedOrgId = this.requireOrgId(orgId);
     const topics = await this.db
       .select({
@@ -48,7 +49,7 @@ export class TopicService {
     return topics.map((row) => this.withNormalizedSubtopics(row));
   }
 
-  async findOne(orgId: string, id: number) {
+  async findOne(orgId: number, id: number) {
     const scopedOrgId = this.requireOrgId(orgId);
     const [row] = await this.db
       .select({
@@ -67,7 +68,7 @@ export class TopicService {
     return this.withNormalizedSubtopics(row);
   }
 
-  async update(orgId: string, id: number, updateTopicDto: UpdateTopicDto) {
+  async update(orgId: number, id: number, updateTopicDto: UpdateTopicDto) {
     const scopedOrgId = this.requireOrgId(orgId);
     const [updated] = await this.db
       .update(topic)
@@ -87,7 +88,7 @@ export class TopicService {
     return this.withNormalizedSubtopics(updated);
   }
 
-  async addSubtopic(orgId: string, id: number, addSubtopicDto: AddSubtopicDto) {
+  async addSubtopic(orgId: number, id: number, addSubtopicDto: AddSubtopicDto) {
     const scopedOrgId = this.requireOrgId(orgId);
     const name = addSubtopicDto.subtopic.trim();
     if (!name) {
@@ -115,7 +116,7 @@ export class TopicService {
     return this.withNormalizedSubtopics(updated);
   }
 
-  async remove(orgId: string, id: number) {
+  async remove(orgId: number, id: number) {
     const scopedOrgId = this.requireOrgId(orgId);
     const [deleted] = await this.db
       .delete(topic)
@@ -125,12 +126,11 @@ export class TopicService {
     return { id: deleted.id, deleted: true };
   }
 
-  private requireOrgId(orgId: string): string {
-    const scopedOrgId = orgId?.trim();
-    if (!scopedOrgId) {
+  private requireOrgId(orgId: number): number {
+    if (!Number.isInteger(orgId) || orgId <= 0) {
       throw new BadRequestException('orgId is required');
     }
-    return scopedOrgId;
+    return orgId;
   }
 
   private normalizeSubtopics(value: unknown): string[] {
@@ -167,7 +167,7 @@ export class TopicService {
   }
 
   async resolveTagsFromChapterIds(
-    orgId: string,
+    orgId: number,
     body: { chapterIds: number[]; bootcampId?: number; moduleId: number },
     authorization?: string,
   ) {
@@ -230,7 +230,7 @@ export class TopicService {
       .map((t) => ({ tagId: t.id, topicName: t.tagName }));
   }
 
-  async getAllTopicsWithDifficultyLevels(orgId: string, search?: string, id?: number, limit?: number, offset?: number) {
+  async getAllTopicsWithDifficultyLevels(orgId: number, search?: string, id?: number, limit?: number, offset?: number) {
     const scopedOrgId = this.requireOrgId(orgId);
     const conditions: any[] = [eq(topic.orgId, scopedOrgId)];
     const hasSearch = !!(search && search.trim());
@@ -255,7 +255,13 @@ export class TopicService {
         difficulty: zuvyQuestions.difficulty,
       })
       .from(topic)
-      .leftJoin(zuvyQuestions, eq(topic.name, zuvyQuestions.topicName))
+      .leftJoin(
+        zuvyQuestions,
+        and(
+          topicNamesMatch(topic.name, zuvyQuestions.topicName),
+          eq(zuvyQuestions.orgId, scopedOrgId),
+        ),
+      )
       .where(and(...conditions));
 
     const topicsById = new Map<

@@ -6,22 +6,23 @@ import { aiAssessmentQuestions } from 'src/ai-assessment/ai-assessment.questions
 import { zuvyQuestions } from './schema/zuvy-questions.schema';
 import { CreateQuestionDto } from './dto/create-question.dto';
 import { UpdateQuestionDto } from './dto/update-question.dto';
+import { topicNameEquals, normalizeTopicName } from 'src/topic/topic-name.util';
 
 @Injectable()
 export class QuestionsCrudService {
   constructor(@Inject(DRIZZLE_DB) private readonly db: NodePgDatabase) {}
 
-  async create(orgId: string, dto: CreateQuestionDto) {
-    if (!orgId?.trim()) {
+  async create(orgId: number, dto: CreateQuestionDto) {
+    if (!orgId) {
       throw new BadRequestException('orgId is required');
     }
 
     const [row] = await this.db
       .insert(zuvyQuestions)
       .values({
-        orgId: orgId.trim(),
+        orgId: orgId,
         domainName: null,
-        topicName: dto.topicName,
+        topicName: normalizeTopicName(dto.topicName),
         topicDescription: dto.topicDescription,
         subtopics: dto.subtopics ?? null,
         learningObjectives: dto.learningObjectives ?? null,
@@ -37,14 +38,14 @@ export class QuestionsCrudService {
         difficultyDistribution: dto.difficultyDistribution ?? null,
         questionCounts: dto.questionCounts ?? null,
         levelId: dto.levelId ?? null,
-      })
+      } as any)
       .returning();
 
     return row;
   }
 
   async findAll(params: {
-    orgId: string;
+    orgId: number;
     page?: number | string;
     limit?: number | string;
     difficulty?: string;
@@ -75,7 +76,7 @@ export class QuestionsCrudService {
     const safePage = Math.floor(page);
     const offset = (safePage - 1) * safeLimit;
 
-    const orgId = params?.orgId?.trim();
+    const orgId = params?.orgId;
     if (!orgId) {
       throw new BadRequestException('orgId is required');
     }
@@ -86,7 +87,7 @@ export class QuestionsCrudService {
     const conditions = [
       eq(zuvyQuestions.orgId, orgId),
       difficulty ? eq(zuvyQuestions.difficulty, difficulty) : undefined,
-      topicName ? eq(zuvyQuestions.topicName, topicName) : undefined,
+      topicName ? topicNameEquals(zuvyQuestions.topicName, topicName) : undefined,
     ].filter(Boolean);
 
     const whereClause = and(...(conditions as any));
@@ -116,8 +117,8 @@ export class QuestionsCrudService {
     };
   }
 
-  async findOne(orgId: string, id: number) {
-    if (!orgId?.trim()) {
+  async findOne(orgId: number, id: number) {
+    if (!orgId) {
       throw new BadRequestException('orgId is required');
     }
     if (!Number.isInteger(id) || id <= 0) {
@@ -127,7 +128,7 @@ export class QuestionsCrudService {
     const rows = await this.db
       .select()
       .from(zuvyQuestions)
-      .where(and(eq(zuvyQuestions.id, id), eq(zuvyQuestions.orgId, orgId.trim())))
+      .where(and(eq(zuvyQuestions.id, id), eq(zuvyQuestions.orgId, orgId)))
       .limit(1);
 
     if (rows.length === 0) {
@@ -137,8 +138,8 @@ export class QuestionsCrudService {
     return rows[0];
   }
 
-  async update(orgId: string, id: number, dto: UpdateQuestionDto) {
-    if (!orgId?.trim()) {
+  async update(orgId: number, id: number, dto: UpdateQuestionDto) {
+    if (!orgId) {
       throw new BadRequestException('orgId is required');
     }
     if (!Number.isInteger(id) || id <= 0) {
@@ -170,12 +171,16 @@ export class QuestionsCrudService {
       if (v !== undefined) patch[key] = v;
     }
 
+    if (typeof patch.topicName === 'string') {
+      patch.topicName = normalizeTopicName(patch.topicName);
+    }
+
     patch.updatedAt = sql`now()`;
 
     const [row] = await this.db
       .update(zuvyQuestions)
       .set(patch as any)
-      .where(and(eq(zuvyQuestions.id, id), eq(zuvyQuestions.orgId, orgId.trim())))
+      .where(and(eq(zuvyQuestions.id, id), eq(zuvyQuestions.orgId, orgId)))
       .returning();
 
     if (!row) {
@@ -185,8 +190,8 @@ export class QuestionsCrudService {
     return row;
   }
 
-  async remove(orgId: string, id: number) {
-    if (!orgId?.trim()) {
+  async remove(orgId: number, id: number) {
+    if (!orgId) {
       throw new BadRequestException('orgId is required');
     }
     if (!Number.isInteger(id) || id <= 0) {
@@ -195,7 +200,7 @@ export class QuestionsCrudService {
 
     const [row] = await this.db
       .delete(zuvyQuestions)
-      .where(and(eq(zuvyQuestions.id, id), eq(zuvyQuestions.orgId, orgId.trim())))
+      .where(and(eq(zuvyQuestions.id, id), eq(zuvyQuestions.orgId, orgId)))
       .returning({ id: zuvyQuestions.id });
 
     if (!row) {
@@ -207,13 +212,13 @@ export class QuestionsCrudService {
 
 
   async findReplacements(params: {
-    orgId: string;
+    orgId: number;
     topicName: string;
     difficulty: string;
     questionSetId: number;
     excludeId?: number;
   }): Promise<{ data: unknown[]; total: number; message?: string }> {
-    const orgId = params.orgId?.trim();
+    const orgId = params.orgId;
     if (!orgId) {
       throw new BadRequestException('orgId is required');
     }
@@ -238,7 +243,7 @@ export class QuestionsCrudService {
 
     const conditions: any[] = [
       eq(zuvyQuestions.orgId, orgId),
-      sql`LOWER(${zuvyQuestions.topicName}) = LOWER(${topicName})`,
+      topicNameEquals(zuvyQuestions.topicName, topicName),
       sql`LOWER(${zuvyQuestions.difficulty}) = LOWER(${difficulty})`,
     ];
 

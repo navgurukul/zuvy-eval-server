@@ -8,6 +8,7 @@ import { EmbeddingsService } from 'src/llm/embeddings.service';
 import { VectorService } from 'src/vector/vector.service';
 import { GenerateTopicBatchJobPayload } from './dto/generate-questions.dto';
 import { QuestionsService } from './questions.service';
+import { shuffleMcqOptionOrder } from './mcq-option-shuffle.util';
 
 const JOB_NAME = 'generate-topic-batch';
 const QDRANT_QUESTIONS_COLLECTION = 'QUESTIONS';
@@ -39,36 +40,48 @@ export class QuestionsProcessor extends WorkerHost {
     const { topic, count, levelId, orgId } = job.data;
     const attempt = (job.attemptsMade ?? 0) + 1;
 
+    const resolved = await this.questionsService.resolveCanonicalTopic(
+      orgId,
+      job.data.topicName ?? topic,
+    );
+    const topicName = resolved.topicName || (job.data.topicName ?? topic);
+    const topicDescription =
+      job.data.topicDescription?.trim() || resolved.topicDescription || '';
+
     if (attempt > 1) {
       this.logger.log(
-        `Retry attempt ${attempt} for job ${job.id} (topic=${topic}); previous attempts failed (e.g. rate limit).`,
+        `Retry attempt ${attempt} for job ${job.id} (topic=${topicName}); previous attempts failed (e.g. rate limit).`,
       );
     }
 
     this.logger.log(
-      `Processing job ${job.id}: topic=${topic}, count=${count}, levelId=${levelId ?? 'null'}`,
+      `Processing job ${job.id}: appending ${count} questions to topic=${topicName}, orgId=${orgId ?? 'none'}, levelId=${levelId ?? 'null'}`,
     );
 
     let existingTexts: string[] = [];
     try {
       existingTexts = await this.questionsService.getQuestionTextsByTopic(
-        topic,
+        topicName,
+        orgId,
         200,
       );
     } catch (err) {
       this.logger.warn(
-        `Job ${job.id}: could not load existing questions for topic "${topic}", continuing without them: ${
+        `Job ${job.id}: could not load existing questions for topic "${topicName}", continuing without them: ${
           err instanceof Error ? err.message : String(err)
         }`,
       );
     }
     if (existingTexts.length > 0) {
       this.logger.log(
-        `Job ${job.id}: including ${existingTexts.length} existing questions for topic "${topic}" in prompt to avoid duplicates.`,
+        `Job ${job.id}: including ${existingTexts.length} existing questions for topic "${topicName}" in prompt to avoid duplicates.`,
       );
     }
 
-    const prompt = generateMcqPromptFromSpec(job.data, existingTexts);
+    const prompt = generateMcqPromptFromSpec(
+      { ...job.data, topic: topicName, topicName, topicDescription },
+      existingTexts,
+    );
 
     const aiResponse = await this.llmService.generateCompletion(prompt);
     if (!aiResponse?.text) {
@@ -106,9 +119,6 @@ export class QuestionsProcessor extends WorkerHost {
       }
     }
 
-    const topicName = job.data.topicName ?? topic;
-    const topicDescription = job.data.topicDescription ?? '';
-
     const requestedByUserId = job.data.requestedByUserId;
     const inserted = await this.questionsService.createManyWithOutbox(
       evaluations.map((q) => {
@@ -126,6 +136,12 @@ export class QuestionsProcessor extends WorkerHost {
               ? (String(levelId).toUpperCase() as (typeof allowedBands)[number])
               : null;
 
+        const { options: shuffledOptions, correctOption: shuffledCorrectOption } =
+          shuffleMcqOptionOrder(
+            q.options as Record<string, string>,
+            Number(q.correctOption),
+          );
+
         return {
           orgId: orgId ?? undefined,
           topicName,
@@ -142,15 +158,15 @@ export class QuestionsProcessor extends WorkerHost {
           question: q.question,
           difficulty: q.difficulty,
           language: q.language,
-          options: q.options as any,
-          correctOption: Number(q.correctOption),
+          options: shuffledOptions as any,
+          correctOption: shuffledCorrectOption,
         };
       }),
       requestedByUserId,
     );
 
     this.logger.log(
-      `Job ${job.id} completed: inserted ${evaluations.length} questions for topic ${topic}`,
+      `Job ${job.id} completed: appended ${inserted.length} questions for topic ${topicName} (existing pool preserved)`,
     );
     } catch (error) {
       this.logger.error('Error processing job:', error);

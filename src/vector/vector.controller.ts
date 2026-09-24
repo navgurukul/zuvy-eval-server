@@ -3,6 +3,7 @@ import {
   Controller,
   Delete,
   Get,
+  Inject,
   Param,
   Patch,
   Post,
@@ -12,14 +13,18 @@ import { VectorService } from './vector.service';
 import { UpsertVectorsDto, EnsureCollectionDto } from './dto/create-vector.dto';
 import { UpdateVectorDto } from './dto/update-vector.dto';
 import { SearchVectorsDto, DeleteVectorsDto } from './dto/search-vector.dto';
-import { QdrantVectorStore } from './strategies';
+import { VECTOR_STORE } from './constants';
+import type { IVectorStore } from './interfaces/vector-store.interface';
 
 @ApiTags('Vector')
 @Controller('vector')
 export class VectorController {
   constructor(
     private readonly vectorService: VectorService,
-    private readonly qdrantVectorStore: QdrantVectorStore,
+    // Injected by token, not by concrete class: the store is chosen by the
+    // VECTOR_DB factory in VectorModule and the classes are not providers, so
+    // naming one here both breaks DI at boot and bypasses the switch.
+    @Inject(VECTOR_STORE) private readonly vectorStore: IVectorStore,
   ) {}
 
   @Post('collection')
@@ -37,7 +42,7 @@ export class VectorController {
     },
   })
   ensureCollection(@Body() dto: EnsureCollectionDto) {
-    return this.qdrantVectorStore.ensureCollection(
+    return this.vectorStore.ensureCollection(
       dto.collectionName,
       dto.vectorSize,
     );

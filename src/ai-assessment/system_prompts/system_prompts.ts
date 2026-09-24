@@ -1,40 +1,67 @@
 // import { encode } from '@toon-format/toon';
 
+/**
+ * Asks the model to justify an answer that is already known.
+ *
+ * The stored correct option is ground truth: the model explains it, it does not
+ * adjudicate it. An earlier version of this prompt told the model to re-solve
+ * the question and override the stored answer when it disagreed, which produced
+ * explanations that announced one option number, argued for another, and then
+ * appended a "Correction:" block - all of it rendered to students.
+ *
+ * "statedCorrectOption" is a consistency check, not a source of truth. The
+ * caller renders the option number from the database and discards the whole
+ * response when the model's stated option disagrees, so a disagreement can
+ * never reach a student. It is logged instead, because a question that keeps
+ * failing this check may genuinely have a wrong answer stored.
+ */
 export function correctOptionExplanationPrompt(params: {
   question: string;
   options: Record<string, string>;
   correctOption: number;
+  correctOptionText: string;
   language: string | null;
 }) {
   const optionsStr = JSON.stringify(params.options, null, 2);
   const langHint = params.language
-    ? `Use the same language as the question when appropriate; question language metadata: ${params.language}.`
+    ? `Write the explanation in the same language as the question; question language metadata: ${params.language}.`
     : '';
 
-  return `You are a precise tutor. Solve this multiple-choice question yourself and identify the truly correct option from the options provided.
+  return `You are a precise tutor writing a short explanation for a student who has just answered a multiple-choice question.
 
 Question:
 ${params.question}
 
-Options (object keys are option numbers as strings):
+Options (the object keys are the option numbers shown to the student, numbered from 1):
 ${optionsStr}
 
-Provided correct option (may be wrong; do NOT trust blindly): ${params.correctOption}
+The correct answer is option ${params.correctOption}: ${JSON.stringify(params.correctOptionText)}
+
+That is the authoritative answer from the question bank. Treat it as a given fact, not as a claim to check. Do not re-solve the question, do not assess whether it is right, and do not argue for a different option. Your only task is to explain why option ${params.correctOption} is correct.
 
 ${langHint}
 
+Respond with ONLY a JSON object of exactly this shape:
+{
+  "statedCorrectOption": <the option number your explanation justifies>,
+  "explanation": "<2-4 short sentences explaining why option ${params.correctOption} is correct>"
+}
+
 Rules:
-- First determine the correct option by solving the question.
-- If the provided correct option conflicts with your solution, ignore it and use your solved answer.
-- Output ONLY:
-  1) "Correct option: <option_number>"
-  2) A brief explanation of why that option is correct.
-- Do NOT explain why other options are wrong.
-- Keep the explanation concise to save tokens (2-4 short sentences).
-- Output plain text only (no JSON, no markdown code fences, no extra sections).
+- "statedCorrectOption" should be ${params.correctOption}. If you genuinely cannot build a sound explanation for option ${params.correctOption}, put the option number you would justify instead - do not quietly explain a different option.
+- Do NOT write "Correct option", "Correction", or any option number prefix inside "explanation". The student is shown the option number separately.
+- Do NOT explain why the other options are wrong.
+- Do NOT include reasoning, working, or corrections anywhere in the output.
+- Output the JSON object only: no surrounding text, no markdown, no code fences.
 `;
 }
 
+/**
+ * The model writes feedback prose; it does NOT decide whether an answer is
+ * correct. The caller sets each item's "status" from the same stored-answer
+ * comparison that produces the score, so the results screen cannot show a
+ * verdict that contradicts the score the student was given.
+ */
 export function answerEvaluationPrompt(answers: any) {
   // const encodedQuestionsWithAnswers = encode(answers);
   return `
@@ -58,10 +85,14 @@ export function answerEvaluationPrompt(answers: any) {
     - explanation
 
     Evaluation rules:
-    1. Mark "status" as "correct" if the student's selected answer is correct.
-    2. Mark "status" as "incorrect" otherwise.
+    1. Do NOT judge or state whether the student's answer is correct; correctness is
+       determined by the system from the stored answer and is added after your reply.
+       Never output a "status" field.
+    2. Use the provided correct answer as ground truth. Do not re-solve the question
+       and do not argue that a different option is correct.
     3. If selectedAnswerByStudent is null than it means the student did not attempt the question.
-    4. For incorrect answers, explain briefly *why* (conceptual, procedural, or factual error) and mention the correct answer clearly.
+    4. When the student's selection differs from the correct answer, explain briefly *why*
+       that is a mistake (conceptual, procedural, or factual) and state the correct answer clearly.
     5. For each incorrect answer, include a "practiceLink" field suggesting ONE relevant LeetCode problem URL.
       - Choose dynamically based on the question's topic and difficulty.
       - Use realistic existing LeetCode URLs only; do not invent or fabricate problems.
@@ -81,7 +112,6 @@ export function answerEvaluationPrompt(answers: any) {
         "options": { <the way it is> },
         "selectedAnswerByStudent": <selected answer>,
         "language": "<language>",
-        "status": "<correct | incorrect>",
         "explanation": "<1-2 sentences explaining correctness or mistake, and providing correct answer if wrong>"
         }
     ],

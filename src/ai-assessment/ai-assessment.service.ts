@@ -64,12 +64,22 @@ export class AiAssessmentService {
     await this.llmUsageService.save(usageData);
   }
 
+  /**
+   * Returns the score plus the per-question verdicts behind it, so LLM-written
+   * feedback can be labelled with the same result that produced the score
+   * rather than with the model's own opinion of correctness.
+   */
   async countScore(submitAssessmentDto: SubmitAssessmentDto) {
     const { answers } = submitAssessmentDto;
     let score = 0;
+    const correctByQuestionId = new Map<string, boolean>();
 
     for (const q of answers) {
-      if (!q.selectedAnswerByStudent) continue;
+      if (!q.selectedAnswerByStudent) {
+        // Unattempted counts as incorrect, matching the score.
+        correctByQuestionId.set(String(q.id), false);
+        continue;
+      }
       const correct = await this.db
         .select()
         .from(correctAnswers)
@@ -81,11 +91,13 @@ export class AiAssessmentService {
         )
         .limit(1);
 
-      if (correct.length > 0) {
+      const isCorrect = correct.length > 0;
+      correctByQuestionId.set(String(q.id), isCorrect);
+      if (isCorrect) {
         score++;
       }
     }
-    return { score, totalQuestions: answers.length };
+    return { score, totalQuestions: answers.length, correctByQuestionId };
   }
 
   async submitAndScore(studentId: number, dto: ScoreSubmitDto) {
@@ -434,7 +446,7 @@ export class AiAssessmentService {
           throw new BadRequestException('Assessment is not yet available');
         }
 
-        const { score, totalQuestions } =
+        const { score, totalQuestions, correctByQuestionId } =
           await this.countScore(submitAssessmentDto);
         const totalScore = (score / totalQuestions) * 100;
 
@@ -522,6 +534,16 @@ export class AiAssessmentService {
           }
         } else {
           parseError = 'Empty LLM response.';
+        }
+
+        // Correctness belongs to the server. Overwrite whatever the model
+        // implied so the results screen cannot contradict the score above.
+        if (Array.isArray(parsedEvaluation?.evaluations)) {
+          for (const item of parsedEvaluation.evaluations) {
+            item.status = correctByQuestionId.get(String(item.id))
+              ? 'correct'
+              : 'incorrect';
+          }
         }
 
         // Optionally: persist parsedEvaluation to DB here if successful

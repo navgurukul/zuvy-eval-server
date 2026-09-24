@@ -29,6 +29,16 @@ export class LlmService {
     });
   }
 
+  /**
+   * Shape returned when no provider could serve the request. Callers read
+   * .text, so returning undefined here would throw at several call sites, two
+   * of them inside database transactions. Empty text keeps their existing
+   * behaviour; "failed" lets a caller tell a real empty answer from an outage.
+   */
+  private failedCompletion() {
+    return { text: '', usage: null, latencyMs: 0, provider: null, failed: true };
+  }
+
   async generateCompletion(prompt: string) {
     try {
       if (!this.primaryBreaker.isOpen()) {
@@ -64,7 +74,8 @@ export class LlmService {
 
       throw new Error('All providers circuit breakers are open');
     } catch (error) {
-      this.logger.error("Error generating response from llm: ", error);
+      this.logger.error('Error generating response from llm: ', error);
+      return this.failedCompletion();
     }
   }
 
@@ -73,22 +84,28 @@ export class LlmService {
     providerType: 'primary' | 'fallback'
   ) {
     const maxRetries = providerType === 'primary' ? 2 : 1;
-    let lastError: Error;
+    let lastError: unknown;
 
     for (let attempt = 0; attempt <= maxRetries; attempt++) {
       try {
         return await fn();
       } catch (error) {
         lastError = error;
-        
-        if (attempt < maxRetries && this.isRetryable(error)) {
-          const delay = this.getBackoffDelay(attempt);
-          this.logger.debug(`Retry ${attempt + 1}/${maxRetries} after ${delay}ms`);
-          await this.sleep(delay);
-        }
-        throw lastError;
+
+        // The throw used to sit here unconditionally, so the loop slept for the
+        // backoff and then threw on the first failure: maxRetries never applied.
+        const canRetry = attempt < maxRetries && this.isRetryable(error);
+        if (!canRetry) throw lastError;
+
+        const delay = this.getBackoffDelay(attempt);
+        this.logger.debug(
+          `${providerType} retry ${attempt + 1}/${maxRetries} after ${delay}ms`,
+        );
+        await this.sleep(delay);
       }
     }
+
+    throw lastError;
   }
 
   private isRetryable(error: any): boolean {

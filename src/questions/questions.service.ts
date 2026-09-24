@@ -4,7 +4,7 @@ import { Queue } from 'bullmq';
 import { Inject } from '@nestjs/common';
 import { DRIZZLE_DB } from 'src/db/constant';
 import { NodePgDatabase } from 'drizzle-orm/node-postgres';
-import { and, eq } from 'drizzle-orm';
+import { and, eq, inArray } from 'drizzle-orm';
 import { CreateQuestionDto } from './dto/create-question.dto';
 import {
   GenerateQuestionsDto,
@@ -423,6 +423,31 @@ export class QuestionsService {
    * Fetch question texts for a given topic so we can include them in the LLM prompt
    * and avoid generating exact duplicates. Scoped by org and case-insensitive topic.
    */
+  /**
+   * Question texts for the given ids, returned in the order the ids were
+   * given, so a caller passing similarity-ranked ids keeps that ranking.
+   * Scoped by org when one is supplied: the vector store carries no orgId,
+   * so tenant scoping has to happen here.
+   */
+  async getQuestionTextsByIds(ids: number[], orgId?: number): Promise<string[]> {
+    if (!ids.length) return [];
+
+    const conditions = [inArray(zuvyQuestions.id, ids)];
+    if (orgId) {
+      conditions.push(eq(zuvyQuestions.orgId, orgId));
+    }
+
+    const rows = await this.db
+      .select({ id: zuvyQuestions.id, question: zuvyQuestions.question })
+      .from(zuvyQuestions)
+      .where(and(...conditions));
+
+    const byId = new Map(rows.map((r) => [r.id, r.question]));
+    return ids
+      .map((id) => byId.get(id))
+      .filter((q): q is string => typeof q === 'string' && q.length > 0);
+  }
+
   async getQuestionTextsByTopic(
     topicName: string,
     orgId?: number,

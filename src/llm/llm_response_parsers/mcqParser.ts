@@ -3,8 +3,12 @@ import { z } from 'zod';
 
 const McqItemSchema = z.object({
   question: z.string(),
+  // The model's written working. Requested so it solves before keying an
+  // answer; used for quality checks and discarded before storage. It is never
+  // shown to a student.
+  solution: z.string().optional(),
   options: z.record(z.string(), z.string()),
-  correctOption: z.number(),
+  correctOption: z.number().int(),
   difficulty: z.string().optional(),
   topic: z.string().optional(),
   language: z.string().optional(),

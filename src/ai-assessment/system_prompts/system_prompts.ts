@@ -268,10 +268,12 @@ export function generateMcqPromptFromSpec(
   
   sections.push('');
   sections.push('CRITICAL GENERATION RULES (MANDATORY):');
-  sections.push('For EACH question, you MUST follow this internal process BEFORE finalizing:');
+  sections.push('For EACH question, follow this order and WRITE each step down:');
   sections.push('1. Construct a clear, unambiguous question.');
-  sections.push('2. Solve the question step-by-step internally.');
-  sections.push('3. Identify the SINGLE correct answer.');
+  sections.push(
+    '2. Solve it step by step and write the working out in the "solution" field. Do this BEFORE writing any option. Do not solve it silently: the written working is what keeps the answer honest.'
+  );
+  sections.push('3. State the single correct answer at the end of "solution".');
   sections.push('4. Generate exactly 4 options:');
   sections.push('   - One MUST be the correct answer');
   sections.push('   - Three MUST be plausible but clearly incorrect');
@@ -293,13 +295,12 @@ export function generateMcqPromptFromSpec(
   
   sections.push('');
   sections.push('SELF-VALIDATION PASS (MANDATORY):');
-  sections.push('After generating each question, re-evaluate it independently:');
-  sections.push('1. Re-solve the question again.');
-  sections.push('2. Confirm that the selected correctOption is still correct.');
-  sections.push('3. Ensure none of the other options could be correct.');
-  sections.push('4. If inconsistency is found, regenerate the question.');
-  sections.push('5. Only include questions that pass this second validation.');
-  sections.push('6. For numerical questions, independently recompute once more (different order/method internally) and confirm the same final answer maps to the same option.');
+  sections.push('After writing each question, check it against your own written solution:');
+  sections.push('1. Read back the final answer stated at the end of "solution".');
+  sections.push('2. Confirm the option "correctOption" points to expresses exactly that answer.');
+  sections.push('3. Confirm none of the other three options could also be correct.');
+  sections.push('4. If the working and the keyed option disagree, fix the option set or regenerate the question. Never key an option your own solution does not support.');
+  sections.push('5. For numerical questions, recompute by a different method and write that second computation into "solution" too. If the two computations disagree, regenerate the question rather than guessing.');
   
   sections.push('');
   sections.push('OUTPUT REQUIREMENTS:');
@@ -309,12 +310,15 @@ export function generateMcqPromptFromSpec(
   sections.push(`4. There MUST be exactly ${count} objects in "evaluations".`);
   sections.push('5. Each question object MUST have:');
   sections.push(
-    '   { "question": "<string>", "topic": "<string>", "difficulty": "<easy|medium|hard>", "options": { "1": "<A>", "2": "<B>", "3": "<C>", "4": "<D>" }, "correctOption": <1|2|3|4>, "language": "<string>", "level": "<A+|A|B|C|D|E>" }'
+    '   { "question": "<string>", "solution": "<your step-by-step working, ending with the final answer>", "options": { "1": "<A>", "2": "<B>", "3": "<C>", "4": "<D>" }, "correctOption": <1|2|3|4>, "topic": "<string>", "difficulty": "<easy|medium|hard>", "language": "<string>", "level": "<A+|A|B|C|D|E>" }'
+  );
+  sections.push(
+    '   The key order matters: write "solution" before "options" and "correctOption". "solution" is used for quality checking and is never shown to students.'
   );
   sections.push(
     '   where "level" is the conceptual depth band for this question: "A+" = highest / exceptional depth, "A" = most advanced, "B" = advanced, "C" = intermediate, "D" = basic, "E" = very basic / foundational.'
   );
-  sections.push('6. Options: exactly 4 entries. correctOption must be 1, 2, 3, or 4.');
+  sections.push('6. Options: exactly 4 entries keyed "1" to "4", all non-empty and all different. correctOption must be 1, 2, 3, or 4. These are checked in code and a batch failing them is discarded.');
   sections.push('7. "correctOption" MUST correspond to the correct answer.');
   sections.push('8. For numerical questions, one option must exactly equal the internally computed final answer (same units/rounding), and "correctOption" must point to it.');
   sections.push('9. Options MUST be mutually exclusive and non-overlapping.');

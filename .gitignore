@@ -43,6 +43,9 @@ lerna-debug.log*
 .temp
 .tmp
 
+# one-off script output (holds question text and stored answers)
+scripts/out/
+
 # Runtime data
 pids
 *.pid

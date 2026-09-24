@@ -34,13 +34,17 @@ function quote(name) {
   return `"${String(name).replace(/"/g, '""')}"`;
 }
 
-async function main() {
+/**
+ * @param {boolean} confirmed - true deletes, false counts and reports only.
+ *   Passed in rather than read from process.argv here, so importing this module
+ *   and calling main() can never pick up a stray --confirm from the host
+ *   process's own arguments.
+ */
+async function main(confirmed = false) {
   const schema = targetSchema();
   if (!['stage_template', 'main'].includes(schema)) {
     throw new Error(`Refusing unknown schema ${schema}`);
   }
-
-  const confirmed = process.argv.slice(2).includes('--confirm');
 
   const client = new Client({
     host: process.env.DB_HOST,
@@ -91,9 +95,11 @@ async function main() {
   }
 }
 
-// Only runs when invoked directly, never on require.
+// Only runs when invoked directly, never on require. This is the one place
+// process.argv is read.
 if (require.main === module) {
-  main().catch((e) => {
+  const confirmed = process.argv.slice(2).includes('--confirm');
+  main(confirmed).catch((e) => {
     console.error(e);
     process.exit(1);
   });

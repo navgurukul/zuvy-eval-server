@@ -24,6 +24,7 @@
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.934.0",
+    "@aws-sdk/credential-provider-node": "^3.972.84",
     "@google/genai": "^1.29.1",
     "@google/generative-ai": "^0.24.1",
     "@nestjs/bullmq": "^11.0.4",
@@ -37,6 +38,7 @@
     "@nestjs/platform-socket.io": "^11.1.16",
     "@nestjs/swagger": "^11.2.1",
     "@nestjs/websockets": "^11.1.16",
+    "@opensearch-project/opensearch": "^3.9.0",
     "@qdrant/js-client-rest": "^1.17.0",
     "bullmq": "^5.69.4",
     "class-transformer": "^0.5.1",

@@ -88,6 +88,69 @@ const VERIFIER_PROVIDER: 'openai' | 'genai' =
     ? 'openai'
     : 'genai';
 
+/**
+ * How many times a job may regenerate to replace questions it dropped.
+ *
+ * A request for 60 questions must store 60, so a job that drops 3 asks for 3
+ * more rather than storing 57. Rounds are bounded because the shortfall is not
+ * guaranteed to shrink: a topic narrow enough that every new question repeats
+ * an existing one would otherwise regenerate forever.
+ *
+ * Five is generous for the observed drop rate. A ten-question round losing two
+ * needs one top-up of two, and that top-up would have to fail almost entirely
+ * for a third round to be needed.
+ */
+const MAX_GENERATION_ROUNDS = Math.max(
+  1,
+  Number(process.env.MAX_GENERATION_ROUNDS ?? 5) || 5,
+);
+
+type DifficultyCounts = { easy: number; medium: number; hard: number };
+
+const DIFFICULTIES: Array<keyof DifficultyCounts> = ['easy', 'medium', 'hard'];
+
+/** Null when no difficulty split was requested, so callers can skip the checks. */
+function normalizeDifficultyCounts(
+  source: { easy?: number; medium?: number; hard?: number } | undefined,
+): DifficultyCounts | null {
+  if (!source) return null;
+  const counts: DifficultyCounts = {
+    easy: source.easy ?? 0,
+    medium: source.medium ?? 0,
+    hard: source.hard ?? 0,
+  };
+  return counts.easy + counts.medium + counts.hard > 0 ? counts : null;
+}
+
+function countByDifficulty(items: Array<Record<string, any>>): DifficultyCounts {
+  const counts: DifficultyCounts = { easy: 0, medium: 0, hard: 0 };
+  items.forEach((q) => {
+    const difficulty = String(q.difficulty ?? '')
+      .trim()
+      .toLowerCase() as keyof DifficultyCounts;
+    if (DIFFICULTIES.includes(difficulty)) counts[difficulty] += 1;
+  });
+  return counts;
+}
+
+/**
+ * What is still owed per difficulty.
+ *
+ * Replacing a dropped hard question with a hard question is the whole point:
+ * asking only for "3 more" lets the model return three easy ones and quietly
+ * change the shape of the assessment.
+ */
+function subtractDifficultyCounts(
+  target: DifficultyCounts,
+  have: DifficultyCounts,
+): DifficultyCounts {
+  return {
+    easy: Math.max(0, target.easy - have.easy),
+    medium: Math.max(0, target.medium - have.medium),
+    hard: Math.max(0, target.hard - have.hard),
+  };
+}
+
 const OPTION_KEYS = ['1', '2', '3', '4'];
 const VAGUE_OPTION = /^(all|none) of the above$/i;
 
@@ -451,6 +514,112 @@ export class QuestionsProcessor extends WorkerHost {
     }
   }
 
+  /**
+   * One generate-and-filter pass. Returns only the questions worth storing.
+   *
+   * The checks fall into two kinds and they fail differently:
+   *
+   *   - Contract breaches (unparseable reply, wrong batch size, wrong
+   *     difficulty mix) throw. The model was asked for something specific and
+   *     did not deliver it, so the whole round is suspect.
+   *   - Quality failures (duplicate, disagreed answer) drop one question and
+   *     return the rest. The caller regenerates the difference.
+   */
+  private async generateFilteredRound(
+    job: Job<GenerateTopicBatchJobPayload, void, string>,
+    ctx: { topicName: string; topicDescription: string; orgId: number | undefined },
+    need: number,
+    needCounts: DifficultyCounts | null,
+    avoidTexts: string[],
+  ): Promise<Array<Record<string, any>>> {
+    const { topicName, topicDescription, orgId } = ctx;
+
+    const prompt = generateMcqPromptFromSpec(
+      {
+        ...job.data,
+        topic: topicName,
+        topicName,
+        topicDescription,
+        count: need,
+        batchQuestionCounts: needCounts ?? undefined,
+      },
+      avoidTexts.slice(0, MAX_EXISTING_TEXTS),
+    );
+
+    const aiResponse = await this.llmService.generateCompletion(prompt);
+    if (!aiResponse?.text) {
+      throw new Error(
+        'LLM returned no response (rate limit or provider down). Job will retry with backoff.',
+      );
+    }
+
+    const parsed = await parseLlmMcq(aiResponse.text);
+    const evaluations = (parsed.evaluations ?? []) as Array<Record<string, any>>;
+    this.assertWellFormedMcqs(evaluations, job.id);
+
+    if (evaluations.length !== need) {
+      throw new Error(
+        `Batch size mismatch for job ${job.id}: expected ${need}, got ${evaluations.length}`,
+      );
+    }
+
+    if (needCounts) {
+      const actual = countByDifficulty(evaluations);
+      if (
+        actual.easy !== needCounts.easy ||
+        actual.medium !== needCounts.medium ||
+        actual.hard !== needCounts.hard
+      ) {
+        throw new Error(
+          `Difficulty mismatch for job ${job.id}: expected easy=${needCounts.easy}, ` +
+            `medium=${needCounts.medium}, hard=${needCounts.hard}; got easy=${actual.easy}, ` +
+            `medium=${actual.medium}, hard=${actual.hard}`,
+        );
+      }
+    }
+
+    const dropped = new Map<number, string>();
+
+    findDuplicateQuestions(evaluations, avoidTexts).forEach((d) => {
+      dropped.set(d.index, `duplicate (similarity ${d.similarity.toFixed(2)}): ${d.reason}`);
+      this.logger.warn(
+        `[generation-rejected] job=${job.id} question=${d.index + 1} reason=duplicate ` +
+          `similarity=${d.similarity.toFixed(2)} detail=${JSON.stringify(d.reason)}`,
+      );
+    });
+
+    const survivors = () =>
+      evaluations
+        .map((q, index) => ({ q, index }))
+        .filter(({ index }) => !dropped.has(index));
+
+    // Against the whole bank, not just the questions shown to the model.
+    // Runs before verification so a repeat is dropped without paying for a
+    // second opinion on it.
+    const bankDuplicates = await this.findBankDuplicates(survivors(), orgId, job.id);
+    bankDuplicates.forEach((reason, index) => {
+      dropped.set(index, `duplicate in bank: ${reason}`);
+    });
+
+    if (VERIFY_GENERATED_ANSWERS) {
+      // Returns original indices within this round, so the log lines and this
+      // map agree on which question is which.
+      const rejected = await this.verifyKeyedAnswers(survivors(), job.id);
+      rejected.forEach((index) => {
+        dropped.set(index, 'answer verification');
+      });
+    }
+
+    if (dropped.size > 0) {
+      this.logger.warn(
+        `Job ${job.id}: dropped ${dropped.size}/${evaluations.length} generated question(s) ` +
+          `for topic "${topicName}". See the [generation-rejected] lines above for each reason.`,
+      );
+    }
+
+    return evaluations.filter((_, index) => !dropped.has(index));
+  }
+
   private async handleGenerateTopicBatch(
     job: Job<GenerateTopicBatchJobPayload, void, string>,
   ) {
@@ -521,113 +690,71 @@ export class QuestionsProcessor extends WorkerHost {
       );
     }
 
-    const prompt = generateMcqPromptFromSpec(
-      { ...job.data, topic: topicName, topicName, topicDescription },
-      existingTexts,
-    );
+    // A job stores exactly the count it was asked for. Quality filtering drops
+    // individual questions, so the shortfall is regenerated rather than
+    // delivered short: asking for 60 and storing 57 is not an answer.
+    //
+    // Each round requests only the deficit, and the deficit per difficulty, so
+    // a dropped hard question is replaced by a hard one. Questions accepted so
+    // far are carried into the next round's "do not repeat" list, so a top-up
+    // cannot restate what it is topping up.
+    const targetCounts = normalizeDifficultyCounts(job.data.batchQuestionCounts);
+    const accepted: Array<Record<string, any>> = [];
+    const avoidTexts = [...existingTexts];
+    let roundsUsed = 0;
 
-    const aiResponse = await this.llmService.generateCompletion(prompt);
-    if (!aiResponse?.text) {
-      throw new Error(
-        'LLM returned no response (rate limit or provider down). Job will retry with backoff.',
-      );
-    }
-    const parsed = await parseLlmMcq(aiResponse.text);
-    const evaluations = parsed.evaluations ?? [];
-    this.assertWellFormedMcqs(evaluations as Array<Record<string, any>>, job.id);
-    const requiredBatchCounts = job.data.batchQuestionCounts;
-    if (evaluations.length !== count) {
-      throw new Error(
-        `Batch size mismatch for job ${job.id}: expected ${count}, got ${evaluations.length}`,
-      );
-    }
-    if (requiredBatchCounts) {
-      const actualCounts = evaluations.reduce(
-        (acc, q) => {
-          const difficulty = String(q.difficulty ?? '').trim().toLowerCase();
-          if (difficulty === 'easy' || difficulty === 'medium' || difficulty === 'hard') {
-            acc[difficulty] += 1;
-          }
-          return acc;
-        },
-        { easy: 0, medium: 0, hard: 0 },
-      );
-      if (
-        actualCounts.easy !== requiredBatchCounts.easy ||
-        actualCounts.medium !== requiredBatchCounts.medium ||
-        actualCounts.hard !== requiredBatchCounts.hard
-      ) {
-        throw new Error(
-          `Difficulty mismatch for job ${job.id}: expected easy=${requiredBatchCounts.easy}, medium=${requiredBatchCounts.medium}, hard=${requiredBatchCounts.hard}; got easy=${actualCounts.easy}, medium=${actualCounts.medium}, hard=${actualCounts.hard}`,
+    for (let round = 1; round <= MAX_GENERATION_ROUNDS; round++) {
+      const need = count - accepted.length;
+      if (need <= 0) break;
+      roundsUsed = round;
+
+      const needCounts = targetCounts
+        ? subtractDifficultyCounts(targetCounts, countByDifficulty(accepted))
+        : null;
+
+      if (round > 1) {
+        this.logger.log(
+          `Job ${job.id}: round ${round}, regenerating ${need} question(s) to reach ${count}` +
+            (needCounts
+              ? ` (easy=${needCounts.easy}, medium=${needCounts.medium}, hard=${needCounts.hard})`
+              : ''),
         );
       }
-    }
 
-    // Everything above this point is a contract with the model: it was asked
-    // for N questions at given difficulties in a given shape, and a breach
-    // means the whole batch is suspect and the job retries.
-    //
-    // Everything below is quality filtering of a batch that honoured the
-    // contract. Individual questions are dropped here, and the job succeeds
-    // with fewer rows than requested. That trade is deliberate: a short batch
-    // is a gap a regeneration fills, whereas a wrongly keyed question marks a
-    // student's correct answer wrong and then generates an explanation
-    // defending the wrong option, because the explainer treats the stored
-    // answer as ground truth by design.
-    const dropped = new Map<number, string>();
-
-    findDuplicateQuestions(
-      evaluations as Array<Record<string, any>>,
-      existingTexts,
-    ).forEach((d) => {
-      dropped.set(d.index, `duplicate (similarity ${d.similarity.toFixed(2)}): ${d.reason}`);
-      this.logger.warn(
-        `[generation-rejected] job=${job.id} question=${d.index + 1} reason=duplicate ` +
-          `similarity=${d.similarity.toFixed(2)} detail=${JSON.stringify(d.reason)}`,
+      const roundAccepted = await this.generateFilteredRound(
+        job,
+        { topicName, topicDescription, orgId },
+        need,
+        needCounts,
+        avoidTexts,
       );
-    });
 
-    const survivors = () =>
-      evaluations
-        .map((q, index) => ({ q: q as Record<string, any>, index }))
-        .filter(({ index }) => !dropped.has(index));
-
-    // Against the whole bank, not just the questions shown to the model.
-    // Runs before verification so a repeat is dropped without paying for a
-    // second opinion on it.
-    const bankDuplicates = await this.findBankDuplicates(survivors(), orgId, job.id);
-    bankDuplicates.forEach((reason, index) => {
-      dropped.set(index, `duplicate in bank: ${reason}`);
-    });
-
-    if (VERIFY_GENERATED_ANSWERS) {
-      // Returns original batch indices, so the log lines and this map agree
-      // on which question is which.
-      const rejected = await this.verifyKeyedAnswers(survivors(), job.id);
-      rejected.forEach((index) => {
-        dropped.set(index, 'answer verification');
+      roundAccepted.forEach((q) => {
+        accepted.push(q);
+        // Front of the list: a question written seconds ago is the one the
+        // next round is most likely to restate, and the list gets truncated.
+        avoidTexts.unshift(String(q.question ?? ''));
       });
     }
 
-    const accepted = evaluations.filter((_, index) => !dropped.has(index));
-
-    if (dropped.size > 0) {
-      this.logger.warn(
-        `Job ${job.id}: dropped ${dropped.size}/${evaluations.length} generated question(s) ` +
-          `for topic "${topicName}"; storing ${accepted.length}. ` +
-          `See the [generation-rejected] lines above for the reason on each.`,
+    if (accepted.length < count) {
+      // Deliberately a failure rather than a short batch. The caller asked for
+      // an exact count, and storing fewer without saying so is the behaviour
+      // this loop exists to remove. The job retries with backoff and a fresh
+      // prompt, and the existing pool is untouched because nothing is written
+      // until the count is met.
+      throw new Error(
+        `Job ${job.id}: produced only ${accepted.length}/${count} usable questions for topic ` +
+          `"${topicName}" after ${roundsUsed} round(s); the rest were dropped as duplicates or ` +
+          `failed answer verification. Job will retry.`,
       );
     }
 
-    if (accepted.length === 0) {
-      // Not a retry: the model produced a well-formed batch and every item
-      // failed on merit. Retrying re-runs the same prompt against the same
-      // pool and burns the attempt budget for the same outcome.
-      this.logger.error(
-        `Job ${job.id}: every generated question for topic "${topicName}" was rejected ` +
-          `(${dropped.size} of ${evaluations.length}). Storing none.`,
+    if (roundsUsed > 1) {
+      this.logger.log(
+        `Job ${job.id}: reached the full ${count} question(s) for topic "${topicName}" ` +
+          `in ${roundsUsed} rounds.`,
       );
-      return;
     }
 
     const requestedByUserId = job.data.requestedByUserId;

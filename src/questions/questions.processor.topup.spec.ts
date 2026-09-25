@@ -28,6 +28,19 @@ function isVerifierPrompt(prompt: string): boolean {
   return prompt.startsWith('Solve this multiple-choice question.');
 }
 
+/**
+ * The coverage plan runs before generation and uses the same completion call,
+ * so the mock has to tell them apart or a plan lands in the generation counts
+ * and every assertion about round counts is off by one.
+ */
+function isPlanningPrompt(prompt: string): boolean {
+  return prompt.startsWith('You are planning an assessment on');
+}
+
+const PLAN_REPLY = JSON.stringify({
+  exerciseTypes: ['first kind', 'second kind', 'third kind'],
+});
+
 /** The question text a verifier prompt is asking about. */
 function questionInPrompt(prompt: string): string {
   const match = /Question:\n(.+)\n/.exec(prompt);
@@ -93,6 +106,9 @@ describe('QuestionsProcessor top-up loop', () => {
     const generationPrompts: string[] = [];
 
     const generate = (prompt: string) => {
+      if (isPlanningPrompt(prompt)) {
+        return Promise.resolve({ text: PLAN_REPLY });
+      }
       const isFirstRound = generationPrompts.length === 0;
       generationPrompts.push(prompt);
       const n = Math.max(

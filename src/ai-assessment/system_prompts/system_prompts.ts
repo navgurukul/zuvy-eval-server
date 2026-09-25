@@ -192,6 +192,12 @@ export interface McqGenerationSpec {
   difficultyDistribution?: { easy?: number; medium?: number; hard?: number };
   questionCounts?: { easy?: number; medium?: number; hard?: number };
   batchQuestionCounts?: { easy?: number; medium?: number; hard?: number };
+  /**
+   * Distinct kinds of exercise this batch should cover, planned before any
+   * question was written. Separate from subtopics, which name areas of the
+   * subject; these name what the student has to DO.
+   */
+  exerciseTypes?: string[];
 }
 
 export function generateMcqPromptFromSpec(
@@ -247,6 +253,22 @@ export function generateMcqPromptFromSpec(
     sections.push(`- Selected subtopics/concepts: ${subtopics.join(', ')}`);
     sections.push(
       '- Generate questions only from the selected subtopics/concepts.',
+    );
+  }
+  if (spec.exerciseTypes?.length) {
+    sections.push('');
+    sections.push('KINDS OF EXERCISE TO COVER (planned for this batch):');
+    spec.exerciseTypes.forEach((t, i) => {
+      sections.push(`  ${i + 1}. ${t}`);
+    });
+    sections.push(
+      '- Work down this list, spending one question on each before returning to any of them.',
+    );
+    sections.push(
+      '- These are things the student DOES, not areas of the subject. Two questions applying the same one over different numbers count as one of them, not two.',
+    );
+    sections.push(
+      '- If the list is shorter than the number of questions asked for, come back to the earliest kinds rather than inventing near-copies of the last one.',
     );
   }
   if (learningObjectives)
@@ -562,4 +584,113 @@ export function parseVerifierVerdict(text: string | undefined | null): {
       : null;
 
   return { computedAnswer, correctOption, onTopic, difficulty };
+}
+
+/**
+ * Asks the model to plan what a batch should cover, before it writes anything.
+ *
+ * A topic name on its own is not a plan, and a model given one pads. Asked for
+ * fifty questions on "logarithm" with no subtopics and no description, it
+ * produced nine direct evaluations, seven solve-for-the-argument, six simplify
+ * a sum - the same handful of exercises with the numbers changed. Every answer
+ * was right; the batch still tested six skills fifty times.
+ *
+ * Naming the exercises first fixes what rejecting repeats afterwards cannot.
+ * A filter can only remove a repeat once it has been paid for, and on a narrow
+ * topic removal just empties the batch. A plan gives the model somewhere else
+ * to go.
+ *
+ * Existing questions are shown so the plan reaches for ground not already
+ * covered, which is the same reason they are shown to the generator.
+ *
+ * Asking for fewer types than questions is deliberate. A topic genuinely has a
+ * limited number of distinct exercises, and a model told to invent thirty will
+ * split hairs to reach the number rather than admit the topic is narrow.
+ */
+export function planExerciseTypesPrompt(params: {
+  topic: string;
+  topicDescription?: string;
+  count: number;
+  targetAudience?: string;
+  existingQuestions?: string[];
+}): string {
+  const lines = [`You are planning an assessment on: ${params.topic}`];
+
+  if (params.topicDescription?.trim()) {
+    lines.push(`Topic description: ${params.topicDescription.trim()}`);
+  }
+  if (params.targetAudience?.trim()) {
+    lines.push(`Audience: ${params.targetAudience.trim()}`);
+  }
+
+  if (params.existingQuestions?.length) {
+    lines.push('');
+    lines.push('Questions that already exist for this topic:');
+    params.existingQuestions.slice(0, 40).forEach((q, i) => {
+      lines.push(`${i + 1}. ${String(q).trim()}`);
+    });
+    lines.push('');
+    lines.push(
+      'Those already cover their own exercises. Reach for ones they do not.',
+    );
+  }
+
+  lines.push(
+    '',
+    `Name up to ${params.count} DISTINCT kinds of exercise for this topic.`,
+    '',
+    'A kind of exercise is a different thing the student has to do, not the same',
+    'thing over different numbers. "Evaluate a logarithm" and "solve for the base"',
+    'are two kinds. "Evaluate log2(8)" and "evaluate log3(27)" are one kind twice.',
+    '',
+    'Reach beyond computing a value: reading a result, comparing two cases,',
+    'working backwards from an answer, choosing which method applies, and',
+    'spotting why a stated conclusion is wrong are all kinds of exercise.',
+    '',
+    `Give FEWER than ${params.count} if the topic honestly has fewer. A short,`,
+    'true list is more useful than a padded one, and naming the same exercise',
+    'twice in different words defeats the purpose of the list.',
+    '',
+    'Respond with ONLY a JSON object of exactly this shape:',
+    '{"exerciseTypes": ["<one short phrase per kind>", "..."]}',
+    '',
+    'No explanation, no markdown, no code fences.',
+  );
+
+  return lines.join('\n');
+}
+
+/**
+ * Reads a coverage plan.
+ *
+ * Returns an empty array rather than throwing: a plan is an improvement on
+ * generating blind, not a precondition for it, so an unreadable one leaves
+ * generation exactly as it was.
+ */
+export function parseExerciseTypes(text: string | undefined | null): string[] {
+  if (!text) return [];
+  const start = text.indexOf('{');
+  const end = text.lastIndexOf('}');
+  if (start === -1 || end <= start) return [];
+
+  let parsed: any;
+  try {
+    parsed = JSON.parse(text.slice(start, end + 1));
+  } catch {
+    return [];
+  }
+
+  const types = parsed?.exerciseTypes;
+  if (!Array.isArray(types)) return [];
+
+  const seen = new Set<string>();
+  const out: string[] = [];
+  types.forEach((t) => {
+    const value = String(t ?? '').trim();
+    const key = value.toLowerCase();
+    if (!value || seen.has(key)) return;
+    seen.add(key);
+    out.push(value);
+  });
+  return out;
 }

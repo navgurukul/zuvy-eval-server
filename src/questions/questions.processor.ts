@@ -3,7 +3,9 @@ import { Logger } from '@nestjs/common';
 import { Job } from 'bullmq';
 import {
   generateMcqPromptFromSpec,
+  parseExerciseTypes,
   parseVerifierVerdict,
+  planExerciseTypesPrompt,
   verifyMcqAnswerPrompt,
 } from 'src/ai-assessment/system_prompts/system_prompts';
 import {
@@ -401,6 +403,64 @@ export class QuestionsProcessor extends WorkerHost {
    * having. Returns null when it could not be read, so an outage leaves the
    * original verdict standing rather than silently rescuing every question.
    */
+  /**
+   * Asks the model what a batch should cover, before it writes anything.
+   *
+   * A topic name alone is not a plan. Fifty questions on "logarithm" with no
+   * subtopics and no description came back as nine direct evaluations, seven
+   * solve-for-the-argument and six simplify-a-sum: every answer correct, six
+   * skills tested fifty times. Rejecting those afterwards cannot help much,
+   * because on a narrow topic removal only empties the batch - the model has
+   * to be given somewhere else to go before it writes.
+   *
+   * Skipped when subtopics were supplied, since that is the caller having
+   * already said what to cover, and skipped when planning fails: a plan is an
+   * improvement on generating blind, not a precondition for it.
+   */
+  private async planExerciseTypes(
+    job: Job<GenerateTopicBatchJobPayload, void, string>,
+    topicName: string,
+    topicDescription: string,
+    existingTexts: string[],
+    count: number,
+  ): Promise<string[]> {
+    if (Array.isArray(job.data.subtopics) && job.data.subtopics.length) {
+      return [];
+    }
+
+    const prompt = planExerciseTypesPrompt({
+      topic: topicName,
+      topicDescription,
+      count,
+      targetAudience: job.data.targetAudience,
+      existingQuestions: existingTexts,
+    });
+
+    try {
+      const response = await this.llmService.generateCompletion(prompt);
+      const types = parseExerciseTypes(response?.text);
+      if (types.length) {
+        this.logger.log(
+          `Job ${job.id}: planned ${types.length} kind(s) of exercise for topic ` +
+            `"${topicName}": ${types.join('; ')}`,
+        );
+      } else {
+        this.logger.warn(
+          `Job ${job.id}: could not read a coverage plan for topic "${topicName}"; ` +
+            `generating without one.`,
+        );
+      }
+      return types;
+    } catch (err) {
+      this.logger.warn(
+        `Job ${job.id}: coverage planning failed for topic "${topicName}", ` +
+          `generating without a plan: ` +
+          (err instanceof Error ? err.message : String(err)),
+      );
+      return [];
+    }
+  }
+
   private async solveIndependently(
     prompt: string,
     index: number,
@@ -854,6 +914,8 @@ export class QuestionsProcessor extends WorkerHost {
      */
     relaxPreferences: boolean,
     avoidExercises: ExerciseLike[],
+    /** Kinds of exercise planned for this batch; empty when planning was skipped. */
+    exerciseTypes: string[],
   ): Promise<Array<Record<string, any>>> {
     const { topicName, topicDescription, orgId } = ctx;
     const avoidTexts = avoidExercises.map((e) => e.question);
@@ -866,6 +928,7 @@ export class QuestionsProcessor extends WorkerHost {
         topicDescription,
         count: need,
         batchQuestionCounts: needCounts ?? undefined,
+        exerciseTypes: exerciseTypes.length ? exerciseTypes : undefined,
       },
       avoidTexts.slice(0, MAX_EXISTING_TEXTS),
     );
@@ -1103,6 +1166,17 @@ export class QuestionsProcessor extends WorkerHost {
       // a dropped hard question is replaced by a hard one. Questions accepted so
       // far are carried into the next round's "do not repeat" list, so a top-up
       // cannot restate what it is topping up.
+      // Planned once for the job, not per round: the point is a batch that
+      // covers different ground, and a fresh plan each round would keep
+      // proposing the same first few kinds.
+      const exerciseTypes = await this.planExerciseTypes(
+        job,
+        topicName,
+        topicDescription,
+        existingTexts,
+        count,
+      );
+
       const targetCounts = normalizeDifficultyCounts(
         job.data.batchQuestionCounts,
       );
@@ -1155,6 +1229,7 @@ export class QuestionsProcessor extends WorkerHost {
           needCounts,
           lastRound,
           avoidExercises,
+          exerciseTypes,
         );
 
         roundAccepted.forEach((q) => {

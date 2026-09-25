@@ -79,7 +79,9 @@ export class QuestionExplanationService {
       .limit(1);
 
     if (!assignment) {
-      throw new NotFoundException('No assessment assignment found for this student');
+      throw new NotFoundException(
+        'No assessment assignment found for this student',
+      );
     }
 
     if (!assignment.questionSetId) {
@@ -153,7 +155,9 @@ export class QuestionExplanationService {
     }
 
     const options =
-      qRow.options && typeof qRow.options === 'object' && !Array.isArray(qRow.options)
+      qRow.options &&
+      typeof qRow.options === 'object' &&
+      !Array.isArray(qRow.options)
         ? (qRow.options as Record<string, string>)
         : {};
 
@@ -394,7 +398,9 @@ export class QuestionExplanationService {
   private stripStatedOptionLines(text: string): string {
     return text
       .split('\n')
-      .filter((line) => !/^\s*(correct(ed)?\s*option|correction)\s*:/i.test(line))
+      .filter(
+        (line) => !/^\s*(correct(ed)?\s*option|correction)\s*:/i.test(line),
+      )
       .join('\n')
       .trim();
   }

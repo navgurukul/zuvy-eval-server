@@ -98,6 +98,23 @@ const VERIFIER_PROVIDER: 'openai' | 'genai' =
     : 'genai';
 
 /**
+ * Whether a disagreement gets a third opinion before the question is dropped.
+ *
+ * On by default, and it is the difference between losing a question to a
+ * genuine error and losing it to a careless check. A disagreement means one of
+ * the two is wrong, not which, and the dissent has been measured wrong often
+ * enough that acting on it alone is not safe: on one combination batch the
+ * verifier answered 84 where the answer was 105, and gave the unconstrained
+ * total for a question that named a required element.
+ *
+ * Costs one extra call per disagreement and nothing on the questions that
+ * agree, so it is paid only where it changes an outcome.
+ */
+const TIEBREAK_ON_DISAGREEMENT =
+  String(process.env.TIEBREAK_ON_DISAGREEMENT ?? 'true').toLowerCase() !==
+  'false';
+
+/**
  * How many times a job may regenerate to replace questions it dropped.
  *
  * A request for 60 questions must store 60, so a job that drops 3 asks for 3
@@ -373,6 +390,36 @@ export class QuestionsProcessor extends WorkerHost {
    * stored answer on one dissenting opinion would introduce its own errors.
    * Losing a question costs nothing a regeneration cannot replace.
    */
+  /**
+   * One more independent solve of the same question, for breaking a tie.
+   *
+   * Deliberately the same prompt and the same provider order as the first
+   * check. What makes it a second opinion is that it is a separate sample, not
+   * a different instruction: a re-solve lands on the same answer when the
+   * question is clear and diverges when it is not, which is the signal worth
+   * having. Returns null when it could not be read, so an outage leaves the
+   * original verdict standing rather than silently rescuing every question.
+   */
+  private async solveIndependently(
+    prompt: string,
+    index: number,
+    jobId: string | number | undefined,
+  ): Promise<ReturnType<typeof parseVerifierVerdict>> {
+    try {
+      const response = await this.llmService.generateCompletionPreferring(
+        VERIFIER_PROVIDER,
+        prompt,
+      );
+      return parseVerifierVerdict(response?.text);
+    } catch (err) {
+      this.logger.warn(
+        `Job ${jobId}: tie-break call failed for question ${index + 1}: ` +
+          (err instanceof Error ? err.message : String(err)),
+      );
+      return null;
+    }
+  }
+
   private async verifyKeyedAnswers(
     candidates: Array<{ q: Record<string, any>; index: number }>,
     jobId: string | number | undefined,
@@ -420,25 +467,58 @@ export class QuestionsProcessor extends WorkerHost {
 
       const keyed = Number(q.correctOption);
 
-      if (verdict.correctOption === null) {
-        rejected.add(index);
-        this.logger.warn(
-          `[generation-rejected] job=${jobId} question=${index + 1} reason=no-correct-option ` +
-            `keyed=${keyed} verifierAnswer=${JSON.stringify(verdict.computedAnswer)} ` +
-            `question=${JSON.stringify(String(q.question ?? '').slice(0, 120))}`,
-        );
-        return;
-      }
-
       if (verdict.correctOption !== keyed) {
-        rejected.add(index);
-        this.logger.warn(
-          `[generation-rejected] job=${jobId} question=${index + 1} reason=answer-disagreement ` +
-            `keyed=${keyed} verifier=${verdict.correctOption} ` +
-            `verifierAnswer=${JSON.stringify(verdict.computedAnswer)} ` +
-            `question=${JSON.stringify(String(q.question ?? '').slice(0, 120))}`,
-        );
-        return;
+        // Two sources disagree and neither is reliable enough to decide alone,
+        // so ask a third and let the majority settle it.
+        //
+        // Deciding on one dissent was costing good questions. Checked by hand
+        // against a combination batch, the verifier was the one in the wrong
+        // on several: it answered 84 where C(9,4) - C(7,2) = 105, and returned
+        // C(12,5) in full for a question that required a particular book, the
+        // constraint dropped entirely. Every one of those took a sound
+        // question out of the batch.
+        //
+        // The generator's key is the first vote, this verdict the second. A
+        // third solve breaks the tie:
+        //
+        //   third agrees with the key      -> keep, the verifier was the odd
+        //                                     one out
+        //   third agrees with the verifier -> drop, two independent solves
+        //                                     say the key is wrong
+        //   third says something else      -> drop, nobody agrees and the
+        //                                     question cannot be trusted
+        //
+        // Only disagreements pay for the extra call, and dropping still never
+        // re-keys a question: a majority is enough to distrust a stored answer
+        // and not enough to overwrite one.
+        const second = TIEBREAK_ON_DISAGREEMENT
+          ? await this.solveIndependently(prompt, index, jobId)
+          : null;
+
+        const describeVerdict = (v: typeof verdict) =>
+          v?.correctOption === null ? 'none' : String(v?.correctOption ?? '?');
+
+        if (second && second.correctOption === keyed) {
+          this.logger.log(
+            `Job ${jobId}: question ${index + 1} kept on a tie-break; the first check said ` +
+              `${describeVerdict(verdict)} and a second solve agreed with the stored answer ` +
+              `${keyed}.`,
+          );
+        } else {
+          rejected.add(index);
+          const reason =
+            verdict.correctOption === null
+              ? 'no-correct-option'
+              : 'answer-disagreement';
+          this.logger.warn(
+            `[generation-rejected] job=${jobId} question=${index + 1} reason=${reason} ` +
+              `keyed=${keyed} verifier=${describeVerdict(verdict)} ` +
+              `tiebreak=${second ? describeVerdict(second) : 'unavailable'} ` +
+              `verifierAnswer=${JSON.stringify(verdict.computedAnswer)} ` +
+              `question=${JSON.stringify(String(q.question ?? '').slice(0, 120))}`,
+          );
+          return;
+        }
       }
 
       // A question about a different subject than the one requested is a

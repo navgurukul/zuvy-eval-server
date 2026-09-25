@@ -140,6 +140,84 @@ export function sameNumbers(a: Set<string>, b: Set<string>): boolean {
   return same;
 }
 
+/**
+ * Cosine similarity between two embeddings, in [-1, 1] for normalised vectors.
+ *
+ * Token overlap only catches a restatement that reuses the wording. It misses
+ * a paraphrase that does not: "which data structure uses LIFO" and "which data
+ * structure follows Last In First Out" are the same question and share almost
+ * no content words. That gap falls hardest on conceptual topics - data
+ * structures, general knowledge, loops - where the same idea has many
+ * unrelated phrasings, and hardly at all on arithmetic, where the numbers
+ * carry the meaning.
+ *
+ * Meaning is what embeddings measure, so this is the check that generalises
+ * across topics. Returns 0 for mismatched or empty vectors rather than
+ * throwing, since a failed embedding must not fail a batch.
+ */
+export function cosineSimilarity(a: number[], b: number[]): number {
+  if (
+    !Array.isArray(a) ||
+    !Array.isArray(b) ||
+    a.length !== b.length ||
+    !a.length
+  ) {
+    return 0;
+  }
+  let dot = 0;
+  let normA = 0;
+  let normB = 0;
+  for (let i = 0; i < a.length; i++) {
+    dot += a[i] * b[i];
+    normA += a[i] * a[i];
+    normB += b[i] * b[i];
+  }
+  if (normA === 0 || normB === 0) return 0;
+  return dot / (Math.sqrt(normA) * Math.sqrt(normB));
+}
+
+/**
+ * Cosine at or above which two questions are treated as the same question.
+ *
+ * Deliberately high. Two sound questions on one narrow subtopic sit well above
+ * 0.8 with text-embedding-3-small, so a lower bar would throw away good
+ * questions and churn the top-up loop. This is set to catch restatements, not
+ * neighbours, and the numeric guard below still applies on top of it.
+ */
+export const SEMANTIC_DUPLICATE_THRESHOLD = Number(
+  process.env.SEMANTIC_DUPLICATE_THRESHOLD ?? 0.93,
+);
+
+/** Tokens and numbers for one question text, as the duplicate rules need them. */
+export function describeQuestionText(text: string): {
+  text: string;
+  tokens: Set<string>;
+  numbers: Set<string>;
+} {
+  const tokens = questionTokenSet(text);
+  return { text, tokens, numbers: numericTokens(tokens) };
+}
+
+/**
+ * Whether two questions mean the same thing, judged on embeddings.
+ *
+ * The numeric guard applies here exactly as it does to the token rules, and it
+ * matters more: "arrange 3 books" and "arrange 5 books" are near-identical in
+ * embedding space - far above any workable threshold - and are different
+ * questions. Meaning alone cannot separate them; the digits can.
+ */
+export function isSemanticDuplicate(
+  a: { tokens: Set<string>; numbers: Set<string> },
+  b: { tokens: Set<string>; numbers: Set<string> },
+  vectorA: number[],
+  vectorB: number[],
+  threshold: number = SEMANTIC_DUPLICATE_THRESHOLD,
+): number | null {
+  if (!sameNumbers(a.numbers, b.numbers)) return null;
+  const similarity = cosineSimilarity(vectorA, vectorB);
+  return similarity >= threshold ? similarity : null;
+}
+
 /** |A n B| / |A u B|. Returns 0 when either side is empty. */
 export function jaccard(a: Set<string>, b: Set<string>): number {
   if (!a.size || !b.size) return 0;

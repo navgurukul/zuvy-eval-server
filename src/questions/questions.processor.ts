@@ -22,6 +22,7 @@ import {
   findTemplateRepeats,
   isSemanticDuplicate,
 } from './question-similarity.util';
+import type { ExerciseLike } from './question-similarity.util';
 
 const JOB_NAME = 'generate-topic-batch';
 const QDRANT_QUESTIONS_COLLECTION = 'QUESTIONS';
@@ -852,9 +853,10 @@ export class QuestionsProcessor extends WorkerHost {
      * the outcome both were meant to improve on.
      */
     relaxPreferences: boolean,
-    avoidTexts: string[],
+    avoidExercises: ExerciseLike[],
   ): Promise<Array<Record<string, any>>> {
     const { topicName, topicDescription, orgId } = ctx;
+    const avoidTexts = avoidExercises.map((e) => e.question);
 
     const prompt = generateMcqPromptFromSpec(
       {
@@ -948,7 +950,7 @@ export class QuestionsProcessor extends WorkerHost {
     // for variety; the last one takes what it can get.
     const templateRepeats = relaxPreferences
       ? []
-      : findTemplateRepeats(selected, avoidTexts);
+      : findTemplateRepeats(selected, avoidExercises);
 
     templateRepeats.forEach((t) => {
       dropped.set(t.index, `template repeat: ${t.reason}`);
@@ -1038,33 +1040,52 @@ export class QuestionsProcessor extends WorkerHost {
       const [similar, recent] = await Promise.all([
         this.findSimilarQuestionTexts(job, topicName, topicDescription, orgId),
         this.questionsService
-          .getRecentQuestionTextsByTopic(
-            topicName,
-            orgId,
-            RECENT_TOPIC_QUESTIONS,
-          )
+          .getRecentQuestionsByTopic(topicName, orgId, RECENT_TOPIC_QUESTIONS)
           .catch((err) => {
             this.logger.warn(
               `Job ${job.id}: could not load recent questions for topic "${topicName}", ` +
                 `continuing without them: ${err instanceof Error ? err.message : String(err)}`,
             );
-            return [] as string[];
+            return [] as Array<{
+              question: string;
+              options: Record<string, string> | null;
+              correctOption: number | null;
+            }>;
           }),
       ]);
 
       // Recent first: those are the ones a sibling batch just wrote, so they
       // survive the truncation below if the combined list is long.
+      //
+      // The recent rows keep their options and keyed answer, because the
+      // repetition check needs them: a batch that repeats one exercise by
+      // changing the noun is invisible in the text and obvious in the numbers
+      // and the answer. Semantic neighbours arrive as text only, which is all
+      // the store can give.
       const seen = new Set<string>();
-      const existingTexts: string[] = [];
-      for (const text of [...recent, ...(similar ?? [])]) {
-        const key = String(text ?? '')
+      const existingExercises: Array<{
+        question: string;
+        options?: Record<string, string>;
+        correctOption?: number;
+      }> = [];
+      const candidates = [
+        ...recent.map((r) => ({
+          question: r.question,
+          options: r.options ?? undefined,
+          correctOption: r.correctOption ?? undefined,
+        })),
+        ...(similar ?? []).map((text) => ({ question: text })),
+      ];
+      for (const item of candidates) {
+        const key = String(item.question ?? '')
           .trim()
           .toLowerCase();
         if (!key || seen.has(key)) continue;
         seen.add(key);
-        existingTexts.push(text);
-        if (existingTexts.length >= MAX_EXISTING_TEXTS) break;
+        existingExercises.push(item);
+        if (existingExercises.length >= MAX_EXISTING_TEXTS) break;
       }
+      const existingTexts = existingExercises.map((e) => e.question);
 
       if (existingTexts.length > 0) {
         this.logger.log(
@@ -1086,7 +1107,7 @@ export class QuestionsProcessor extends WorkerHost {
         job.data.batchQuestionCounts,
       );
       const accepted: Array<Record<string, any>> = [];
-      const avoidTexts = [...existingTexts];
+      const avoidExercises: ExerciseLike[] = [...existingExercises];
       let roundsUsed = 0;
 
       for (let round = 1; round <= MAX_GENERATION_ROUNDS; round++) {
@@ -1133,14 +1154,18 @@ export class QuestionsProcessor extends WorkerHost {
           need,
           needCounts,
           lastRound,
-          avoidTexts,
+          avoidExercises,
         );
 
         roundAccepted.forEach((q) => {
           accepted.push(q);
           // Front of the list: a question written seconds ago is the one the
           // next round is most likely to restate, and the list gets truncated.
-          avoidTexts.unshift(String(q.question ?? ''));
+          avoidExercises.unshift({
+            question: String(q.question ?? ''),
+            options: q.options as Record<string, string> | undefined,
+            correctOption: q.correctOption as number | undefined,
+          });
         });
       }
 

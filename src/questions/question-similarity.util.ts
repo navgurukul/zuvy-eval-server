@@ -407,8 +407,53 @@ export type TemplateVerdict = {
   reason: string;
 };
 
+/** A question as the template check needs to see it. */
+export type ExerciseLike = {
+  question: string;
+  options?: Record<string, string>;
+  correctOption?: number | string;
+};
+
+/**
+ * What a question actually computes: the numbers going in, the answer coming
+ * out.
+ *
+ * This is the check that survives a change of subject. Wording comparison sees
+ * "3 trophies on a shelf", "3 flags on a flagpole" and "3 students in a line"
+ * as three questions, because only the noun moved; the skeleton keeps that
+ * noun and so does the embedding. One real batch of permutation questions had
+ * seven of them, every one 3 -> 6, and four more that were all 4 -> 24.
+ *
+ * Numbers in and answer out ignore the noun entirely. Two questions that take
+ * the same values and produce the same result are one exercise, whatever they
+ * dress it in.
+ *
+ * Returns '' when there is nothing to fingerprint, so a question with no
+ * numbers or no readable answer falls through to the wording rules rather than
+ * grouping with every other unfingerprintable question.
+ */
+export function exerciseFingerprint(item: ExerciseLike): string {
+  const numbers = Array.from(
+    numericTokens(questionTokenSet(item.question ?? '')),
+  )
+    .sort()
+    .join(',');
+  if (!numbers) return '';
+
+  const key = String(item.correctOption ?? '');
+  const answer = item.options?.[key];
+  if (!answer || !String(answer).trim()) return '';
+
+  return `${numbers}=>${String(answer).trim().toLowerCase()}`;
+}
+
 /**
  * Flags questions beyond the allowed number sharing one template.
+ *
+ * Two questions count as the same exercise when either their wording skeleton
+ * matches or their fingerprint does. The skeleton catches the same sentence
+ * over new data; the fingerprint catches the same computation under a new
+ * noun, which the skeleton cannot see.
  *
  * Existing questions seed the counts, so a template already well represented
  * in the bank does not get topped up further by a new batch. The first
@@ -423,45 +468,79 @@ export type TemplateVerdict = {
  */
 export function findTemplateRepeats(
   evaluations: Array<Record<string, any>>,
-  existingTexts: string[] = [],
+  existing: Array<ExerciseLike | string> = [],
   maxPerTemplate: number = MAX_PER_TEMPLATE,
 ): TemplateVerdict[] {
-  const seen: Array<{ skeleton: Set<string>; count: number; text: string }> =
-    [];
+  type Group = {
+    skeleton: Set<string>;
+    fingerprint: string;
+    count: number;
+    text: string;
+  };
+  const seen: Group[] = [];
 
   const bump = (
-    text: string,
-  ): { count: number; match: string; similarity: number } => {
+    item: ExerciseLike,
+  ): { count: number; match: string; similarity: number; how: string } => {
+    const text = String(item.question ?? '');
     const skeleton = questionSkeleton(text);
-    if (!skeleton.size) return { count: 0, match: '', similarity: 0 };
+    const fingerprint = exerciseFingerprint(item);
+
+    if (!skeleton.size && !fingerprint) {
+      return { count: 0, match: '', similarity: 0, how: '' };
+    }
 
     for (const group of seen) {
-      const similarity = jaccard(skeleton, group.skeleton);
-      if (similarity >= SAME_TEMPLATE_THRESHOLD) {
+      // Fingerprint first: it is exact, and it is the only one of the two that
+      // sees through a change of noun.
+      if (fingerprint && fingerprint === group.fingerprint) {
         group.count += 1;
-        return { count: group.count, match: group.text, similarity };
+        return {
+          count: group.count,
+          match: group.text,
+          similarity: 1,
+          how: 'same numbers and the same answer',
+        };
+      }
+
+      const similarity = jaccard(skeleton, group.skeleton);
+      if (skeleton.size && similarity >= SAME_TEMPLATE_THRESHOLD) {
+        group.count += 1;
+        return {
+          count: group.count,
+          match: group.text,
+          similarity,
+          how: 'the same wording over different data',
+        };
       }
     }
-    seen.push({ skeleton, count: 1, text });
-    return { count: 1, match: text, similarity: 1 };
+
+    seen.push({ skeleton, fingerprint, count: 1, text });
+    return { count: 1, match: text, similarity: 1, how: '' };
   };
 
-  existingTexts
-    .filter((t) => t && String(t).trim())
-    .forEach((t) => bump(String(t)));
+  existing
+    .map((e) => (typeof e === 'string' ? { question: e } : e))
+    .filter((e) => e?.question && String(e.question).trim())
+    .forEach((e) => bump(e));
 
   const surplus: TemplateVerdict[] = [];
   evaluations.forEach((q, index) => {
     const text = String(q?.question ?? '');
     if (!text.trim()) return;
 
-    const { count, match, similarity } = bump(text);
+    const { count, match, similarity, how } = bump({
+      question: text,
+      options: q?.options as Record<string, string> | undefined,
+      correctOption: q?.correctOption as number | string | undefined,
+    });
+
     if (count > maxPerTemplate) {
       surplus.push({
         index,
         similarity,
         reason:
-          `the same exercise with different numbers appears ${count} times; ` +
+          `the same exercise appears ${count} times (${how}); ` +
           `first seen as "${truncate(match)}"`,
       });
     }

@@ -88,7 +88,10 @@ describe('QuestionsService', () => {
 
   it('loads existing question texts by org and topic without deleting anything', async () => {
     db.select.mockReturnValueOnce(
-      mockSelect([{ question: 'What is REST?' }, { question: 'What is HTTP?' }]),
+      mockSelect([
+        { question: 'What is REST?' },
+        { question: 'What is HTTP?' },
+      ]),
     );
 
     const texts = await service.getQuestionTextsByTopic('rest apis', 1, 200);
@@ -100,7 +103,9 @@ describe('QuestionsService', () => {
     const tx = {
       insert: jest.fn().mockReturnValue({
         values: jest.fn().mockReturnValue({
-          returning: jest.fn().mockResolvedValue([{ id: 21, question: 'New Q' }]),
+          returning: jest
+            .fn()
+            .mockResolvedValue([{ id: 21, question: 'New Q' }]),
         }),
       }),
       delete: jest.fn(),

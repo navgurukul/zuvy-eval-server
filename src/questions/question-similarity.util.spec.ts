@@ -3,6 +3,7 @@ import {
   cosineSimilarity,
   describeQuestionText,
   findDuplicateQuestions,
+  exerciseFingerprint,
   findTemplateRepeats,
   questionSkeleton,
   SAME_TEMPLATE_THRESHOLD,
@@ -328,7 +329,7 @@ describe('template repeats', () => {
       ['What is the range of 4, 6, 8, 10?', 'What is the range of 2, 4, 6, 8?'],
     );
     expect(surplus).toHaveLength(1);
-    expect(surplus[0].reason).toContain('same exercise with different numbers');
+    expect(surplus[0].reason).toContain('the same wording over different data');
   });
 
   it('honours a caller-supplied cap', () => {
@@ -343,5 +344,113 @@ describe('template repeats', () => {
     expect(() =>
       findTemplateRepeats([{ question: '4 6 8 10', options: {} }]),
     ).not.toThrow();
+  });
+});
+
+describe('same exercise under a different noun', () => {
+  /**
+   * A batch of 50 permutation questions repeated one exercise seven times by
+   * changing only the object: trophies, markers, ribbons, hats, flags, and
+   * twice students. Every one was "arrange 3 distinct things" with the answer
+   * 6. Four more were the same at 4 -> 24.
+   *
+   * None of the wording rules can see it. The nouns differ, so the token sets
+   * differ, the skeletons differ, and the embeddings sit below the paraphrase
+   * threshold. What does not differ is the arithmetic: same numbers in, same
+   * answer out.
+   *
+   * Question texts here are the real ones, shortened. They are the evidence
+   * for the rule, and a synthetic stand-in would not show that the nouns are
+   * the only thing that moved.
+   */
+  const arrange3 = [
+    {
+      question: '3 trophies on a shelf, each unique',
+      options: { '1': '9', '2': '6', '3': '12', '4': '3' },
+      correctOption: 2,
+    },
+    {
+      question: '3 different colored markers on a desk in a row',
+      options: { '1': '9', '2': '6', '3': '12', '4': '3' },
+      correctOption: 2,
+    },
+    {
+      question: '3 different colored ribbons on a shelf',
+      options: { '1': '6', '2': '8', '3': '9', '4': '3' },
+      correctOption: 1,
+    },
+    {
+      question: '3 different colored flags on a flagpole',
+      options: { '1': '6', '2': '12', '3': '3', '4': '9' },
+      correctOption: 1,
+    },
+    {
+      question: '3 students in a row for a class photo',
+      options: { '1': '6', '2': '3', '3': '9', '4': '12' },
+      correctOption: 1,
+    },
+  ];
+
+  it('reduces the same computation to one fingerprint whatever the noun', () => {
+    const prints = arrange3.map(exerciseFingerprint);
+    expect(new Set(prints).size).toBe(1);
+    expect(prints[0]).toBe('3=>6');
+  });
+
+  it('flags the surplus copies that the wording rules let through', () => {
+    // Proof the wording rules cannot: the first two share no skeleton.
+    expect(
+      jaccard(
+        questionSkeleton(arrange3[0].question),
+        questionSkeleton(arrange3[3].question),
+      ),
+    ).toBeLessThan(SAME_TEMPLATE_THRESHOLD);
+
+    // Two kept, three surplus.
+    expect(findTemplateRepeats(arrange3).map((t) => t.index)).toEqual([
+      2, 3, 4,
+    ]);
+  });
+
+  it('separates a different quantity even under the same noun', () => {
+    const four = {
+      question: '4 students in a line for a group photo',
+      options: { '1': '16', '2': '24', '3': '12', '4': '36' },
+      correctOption: 2,
+    };
+    expect(exerciseFingerprint(four)).toBe('4=>24');
+    expect(exerciseFingerprint(four)).not.toBe(
+      exerciseFingerprint(arrange3[0]),
+    );
+  });
+
+  it('counts fingerprints already in the bank', () => {
+    const surplus = findTemplateRepeats(
+      [arrange3[4]],
+      [arrange3[0], arrange3[1]],
+    );
+    expect(surplus).toHaveLength(1);
+    expect(surplus[0].reason).toContain('same numbers and the same answer');
+  });
+
+  it('falls back to wording when there is nothing to fingerprint', () => {
+    // No numbers in the question, so no fingerprint; the skeleton still works.
+    const noNumbers = {
+      question: 'which measure resists an outlier',
+      options: { '1': 'a' },
+      correctOption: 1,
+    };
+    expect(exerciseFingerprint(noNumbers)).toBe('');
+    expect(() => findTemplateRepeats([noNumbers])).not.toThrow();
+  });
+
+  it('does not fingerprint when the keyed option is missing', () => {
+    expect(
+      exerciseFingerprint({
+        question: 'arrange 3 things',
+        options: { '1': '6' },
+        correctOption: 4,
+      }),
+    ).toBe('');
   });
 });

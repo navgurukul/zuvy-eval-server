@@ -34,6 +34,30 @@ function questionInPrompt(prompt: string): string {
   return match ? match[1] : '';
 }
 
+/**
+ * Stand-in for a real embedding: one dimension per distinct word.
+ *
+ * It must give distinct text distinct directions. A mock returning one vector
+ * for everything makes every question a paraphrase of every other, so the
+ * semantic duplicate check drops the whole batch and these tests measure
+ * nothing.
+ */
+function fakeEmbedding(text: string): number[] {
+  const vector = new Array(64).fill(0) as number[];
+  String(text)
+    .toLowerCase()
+    .split(/[^a-z0-9]+/)
+    .filter(Boolean)
+    .forEach((word) => {
+      let hash = 0;
+      for (let i = 0; i < word.length; i++) {
+        hash = (hash * 31 + word.charCodeAt(i)) >>> 0;
+      }
+      vector[hash % 64] += 1;
+    });
+  return vector;
+}
+
 describe('QuestionsProcessor top-up loop', () => {
   let counter = 0;
 
@@ -60,7 +84,7 @@ describe('QuestionsProcessor top-up loop', () => {
       const evaluations = Array.from({ length: n }, () => {
         counter += 1;
         return {
-          question: `wug lorp question number ${counter}`,
+          question: `wug${counter} lorp${counter} blint praxil`,
           solution: 'working',
           options: {
             '1': `${counter}a`,
@@ -110,8 +134,9 @@ describe('QuestionsProcessor top-up loop', () => {
       } as unknown as LlmService,
       questionsService as unknown as QuestionsService,
       {
-        embed: () => Promise.resolve([0.1]),
-        embedMany: (texts: string[]) => Promise.resolve(texts.map(() => [0.1])),
+        embed: () => Promise.resolve(fakeEmbedding('query')),
+        embedMany: (texts: string[]) =>
+          Promise.resolve(texts.map(fakeEmbedding)),
       } as unknown as EmbeddingsService,
       { search: () => Promise.resolve([]) } as unknown as VectorService,
     );
@@ -187,8 +212,8 @@ describe('QuestionsProcessor top-up loop', () => {
   it('regenerates the shortfall so the stored count still matches the request', async () => {
     // The verifier disagrees with the first two questions it ever sees.
     const rejected = new Set([
-      'wug lorp question number 1',
-      'wug lorp question number 2',
+      'wug1 lorp1 blint praxil',
+      'wug2 lorp2 blint praxil',
     ]);
     const { processor, createManyWithOutbox, generationPrompts } =
       buildProcessor((q) => rejected.has(q));
@@ -241,7 +266,7 @@ describe('QuestionsProcessor top-up loop', () => {
     const { processor, createManyWithOutbox } = buildProcessor((q) => {
       // Let the first round through, reject every top-up after it.
       if (rejectAll.has('started')) return true;
-      if (q.includes('number 10')) {
+      if (q.includes('wug10 ')) {
         rejectAll.add('started');
         return true;
       }
@@ -297,7 +322,7 @@ describe('QuestionsProcessor top-up loop', () => {
 
   it('carries accepted questions into the next round so a top-up cannot repeat them', async () => {
     const { processor, generationPrompts } = buildProcessor(
-      (q) => q === 'wug lorp question number 1',
+      (q) => q === 'wug1 lorp1 blint praxil',
     );
 
     await runJob(processor, 5);
@@ -305,6 +330,6 @@ describe('QuestionsProcessor top-up loop', () => {
     expect(generationPrompts).toHaveLength(2);
     // Question 2 was accepted in round 1, so round 2 must be told not to
     // restate it.
-    expect(generationPrompts[1]).toContain('wug lorp question number 2');
+    expect(generationPrompts[1]).toContain('wug2 lorp2 blint praxil');
   });
 });

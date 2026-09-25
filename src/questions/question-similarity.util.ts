@@ -355,3 +355,117 @@ function truncate(text: string, max = 80): string {
   const clean = String(text).replace(/\s+/g, ' ').trim();
   return clean.length > max ? `${clean.slice(0, max)}...` : clean;
 }
+
+/**
+ * Cosine-style similarity at or above which two questions share a template.
+ *
+ * Lower than the duplicate thresholds on purpose: a template is a coarser
+ * thing than a restatement. "Remove the highest and lowest value, then find
+ * the mean" and "Drop the largest and smallest, then compute the average" are
+ * the same exercise and should count as one.
+ */
+export const SAME_TEMPLATE_THRESHOLD = 0.75;
+
+/**
+ * How many questions may share one template before the rest are surplus.
+ *
+ * Two is a judgement, not a measurement: one leaves no room for a genuinely
+ * different-feeling variant of a common exercise, and three already reads as
+ * padding in a batch of ten.
+ */
+export const MAX_PER_TEMPLATE = Math.max(
+  1,
+  Number(process.env.MAX_PER_TEMPLATE ?? 2) || 2,
+);
+
+/**
+ * The shape of a question with its data removed.
+ *
+ * This is the exact inverse of the numeric guard above, and both are right for
+ * their own question. The guard asks "is this the same question?", where
+ * different numbers mean no - "arrange 3 books" and "arrange 5 books" have
+ * different answers and must both survive. This asks "is this the same
+ * exercise?", where different numbers mean nothing at all: "the range of
+ * 4, 6, 8, 10" and "the range of 2, 4, 6, 8" are one procedure practised
+ * twice.
+ *
+ * A bank can be free of duplicates and still be repetitive, which is what a
+ * review of 40 statistics questions found: no exact repeats, but seven of them
+ * were "remove a value, then take the mean" with the numbers changed.
+ */
+export function questionSkeleton(text: string): Set<string> {
+  const skeleton = new Set<string>();
+  questionTokenSet(text).forEach((token) => {
+    if (!/^\d+$/.test(token)) skeleton.add(token);
+  });
+  return skeleton;
+}
+
+export type TemplateVerdict = {
+  index: number;
+  similarity: number;
+  reason: string;
+};
+
+/**
+ * Flags questions beyond the allowed number sharing one template.
+ *
+ * Existing questions seed the counts, so a template already well represented
+ * in the bank does not get topped up further by a new batch. The first
+ * occurrences are kept and only the surplus is returned, so a template never
+ * disappears entirely.
+ *
+ * Narrow topics have genuinely few templates, so on those this will hold a
+ * batch below the count asked for. That is the intended outcome: there are not
+ * forty distinct things to ask about elementary statistics, and forty
+ * questions that pretend otherwise are seven exercises wearing different
+ * numbers.
+ */
+export function findTemplateRepeats(
+  evaluations: Array<Record<string, any>>,
+  existingTexts: string[] = [],
+  maxPerTemplate: number = MAX_PER_TEMPLATE,
+): TemplateVerdict[] {
+  const seen: Array<{ skeleton: Set<string>; count: number; text: string }> =
+    [];
+
+  const bump = (
+    text: string,
+  ): { count: number; match: string; similarity: number } => {
+    const skeleton = questionSkeleton(text);
+    if (!skeleton.size) return { count: 0, match: '', similarity: 0 };
+
+    for (const group of seen) {
+      const similarity = jaccard(skeleton, group.skeleton);
+      if (similarity >= SAME_TEMPLATE_THRESHOLD) {
+        group.count += 1;
+        return { count: group.count, match: group.text, similarity };
+      }
+    }
+    seen.push({ skeleton, count: 1, text });
+    return { count: 1, match: text, similarity: 1 };
+  };
+
+  existingTexts
+    .filter((t) => t && String(t).trim())
+    .forEach((t) => bump(String(t)));
+
+  const surplus: TemplateVerdict[] = [];
+  evaluations.forEach((q, index) => {
+    const text = String(q?.question ?? '');
+    if (!text.trim()) return;
+
+    const { count, match, similarity } = bump(text);
+    if (count > maxPerTemplate) {
+      surplus.push({
+        index,
+        similarity,
+        reason:
+          `the same exercise with different numbers appears ${count} times; ` +
+          `first seen as "${truncate(match)}"`,
+      });
+    }
+  });
+
+  return surplus;
+}

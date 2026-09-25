@@ -19,6 +19,7 @@ import { shuffleMcqOptionOrder } from './mcq-option-shuffle.util';
 import {
   describeQuestionText,
   findDuplicateQuestions,
+  findTemplateRepeats,
   isSemanticDuplicate,
 } from './question-similarity.util';
 
@@ -844,6 +845,18 @@ export class QuestionsProcessor extends WorkerHost {
       this.logger.warn(
         `[generation-rejected] job=${job.id} question=${d.index + 1} reason=duplicate ` +
           `similarity=${d.similarity.toFixed(2)} detail=${JSON.stringify(d.reason)}`,
+      );
+    });
+
+    // Variety, which is a different question from duplication. A batch can
+    // contain no repeats and still practise one exercise seven times with the
+    // numbers changed; the numeric guard that keeps "arrange 3 books" apart
+    // from "arrange 5 books" is exactly what lets that through.
+    findTemplateRepeats(selected, avoidTexts).forEach((t) => {
+      dropped.set(t.index, `template repeat: ${t.reason}`);
+      this.logger.warn(
+        `[generation-rejected] job=${job.id} question=${t.index + 1} reason=template-repeat ` +
+          `similarity=${t.similarity.toFixed(2)} detail=${JSON.stringify(t.reason)}`,
       );
     });
 

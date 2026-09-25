@@ -19,7 +19,10 @@ import { levels } from 'src/db/schema/level';
 import { aiAssessment } from 'src/db/schema/ai-assessment';
 import { correctAnswers } from 'src/db/schema/correctAns';
 import { studentAssessment } from 'src/db/schema/stdAssessment';
-import { SubmitAssessmentDto, ScoreSubmitDto } from './dto/create-ai-assessment.dto';
+import {
+  SubmitAssessmentDto,
+  ScoreSubmitDto,
+} from './dto/create-ai-assessment.dto';
 import { LlmService } from 'src/llm/llm.service';
 import {
   answerEvaluationPrompt,
@@ -47,18 +50,19 @@ export class AiAssessmentService {
     private readonly questionByLlmService: QuestionsByLlmService,
     private readonly storageService: StorageService,
     private readonly llmUsageService: LLMUsageService,
-    @Inject(DRIZZLE_DB) private readonly db: NodePgDatabase
+    @Inject(DRIZZLE_DB) private readonly db: NodePgDatabase,
   ) {}
 
-   async saveTokenUsage(aiAssessmentId: number, response: any) {
+  async saveTokenUsage(aiAssessmentId: number, response: any) {
     const usageData = {
       aiAssessmentId,
-      provider: response?.provider ?? "openai",
-      prompt: response?.request?.messages?.map(m => m.content).join("\n") ?? "",
-      responseText: response?.message?.content ?? "",
+      provider: response?.provider ?? 'openai',
+      prompt:
+        response?.request?.messages?.map((m) => m.content).join('\n') ?? '',
+      responseText: response?.message?.content ?? '',
       latencyMs: response?.latencyMs ?? 0,
       usage: response?.usage ?? null,
-      createdAt: new Date()
+      createdAt: new Date(),
     };
 
     await this.llmUsageService.save(usageData);
@@ -116,7 +120,10 @@ export class AiAssessmentService {
 
       if (
         !assessmentRow ||
-        !this.isAssessmentAvailable(assessmentRow.status, assessmentRow.startDatetime)
+        !this.isAssessmentAvailable(
+          assessmentRow.status,
+          assessmentRow.startDatetime,
+        )
       ) {
         throw new BadRequestException('Assessment is not yet available');
       }
@@ -270,7 +277,7 @@ export class AiAssessmentService {
       correctMap.set(row.id, row.correctOption);
     }
 
-    let ordered = [...answerRows];
+    const ordered = [...answerRows];
     if (assignment.questionSetId) {
       const positions = await this.db
         .select({
@@ -280,10 +287,7 @@ export class AiAssessmentService {
         .from(aiAssessmentQuestions)
         .where(
           and(
-            eq(
-              aiAssessmentQuestions.questionSetId,
-              assignment.questionSetId,
-            ),
+            eq(aiAssessmentQuestions.questionSetId, assignment.questionSetId),
             inArray(aiAssessmentQuestions.questionId, questionIds),
           ),
         );
@@ -344,7 +348,11 @@ export class AiAssessmentService {
       .orderBy(desc(studentLevelRelation.id))
       .limit(1);
 
-    let levelPayload: { grade: string; meaning: string | null; hardship: string | null };
+    let levelPayload: {
+      grade: string;
+      meaning: string | null;
+      hardship: string | null;
+    };
     if (levelFromDb) {
       levelPayload = levelFromDb;
     } else {
@@ -441,7 +449,10 @@ export class AiAssessmentService {
 
         if (
           !assessmentRow ||
-          !this.isAssessmentAvailable(assessmentRow.status, assessmentRow.startDatetime)
+          !this.isAssessmentAvailable(
+            assessmentRow.status,
+            assessmentRow.startDatetime,
+          )
         ) {
           throw new BadRequestException('Assessment is not yet available');
         }
@@ -503,7 +514,8 @@ export class AiAssessmentService {
           );
 
         const evaluationPrompt = answerEvaluationPrompt(answers);
-        const llmResponse = await this.llmService.generateCompletion(evaluationPrompt);
+        const llmResponse =
+          await this.llmService.generateCompletion(evaluationPrompt);
         const responseText = llmResponse.text;
         const aiUsage = await this.saveTokenUsage(aiAssessmentId, llmResponse);
 
@@ -513,10 +525,10 @@ export class AiAssessmentService {
           rawEvaluationText = responseText;
         else if (typeof llmResponse === 'object') {
           rawEvaluationText =
-            (llmResponse as any).text ??
-            (llmResponse as any).content ??
-            (llmResponse as any).response ??
-            (llmResponse as any).output ??
+            llmResponse.text ??
+            llmResponse.content ??
+            llmResponse.response ??
+            llmResponse.output ??
             JSON.stringify(llmResponse);
         } else {
           rawEvaluationText = String(responseText);
@@ -705,9 +717,7 @@ export class AiAssessmentService {
 
     const row = rows[0];
 
-    if (
-      !this.isAssessmentAvailable(row.assessmentStatus, row.startDatetime)
-    ) {
+    if (!this.isAssessmentAvailable(row.assessmentStatus, row.startDatetime)) {
       throw new BadRequestException('Assessment is not yet available');
     }
 
@@ -765,27 +775,33 @@ export class AiAssessmentService {
     }
   }
 
-    async generateAudioSummary(
+  async generateAudioSummary(
     text: string,
     language: string,
     studentId: string,
     assessmentId: string,
-    ) {
-      try {
-        const audioBuffer = await this.llmService.generateAudioSummary(text, language);
-        const {audioUrl} = await this.storageService.uploadAudioToS3(audioBuffer, studentId, assessmentId);
+  ) {
+    try {
+      const audioBuffer = await this.llmService.generateAudioSummary(
+        text,
+        language,
+      );
+      const { audioUrl } = await this.storageService.uploadAudioToS3(
+        audioBuffer,
+        studentId,
+        assessmentId,
+      );
 
-        return { audioUrl };
-      } catch (error) {
-        this.logger.error(
-          `Audio generation failed for student=${studentId}, assessment=${assessmentId}`,
-          error.stack,
-        );
+      return { audioUrl };
+    } catch (error) {
+      this.logger.error(
+        `Audio generation failed for student=${studentId}, assessment=${assessmentId}`,
+        error.stack,
+      );
 
-        throw new InternalServerErrorException(
-          'Failed to generate audio. Please try again later.',
-        );
+      throw new InternalServerErrorException(
+        'Failed to generate audio. Please try again later.',
+      );
     }
   }
-
 }

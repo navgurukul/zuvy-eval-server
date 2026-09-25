@@ -454,3 +454,66 @@ describe('same exercise under a different noun', () => {
     ).toBe('');
   });
 });
+
+describe('mathematical notation', () => {
+  /**
+   * A batch of 50 logarithm questions contained nine direct evaluations -
+   * log2(8), log3(27), log10(1000), log4(16) - and seven of "if log_b(x) = n,
+   * what is x". No check grouped them.
+   *
+   * The reason was the tokenizer: "log2" is letters and digits with nothing
+   * between them, so it survived as one token and "log3" as another. Every
+   * rule built on removing the numbers was defeated by a base welded to the
+   * word.
+   *
+   * Every answer in that batch was correct, so this is purely about variety.
+   */
+  it('separates a base from its function name', () => {
+    expect(questionTokenSet('Evaluate log2(8).')).toEqual(
+      new Set(['evaluate', 'log', '2', '8']),
+    );
+  });
+
+  it('reduces evaluations at different bases to one exercise', () => {
+    const a = questionSkeleton('Evaluate log2(8).');
+    const b = questionSkeleton('Evaluate log10(1000).');
+    expect(a).toEqual(new Set(['evaluate', 'log']));
+    expect(jaccard(a, b)).toBe(1);
+  });
+
+  it('groups "solve for the argument" whatever the base and variable name', () => {
+    const batch = [
+      {
+        question: 'If log2(y) = 7, what is the value of y?',
+        options: { '1': '128' },
+        correctOption: 1,
+      },
+      {
+        question: 'If log3(y) = 4, what is the value of y?',
+        options: { '1': '81' },
+        correctOption: 1,
+      },
+      {
+        question: 'If log10(y) = 2, what is the value of y?',
+        options: { '1': '100' },
+        correctOption: 1,
+      },
+    ];
+    expect(findTemplateRepeats(batch).map((t) => t.index)).toEqual([2]);
+  });
+
+  it('still keeps a genuinely different logarithm exercise', () => {
+    const evaluate = questionSkeleton('Evaluate log2(8).');
+    const solveBase = questionSkeleton(
+      'If logx(16) = 4, what is the value of x?',
+    );
+    expect(jaccard(evaluate, solveBase)).toBeLessThan(SAME_TEMPLATE_THRESHOLD);
+  });
+
+  it('does not merge digits that were already separate words', () => {
+    // "5-letter" split before this change and must still split the same way.
+    expect(questionTokenSet('5-letter word')).toEqual(
+      new Set(['5', 'letter', 'word']),
+    );
+  });
+});

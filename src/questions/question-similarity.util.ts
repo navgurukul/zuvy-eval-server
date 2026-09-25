@@ -94,6 +94,17 @@ export function questionTokenSet(text: string): Set<string> {
     // Keep digits and letters; hyphens and slashes become boundaries so
     // "5-letter" splits into "5" and "letter".
     .replace(/[^a-z0-9]+/g, ' ')
+    // Then split letters from digits, so mathematical notation comes apart
+    // the way prose already does.
+    //
+    // Without this "log2" is one token and "log3" is another, and every rule
+    // built on stripping the numbers quietly stops working: a batch of
+    // logarithm questions had nine direct evaluations - log2(8), log3(27),
+    // log10(1000) - that no check could group, because the base was welded to
+    // the word. Splitting turns them all into "log" plus digits the skeleton
+    // then drops.
+    .replace(/([a-z])(\d)/g, '$1 $2')
+    .replace(/(\d)([a-z])/g, '$1 $2')
     .split(' ')
     .filter((w) => w && !STOPWORDS.has(w));
   return new Set(words);

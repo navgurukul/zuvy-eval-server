@@ -192,6 +192,12 @@ export interface McqGenerationSpec {
   difficultyDistribution?: { easy?: number; medium?: number; hard?: number };
   questionCounts?: { easy?: number; medium?: number; hard?: number };
   batchQuestionCounts?: { easy?: number; medium?: number; hard?: number };
+  /**
+   * Distinct kinds of exercise this batch should cover, planned before any
+   * question was written. Separate from subtopics, which name areas of the
+   * subject; these name what the student has to DO.
+   */
+  exerciseTypes?: string[];
 }
 
 export function generateMcqPromptFromSpec(
@@ -247,6 +253,22 @@ export function generateMcqPromptFromSpec(
     sections.push(`- Selected subtopics/concepts: ${subtopics.join(', ')}`);
     sections.push(
       '- Generate questions only from the selected subtopics/concepts.',
+    );
+  }
+  if (spec.exerciseTypes?.length) {
+    sections.push('');
+    sections.push('KINDS OF EXERCISE TO COVER (planned for this batch):');
+    spec.exerciseTypes.forEach((t, i) => {
+      sections.push(`  ${i + 1}. ${t}`);
+    });
+    sections.push(
+      '- Work down this list, spending one question on each before returning to any of them.',
+    );
+    sections.push(
+      '- These are things the student DOES, not areas of the subject. Two questions applying the same one over different numbers count as one of them, not two.',
+    );
+    sections.push(
+      '- If the list is shorter than the number of questions asked for, come back to the earliest kinds rather than inventing near-copies of the last one.',
     );
   }
   if (learningObjectives)
@@ -381,10 +403,10 @@ export function generateMcqPromptFromSpec(
   sections.push('12. Avoid "All of the above" or "None of the above".');
   sections.push('13. Avoid vague or ambiguous wording.');
   sections.push(
-    '13a. VARY THE EXERCISE, NOT JUST THE NUMBERS. Two questions asking the same thing over different data are one question, not two: "the range of 4, 6, 8, 10" and "the range of 2, 4, 6, 8" practise a single skill twice. At most 2 questions in this batch may use the same procedure, and that includes the existing questions listed above.',
+    '13a. VARY THE EXERCISE, NOT THE SURFACE DETAIL. Two questions asking the student to do the same thing are one question, not two, however much the surface changes. Swapping the numbers, the names, the objects, the wording or the symbols does not make a second exercise. At most 2 questions in this batch may ask for the same thing, and that includes the existing questions listed above.',
   );
   sections.push(
-    '13b. Reach for a different task rather than a different dataset: interpreting a result, comparing two datasets, working backwards from an answer to a missing value, choosing which measure suits a situation, or spotting why a stated conclusion is wrong. A batch where every question computes something from a list is a batch testing one skill.',
+    '13b. Reach for a different task, not a different example of the same task. Whatever the subject, these are all separate exercises: recalling something, applying it to a new case, interpreting a given result, comparing two cases, working backwards from an answer, choosing which idea or method fits, and finding the flaw in a stated conclusion. A batch where every question asks the student to carry out one procedure is a batch testing one skill.',
   );
   sections.push(
     '14. If you cannot ensure correctness, return: { "error": "GENERATION_FAILED", "reason": "<short reason>" }',
@@ -562,4 +584,120 @@ export function parseVerifierVerdict(text: string | undefined | null): {
       : null;
 
   return { computedAnswer, correctOption, onTopic, difficulty };
+}
+
+/**
+ * Asks the model to plan what a batch should cover, before it writes anything.
+ *
+ * A topic name on its own is not a plan, and a model given one pads. Asked for
+ * fifty questions on "logarithm" with no subtopics and no description, it
+ * produced nine direct evaluations, seven solve-for-the-argument, six simplify
+ * a sum - the same handful of exercises with the numbers changed. Every answer
+ * was right; the batch still tested six skills fifty times.
+ *
+ * Naming the exercises first fixes what rejecting repeats afterwards cannot.
+ * A filter can only remove a repeat once it has been paid for, and on a narrow
+ * topic removal just empties the batch. A plan gives the model somewhere else
+ * to go.
+ *
+ * Existing questions are shown so the plan reaches for ground not already
+ * covered, which is the same reason they are shown to the generator.
+ *
+ * Asking for fewer types than questions is deliberate. A topic genuinely has a
+ * limited number of distinct exercises, and a model told to invent thirty will
+ * split hairs to reach the number rather than admit the topic is narrow.
+ */
+export function planExerciseTypesPrompt(params: {
+  topic: string;
+  topicDescription?: string;
+  count: number;
+  targetAudience?: string;
+  existingQuestions?: string[];
+}): string {
+  const lines = [`You are planning an assessment on: ${params.topic}`];
+
+  if (params.topicDescription?.trim()) {
+    lines.push(`Topic description: ${params.topicDescription.trim()}`);
+  }
+  if (params.targetAudience?.trim()) {
+    lines.push(`Audience: ${params.targetAudience.trim()}`);
+  }
+
+  if (params.existingQuestions?.length) {
+    lines.push('');
+    lines.push('Questions that already exist for this topic:');
+    params.existingQuestions.slice(0, 40).forEach((q, i) => {
+      lines.push(`${i + 1}. ${String(q).trim()}`);
+    });
+    lines.push('');
+    lines.push(
+      'Those already cover their own exercises. Reach for ones they do not.',
+    );
+  }
+
+  lines.push(
+    '',
+    `Name up to ${params.count} DISTINCT kinds of exercise for this topic.`,
+    '',
+    'A kind of exercise is a different thing the student has to DO, not the same',
+    'thing with the details changed. Changing the numbers, the names, the objects,',
+    'the symbols or the wording gives you the same kind again, not a new one.',
+    '',
+    'These are separate kinds in any subject, and most topics support several:',
+    '  - recalling or recognising something',
+    '  - applying it to a case the student has not seen',
+    '  - interpreting a result or a statement that is given to them',
+    '  - comparing two cases and saying how they differ',
+    '  - working backwards from an answer to what must have produced it',
+    '  - choosing which idea, rule or method fits a situation',
+    '  - finding the flaw in a stated conclusion',
+    '',
+    'Name them in the language of THIS topic rather than repeating that list.',
+    '',
+    `Give FEWER than ${params.count} if the topic honestly has fewer. A short,`,
+    'true list is more useful than a padded one, and naming the same exercise',
+    'twice in different words defeats the purpose of the list.',
+    '',
+    'Respond with ONLY a JSON object of exactly this shape:',
+    '{"exerciseTypes": ["<one short phrase per kind>", "..."]}',
+    '',
+    'No explanation, no markdown, no code fences.',
+  );
+
+  return lines.join('\n');
+}
+
+/**
+ * Reads a coverage plan.
+ *
+ * Returns an empty array rather than throwing: a plan is an improvement on
+ * generating blind, not a precondition for it, so an unreadable one leaves
+ * generation exactly as it was.
+ */
+export function parseExerciseTypes(text: string | undefined | null): string[] {
+  if (!text) return [];
+  const start = text.indexOf('{');
+  const end = text.lastIndexOf('}');
+  if (start === -1 || end <= start) return [];
+
+  let parsed: any;
+  try {
+    parsed = JSON.parse(text.slice(start, end + 1));
+  } catch {
+    return [];
+  }
+
+  const types = parsed?.exerciseTypes;
+  if (!Array.isArray(types)) return [];
+
+  const seen = new Set<string>();
+  const out: string[] = [];
+  types.forEach((t) => {
+    const value = String(t ?? '').trim();
+    const key = value.toLowerCase();
+    if (!value || seen.has(key)) return;
+    seen.add(key);
+    out.push(value);
+  });
+  return out;
 }

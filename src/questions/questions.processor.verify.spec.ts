@@ -1,5 +1,8 @@
 import { QuestionsProcessor, reviewableTopic } from './questions.processor';
-import { parseVerifierVerdict } from 'src/ai-assessment/system_prompts/system_prompts';
+import {
+  parseVerifierVerdict,
+  verifyMcqAnswerPrompt,
+} from 'src/ai-assessment/system_prompts/system_prompts';
 import { LlmService } from 'src/llm/llm.service';
 import { EmbeddingsService } from 'src/llm/embeddings.service';
 import { VectorService } from 'src/vector/vector.service';
@@ -505,5 +508,69 @@ describe('QuestionsProcessor.findBankDuplicates', () => {
     const { processor, embedMany } = buildProcessor();
     await expect(checkBank(processor, [])).resolves.toEqual(new Map());
     expect(embedMany).not.toHaveBeenCalled();
+  });
+});
+
+describe('verifier prompt ordering', () => {
+  /**
+   * The verifier was answering constrained-counting questions wrongly and
+   * dropping sound questions on those verdicts. Three examples from one
+   * combination batch, with the arithmetic worked out by hand:
+   *
+   *   9 members, committee of 4, two people not both on it
+   *     C(9,4) - C(7,2) = 126 - 21 = 105, verifier answered 84
+   *   12 books, choose 5, one particular book required
+   *     C(11,4) = 330, verifier answered 792, which is C(12,5): the
+   *     constraint was ignored entirely
+   *   8 engineers + 5 designers, team of 6, at least 4 engineers
+   *     1008, verifier answered 924
+   *
+   * The same fix that stopped the GENERATOR keying answers its own arithmetic
+   * did not support: make it write the working before it commits to a number.
+   * A model that answers first has not done the reasoning it is reporting.
+   */
+  it('asks for working before the answer, not after', () => {
+    const prompt = verifyMcqAnswerPrompt({
+      question: 'wug lorp blint',
+      options: { '1': 'a', '2': 'b', '3': 'c', '4': 'd' },
+    });
+
+    const working = prompt.indexOf('"working"');
+    const answer = prompt.indexOf('"computedAnswer"');
+    const option = prompt.indexOf('"correctOption"');
+
+    expect(working).toBeGreaterThan(-1);
+    expect(working).toBeLessThan(answer);
+    expect(answer).toBeLessThan(option);
+  });
+
+  it('tells the verifier to check it used every condition', () => {
+    const prompt = verifyMcqAnswerPrompt({
+      question: 'wug lorp blint',
+      options: { '1': 'a', '2': 'b', '3': 'c', '4': 'd' },
+    });
+    // The prompt is assembled line by line, so instructions wrap; match the
+    // sentence rather than a particular line break.
+    expect(prompt.replace(/\s+/g, ' ')).toMatch(
+      /used every condition it states/i,
+    );
+  });
+
+  it('keeps asking for working when a topic is supplied', () => {
+    const prompt = verifyMcqAnswerPrompt({
+      question: 'wug lorp blint',
+      options: { '1': 'a', '2': 'b', '3': 'c', '4': 'd' },
+      topic: { name: 'Combination' },
+    });
+    expect(prompt.indexOf('"working"')).toBeLessThan(
+      prompt.indexOf('"computedAnswer"'),
+    );
+  });
+
+  it('still reads a verdict that carries the extra working field', () => {
+    const verdict = parseVerifierVerdict(
+      '{"working":"C(9,4)=126, minus C(7,2)=21","computedAnswer":"105","correctOption":2}',
+    );
+    expect(verdict).toMatchObject({ computedAnswer: '105', correctOption: 2 });
   });
 });

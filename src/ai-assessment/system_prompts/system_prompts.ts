@@ -403,10 +403,10 @@ export function generateMcqPromptFromSpec(
   sections.push('12. Avoid "All of the above" or "None of the above".');
   sections.push('13. Avoid vague or ambiguous wording.');
   sections.push(
-    '13a. VARY THE EXERCISE, NOT JUST THE NUMBERS. Two questions asking the same thing over different data are one question, not two: "the range of 4, 6, 8, 10" and "the range of 2, 4, 6, 8" practise a single skill twice. At most 2 questions in this batch may use the same procedure, and that includes the existing questions listed above.',
+    '13a. VARY THE EXERCISE, NOT THE SURFACE DETAIL. Two questions asking the student to do the same thing are one question, not two, however much the surface changes. Swapping the numbers, the names, the objects, the wording or the symbols does not make a second exercise. At most 2 questions in this batch may ask for the same thing, and that includes the existing questions listed above.',
   );
   sections.push(
-    '13b. Reach for a different task rather than a different dataset: interpreting a result, comparing two datasets, working backwards from an answer to a missing value, choosing which measure suits a situation, or spotting why a stated conclusion is wrong. A batch where every question computes something from a list is a batch testing one skill.',
+    '13b. Reach for a different task, not a different example of the same task. Whatever the subject, these are all separate exercises: recalling something, applying it to a new case, interpreting a given result, comparing two cases, working backwards from an answer, choosing which idea or method fits, and finding the flaw in a stated conclusion. A batch where every question asks the student to carry out one procedure is a batch testing one skill.',
   );
   sections.push(
     '14. If you cannot ensure correctness, return: { "error": "GENERATION_FAILED", "reason": "<short reason>" }',
@@ -639,13 +639,20 @@ export function planExerciseTypesPrompt(params: {
     '',
     `Name up to ${params.count} DISTINCT kinds of exercise for this topic.`,
     '',
-    'A kind of exercise is a different thing the student has to do, not the same',
-    'thing over different numbers. "Evaluate a logarithm" and "solve for the base"',
-    'are two kinds. "Evaluate log2(8)" and "evaluate log3(27)" are one kind twice.',
+    'A kind of exercise is a different thing the student has to DO, not the same',
+    'thing with the details changed. Changing the numbers, the names, the objects,',
+    'the symbols or the wording gives you the same kind again, not a new one.',
     '',
-    'Reach beyond computing a value: reading a result, comparing two cases,',
-    'working backwards from an answer, choosing which method applies, and',
-    'spotting why a stated conclusion is wrong are all kinds of exercise.',
+    'These are separate kinds in any subject, and most topics support several:',
+    '  - recalling or recognising something',
+    '  - applying it to a case the student has not seen',
+    '  - interpreting a result or a statement that is given to them',
+    '  - comparing two cases and saying how they differ',
+    '  - working backwards from an answer to what must have produced it',
+    '  - choosing which idea, rule or method fits a situation',
+    '  - finding the flaw in a stated conclusion',
+    '',
+    'Name them in the language of THIS topic rather than repeating that list.',
     '',
     `Give FEWER than ${params.count} if the topic honestly has fewer. A short,`,
     'true list is more useful than a padded one, and naming the same exercise',

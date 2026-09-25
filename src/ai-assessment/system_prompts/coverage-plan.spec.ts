@@ -21,7 +21,38 @@ describe('planExerciseTypesPrompt', () => {
   it('asks for kinds of exercise, not areas of the subject', () => {
     const prompt = planExerciseTypesPrompt(base).replace(/\s+/g, ' ');
     expect(prompt).toMatch(/DISTINCT kinds of exercise/i);
-    expect(prompt).toMatch(/not the same thing over different numbers/i);
+    expect(prompt).toMatch(/thing the student has to DO/i);
+  });
+
+  it('names every disguise a repeat has actually used', () => {
+    // Each of these defeated a check that had been added for the one before
+    // it: wording, then numbers, then nouns, then notation.
+    const prompt = planExerciseTypesPrompt(base).replace(/\s+/g, ' ');
+    expect(prompt).toMatch(
+      /Changing the numbers, the names, the objects, the symbols or the wording/i,
+    );
+  });
+
+  it('carries no example from any particular subject', () => {
+    // A worked example in one subject steers the plan toward that subject.
+    // Asked about arrays or general knowledge, a model shown a logarithm
+    // example reaches for calculation.
+    const prompt = planExerciseTypesPrompt({ topic: 'Arrays', count: 8 });
+    expect(prompt).not.toMatch(
+      /logarithm|log\d|permutation|combination|mean|median|equation/i,
+    );
+  });
+
+  it('offers kinds of exercise that hold outside mathematics', () => {
+    const prompt = planExerciseTypesPrompt({
+      topic: 'General knowledge',
+      count: 8,
+    }).replace(/\s+/g, ' ');
+
+    expect(prompt).toMatch(/recalling or recognising/i);
+    expect(prompt).toMatch(/finding the flaw in a stated conclusion/i);
+    // And asks for them in the topic's own words, not echoed back.
+    expect(prompt).toMatch(/in the language of THIS topic/i);
   });
 
   it('allows a short list when the topic is genuinely narrow', () => {
@@ -111,5 +142,38 @@ describe('generateMcqPromptFromSpec with a plan', () => {
   it('leaves the prompt untouched when there is no plan', () => {
     const prompt = generateMcqPromptFromSpec({ topic: 'Logarithm', count: 3 });
     expect(prompt).not.toContain('KINDS OF EXERCISE TO COVER');
+  });
+});
+
+describe('the generation prompt is subject-neutral too', () => {
+  /**
+   * A prompt that teaches with an example from one subject steers every other
+   * subject toward it. This one previously used "the range of 4, 6, 8, 10",
+   * which is fine advice for statistics and no help at all for arrays, loops
+   * or general knowledge.
+   */
+  const promptFor = (topic: string) =>
+    generateMcqPromptFromSpec({ topic, count: 10 }).replace(/\s+/g, ' ');
+
+  it('names no particular subject when asking for variety', () => {
+    ['Arrays', 'General knowledge', 'Loops', 'Time and distance'].forEach(
+      (topic) => {
+        expect(promptFor(topic)).not.toMatch(
+          /the range of \d|logarithm|permutation|dataset of|median/i,
+        );
+      },
+    );
+  });
+
+  it('describes repetition by what stays the same, not by an example', () => {
+    expect(promptFor('Arrays')).toMatch(
+      /Swapping the numbers, the names, the objects, the wording or the symbols/i,
+    );
+  });
+
+  it('lists tasks that exist in any subject', () => {
+    const prompt = promptFor('General knowledge');
+    expect(prompt).toMatch(/recalling something/i);
+    expect(prompt).toMatch(/finding the flaw in a stated conclusion/i);
   });
 });

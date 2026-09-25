@@ -159,6 +159,42 @@ function subtractDifficultyCounts(
 }
 
 /**
+ * Takes as much of a generated batch as was actually asked for.
+ *
+ * Models miscount. Asked for ten they return eleven, or nine, or ten with the
+ * difficulty mix a little off. None of that is worth failing a job over now
+ * that the caller regenerates shortfalls: an extra question is dropped, a
+ * missing one is requested again next round.
+ *
+ * With difficulty counts, questions are taken per difficulty until each is
+ * satisfied, so the mix survives the trim - taking the first N by position
+ * would let an over-long batch silently reshape it. Without counts, order is
+ * all there is to go on.
+ */
+function selectToCounts(
+  evaluations: Array<Record<string, any>>,
+  need: number,
+  needCounts: DifficultyCounts | null,
+): Array<Record<string, any>> {
+  if (!needCounts) return evaluations.slice(0, need);
+
+  const remaining: DifficultyCounts = { ...needCounts };
+  const picked: Array<Record<string, any>> = [];
+
+  evaluations.forEach((q) => {
+    const difficulty = String(q.difficulty ?? '')
+      .trim()
+      .toLowerCase() as keyof DifficultyCounts;
+    if (DIFFICULTIES.includes(difficulty) && remaining[difficulty] > 0) {
+      remaining[difficulty] -= 1;
+      picked.push(q);
+    }
+  });
+
+  return picked;
+}
+
+/**
  * Whether there is enough topic context to judge a question's relevance by.
  *
  * Topic names in this database are not reliably meaningful: alongside real
@@ -342,6 +378,7 @@ export class QuestionsProcessor extends WorkerHost {
     if (!candidates.length) return rejected;
 
     let unreadable = 0;
+    let difficultyMismatches = 0;
 
     const verifyOne = async ({
       q,
@@ -414,20 +451,20 @@ export class QuestionsProcessor extends WorkerHost {
         return;
       }
 
-      // Difficulty is logged, never enforced. Two models disagree about
-      // easy-versus-medium on plenty of sound questions, so dropping on it
-      // would churn the top-up loop for a label nobody is scored on. This
-      // makes the disagreement rate visible first; enforcing it is a decision
-      // to take once there are numbers behind it.
+      // Difficulty is counted, never enforced, and deliberately not logged per
+      // question.
+      //
+      // A model that has just solved a question finds it easy, so it calls
+      // almost everything easy: a real statistics batch had seven of ten
+      // medium and hard questions reported as easy, one warning each. That is
+      // noise, and noise in a log is worse than silence because it buries the
+      // rejection lines that do need acting on. One count per batch says the
+      // same thing and stays readable.
       const labelled = String(q.difficulty ?? '')
         .trim()
         .toLowerCase();
       if (verdict.difficulty && labelled && verdict.difficulty !== labelled) {
-        this.logger.warn(
-          `[generation-difficulty-mismatch] job=${jobId} question=${index + 1} ` +
-            `labelled=${labelled} reviewer=${verdict.difficulty} ` +
-            `question=${JSON.stringify(String(q.question ?? '').slice(0, 120))}`,
-        );
+        difficultyMismatches += 1;
       }
     };
 
@@ -451,6 +488,14 @@ export class QuestionsProcessor extends WorkerHost {
       this.logger.warn(
         `Job ${jobId}: ${unreadable}/${candidates.length} question(s) could not be verified ` +
           `(provider unavailable or unreadable reply); those were kept unverified.`,
+      );
+    }
+
+    if (difficultyMismatches) {
+      this.logger.log(
+        `Job ${jobId}: the reviewer would have labelled ` +
+          `${difficultyMismatches}/${candidates.length} question(s) at a different difficulty. ` +
+          `Recorded only; the generator's label is what is stored.`,
       );
     }
 
@@ -555,7 +600,8 @@ export class QuestionsProcessor extends WorkerHost {
 
       let neighbourVectors: number[][];
       try {
-        neighbourVectors = await this.embeddingsService.embedMany(neighbourTexts);
+        neighbourVectors =
+          await this.embeddingsService.embedMany(neighbourTexts);
       } catch (err) {
         this.logger.warn(
           `Job ${jobId}: could not embed bank neighbours for question ${index + 1}, ` +
@@ -602,11 +648,15 @@ export class QuestionsProcessor extends WorkerHost {
         if (found.has(candidates[j].index)) continue;
         const b = describeQuestionText(String(candidates[j].q.question ?? ''));
 
-        const similarity = isSemanticDuplicate(a, b, vectors[i] ?? [], vectors[j] ?? []);
+        const similarity = isSemanticDuplicate(
+          a,
+          b,
+          vectors[i] ?? [],
+          vectors[j] ?? [],
+        );
         if (similarity === null) continue;
 
-        const reason =
-          `means the same as an earlier question in this batch: "${a.text.slice(0, 80)}"`;
+        const reason = `means the same as an earlier question in this batch: "${a.text.slice(0, 80)}"`;
         found.set(candidates[j].index, reason);
         this.logger.warn(
           `[generation-rejected] job=${jobId} question=${candidates[j].index + 1} ` +
@@ -738,30 +788,38 @@ export class QuestionsProcessor extends WorkerHost {
     >;
     this.assertWellFormedMcqs(evaluations, job.id);
 
-    if (evaluations.length !== need) {
+    if (!evaluations.length) {
+      // Nothing usable came back at all. Unlike a miscount, there is nothing to
+      // salvage and nothing for the caller to top up, so the job retries.
       throw new Error(
-        `Batch size mismatch for job ${job.id}: expected ${need}, got ${evaluations.length}`,
+        `No questions returned for job ${job.id}; the reply parsed but was empty.`,
       );
     }
 
-    if (needCounts) {
-      const actual = countByDifficulty(evaluations);
-      if (
-        actual.easy !== needCounts.easy ||
-        actual.medium !== needCounts.medium ||
-        actual.hard !== needCounts.hard
-      ) {
-        throw new Error(
-          `Difficulty mismatch for job ${job.id}: expected easy=${needCounts.easy}, ` +
-            `medium=${needCounts.medium}, hard=${needCounts.hard}; got easy=${actual.easy}, ` +
-            `medium=${actual.medium}, hard=${actual.hard}`,
-        );
-      }
+    // A miscount is not a failure any more.
+    //
+    // This used to throw, which cost the whole job: a batch of ten coming back
+    // as eleven burned a BullMQ attempt and an exponential backoff, and a real
+    // job spent four attempts and about two minutes on a single extra
+    // question. The top-up loop that now wraps this round makes that pointless
+    // - too few is exactly what it exists to fix, and too many only needs
+    // trimming.
+    //
+    // Selection is by difficulty rather than by position, so trimming an
+    // over-long batch cannot quietly change the easy/medium/hard mix that was
+    // asked for.
+    const selected = selectToCounts(evaluations, need, needCounts);
+
+    if (selected.length !== evaluations.length) {
+      this.logger.log(
+        `Job ${job.id}: model returned ${evaluations.length} question(s) for a request of ` +
+          `${need}; keeping ${selected.length} that fit the requested difficulty mix.`,
+      );
     }
 
     const dropped = new Map<number, string>();
 
-    findDuplicateQuestions(evaluations, avoidTexts).forEach((d) => {
+    findDuplicateQuestions(selected, avoidTexts).forEach((d) => {
       dropped.set(
         d.index,
         `duplicate (similarity ${d.similarity.toFixed(2)}): ${d.reason}`,
@@ -773,7 +831,7 @@ export class QuestionsProcessor extends WorkerHost {
     });
 
     const survivors = () =>
-      evaluations
+      selected
         .map((q, index) => ({ q, index }))
         .filter(({ index }) => !dropped.has(index));
 
@@ -804,12 +862,12 @@ export class QuestionsProcessor extends WorkerHost {
 
     if (dropped.size > 0) {
       this.logger.warn(
-        `Job ${job.id}: dropped ${dropped.size}/${evaluations.length} generated question(s) ` +
+        `Job ${job.id}: dropped ${dropped.size}/${selected.length} generated question(s) ` +
           `for topic "${topicName}". See the [generation-rejected] lines above for each reason.`,
       );
     }
 
-    return evaluations.filter((_, index) => !dropped.has(index));
+    return selected.filter((_, index) => !dropped.has(index));
   }
 
   private async handleGenerateTopicBatch(
@@ -908,11 +966,30 @@ export class QuestionsProcessor extends WorkerHost {
         if (need <= 0) break;
         roundsUsed = round;
 
-        const needCounts = targetCounts
-          ? subtractDifficultyCounts(targetCounts, countByDifficulty(accepted))
-          : null;
+        // On the last allowed round, stop asking for a difficulty mix.
+        //
+        // The count is the promise; the mix is a preference. A model that
+        // keeps returning five medium where four were asked for will do it
+        // again, so holding out for the exact mix spends the last round and
+        // ends with the whole batch failing - which is how a request for 30
+        // questions came back with 20. Better a batch of 30 whose mix is a
+        // little off than 20 with a perfect one.
+        const lastRound = round === MAX_GENERATION_ROUNDS;
+        const needCounts =
+          targetCounts && !lastRound
+            ? subtractDifficultyCounts(
+                targetCounts,
+                countByDifficulty(accepted),
+              )
+            : null;
 
-        if (round > 1) {
+        if (targetCounts && lastRound && need > 0) {
+          this.logger.warn(
+            `Job ${job.id}: final round for topic "${topicName}"; asking for the remaining ` +
+              `${need} question(s) without a difficulty constraint so the batch reaches ` +
+              `${count}. The stored difficulty mix may not match what was requested.`,
+          );
+        } else if (round > 1) {
           this.logger.log(
             `Job ${job.id}: round ${round}, regenerating ${need} question(s) to reach ${count}` +
               (needCounts

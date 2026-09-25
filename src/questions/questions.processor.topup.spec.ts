@@ -39,14 +39,24 @@ describe('QuestionsProcessor top-up loop', () => {
 
   /**
    * @param rejectIf decides which questions the verifier disagrees with.
+   * @param miscount applied to the FIRST generation round only, so a test can
+   *   make the model miscount once and behave afterwards. Applying it to every
+   *   round would make a top-up of two return zero, which is a different case.
    */
-  function buildProcessor(rejectIf: (question: string) => boolean) {
+  function buildProcessor(
+    rejectIf: (question: string) => boolean,
+    miscount = 0,
+  ) {
     counter = 0;
     const generationPrompts: string[] = [];
 
     const generate = (prompt: string) => {
+      const isFirstRound = generationPrompts.length === 0;
       generationPrompts.push(prompt);
-      const n = requestedCount(prompt);
+      const n = Math.max(
+        0,
+        requestedCount(prompt) + (isFirstRound ? miscount : 0),
+      );
       const evaluations = Array.from({ length: n }, () => {
         counter += 1;
         return {
@@ -121,6 +131,29 @@ describe('QuestionsProcessor top-up loop', () => {
     };
   }
 
+  const runJobWithDifficulty = (
+    processor: QuestionsProcessor,
+    count: number,
+    batchQuestionCounts: { easy: number; medium: number; hard: number },
+  ) =>
+    (
+      processor as unknown as {
+        handleGenerateTopicBatch(job: unknown): Promise<void>;
+      }
+    ).handleGenerateTopicBatch({
+      id: 'job-1',
+      attemptsMade: 0,
+      data: {
+        topic: 'Permutation',
+        topicName: 'Permutation',
+        topicDescription: 'desc',
+        count,
+        batchQuestionCounts,
+        orgId: 1,
+        levelId: null,
+      },
+    });
+
   const runJob = (processor: QuestionsProcessor, count: number) =>
     (
       processor as unknown as {
@@ -181,6 +214,48 @@ describe('QuestionsProcessor top-up loop', () => {
     // full count writes nothing at all, rather than leaving a partial batch
     // behind for the retry to duplicate.
     expect(createManyWithOutbox).not.toHaveBeenCalled();
+  });
+
+  it('trims an over-long batch instead of failing the job', async () => {
+    // A model asked for ten returning eleven used to throw, costing a BullMQ
+    // attempt and an exponential backoff for one extra question. A real job
+    // spent four attempts and about two minutes on exactly this.
+    const { processor, createManyWithOutbox, generationPrompts } =
+      buildProcessor(() => false, +1);
+
+    await runJob(processor, 10);
+
+    expect(createManyWithOutbox.mock.calls[0][0]).toHaveLength(10);
+    // One round only: the extra was dropped, not regenerated.
+    expect(generationPrompts).toHaveLength(1);
+  });
+
+  it('tops up a short batch instead of failing the job', async () => {
+    const { processor, createManyWithOutbox, generationPrompts } =
+      buildProcessor(() => false, -2);
+
+    await runJob(processor, 10);
+
+    expect(createManyWithOutbox.mock.calls[0][0]).toHaveLength(10);
+    // Round 1 gave 8, so a second round was needed.
+    expect(generationPrompts.length).toBeGreaterThan(1);
+  });
+
+  it('drops the difficulty constraint on the last round rather than losing the batch', async () => {
+    // A model that returns the wrong difficulty mix tends to keep doing it.
+    // Holding out for an exact mix spent the last round and failed the whole
+    // job, which is how a request for 30 questions came back with 20.
+    const { processor, createManyWithOutbox, generationPrompts } =
+      buildProcessor(() => false, -3);
+
+    await runJobWithDifficulty(processor, 10, { easy: 3, medium: 4, hard: 3 });
+
+    // The count is met, which is the promise.
+    expect(createManyWithOutbox.mock.calls[0][0]).toHaveLength(10);
+
+    // The last round asked for questions without naming a difficulty split.
+    const last = generationPrompts[generationPrompts.length - 1];
+    expect(last).not.toContain('REQUIRED DIFFICULTY COUNTS');
   });
 
   it('carries accepted questions into the next round so a top-up cannot repeat them', async () => {

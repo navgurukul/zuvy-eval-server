@@ -35,6 +35,24 @@ function questionInPrompt(prompt: string): string {
 }
 
 /**
+ * A distinct nonsense word per index, carrying no digits.
+ *
+ * The tokenizer splits letters from digits, so "wug1" and "wug2" reduce to the
+ * same word plus a number the skeleton then drops - which makes every fixture
+ * the same exercise and the variety check empties the batch. Encoding the
+ * counter as letters keeps each question genuinely distinct.
+ */
+function word(n: number): string {
+  let rest = n + 1;
+  let out = '';
+  while (rest > 0) {
+    out = String.fromCharCode(97 + (rest % 26)) + out;
+    rest = Math.floor(rest / 26);
+  }
+  return `zz${out}`;
+}
+
+/**
  * Stand-in for a real embedding: one dimension per distinct word.
  *
  * It must give distinct text distinct directions. A mock returning one vector
@@ -84,7 +102,7 @@ describe('QuestionsProcessor top-up loop', () => {
       const evaluations = Array.from({ length: n }, () => {
         counter += 1;
         return {
-          question: `wug${counter} lorp${counter} blint praxil`,
+          question: `${word(counter)} lorp blint praxil`,
           solution: 'working',
           options: {
             '1': `${counter}a`,
@@ -212,8 +230,8 @@ describe('QuestionsProcessor top-up loop', () => {
   it('regenerates the shortfall so the stored count still matches the request', async () => {
     // The verifier disagrees with the first two questions it ever sees.
     const rejected = new Set([
-      'wug1 lorp1 blint praxil',
-      'wug2 lorp2 blint praxil',
+      `${word(1)} lorp blint praxil`,
+      `${word(2)} lorp blint praxil`,
     ]);
     const { processor, createManyWithOutbox, generationPrompts } =
       buildProcessor((q) => rejected.has(q));
@@ -266,7 +284,7 @@ describe('QuestionsProcessor top-up loop', () => {
     const { processor, createManyWithOutbox } = buildProcessor((q) => {
       // Let the first round through, reject every top-up after it.
       if (rejectAll.has('started')) return true;
-      if (q.includes('wug10 ')) {
+      if (q.includes(word(10))) {
         rejectAll.add('started');
         return true;
       }
@@ -391,7 +409,7 @@ describe('QuestionsProcessor top-up loop', () => {
 
   it('carries accepted questions into the next round so a top-up cannot repeat them', async () => {
     const { processor, generationPrompts } = buildProcessor(
-      (q) => q === 'wug1 lorp1 blint praxil',
+      (q) => q === `${word(1)} lorp blint praxil`,
     );
 
     await runJob(processor, 5);
@@ -399,6 +417,6 @@ describe('QuestionsProcessor top-up loop', () => {
     expect(generationPrompts).toHaveLength(2);
     // Question 2 was accepted in round 1, so round 2 must be told not to
     // restate it.
-    expect(generationPrompts[1]).toContain('wug2 lorp2 blint praxil');
+    expect(generationPrompts[1]).toContain(`${word(2)} lorp blint praxil`);
   });
 });

@@ -320,6 +320,75 @@ describe('QuestionsProcessor top-up loop', () => {
     expect(last).not.toContain('REQUIRED DIFFICULTY COUNTS');
   });
 
+  it('relaxes the variety check on the last round so the count is still met', async () => {
+    // Every question shares one skeleton once the numbers are stripped, so
+    // the variety cap would hold the batch short forever. A narrow topic
+    // genuinely has few exercises, and the count is the promise; variety is a
+    // preference that gives way on the final round.
+    counter = 0;
+    const generationPrompts: string[] = [];
+    const createManyWithOutbox = jest.fn((rows: Row[]) =>
+      Promise.resolve(rows.map((r, i) => ({ ...r, id: i + 1 }))),
+    );
+
+    const generate = (prompt: string) => {
+      generationPrompts.push(prompt);
+      const evaluations = Array.from({ length: requestedCount(prompt) }, () => {
+        counter += 1;
+        // Same wording every time: one template, numbers apart.
+        return {
+          question: `what is the range of ${counter}, ${counter + 1}, ${counter + 2}`,
+          solution: 'working',
+          options: { '1': 'a', '2': 'b', '3': 'c', '4': 'd' },
+          correctOption: 1,
+          difficulty: 'easy',
+          language: 'en',
+          level: 'C',
+        };
+      });
+      return Promise.resolve({ text: JSON.stringify({ evaluations }) });
+    };
+
+    const processor = new QuestionsProcessor(
+      {
+        generateCompletion: jest.fn(generate),
+        generateCompletionPreferring: jest.fn((_p: string, prompt: string) =>
+          isVerifierPrompt(prompt)
+            ? Promise.resolve({
+                text: JSON.stringify({ computedAnswer: 'x', correctOption: 1 }),
+              })
+            : generate(prompt),
+        ),
+      } as unknown as LlmService,
+      {
+        resolveCanonicalTopic: () =>
+          Promise.resolve({
+            topicName: 'Statistics',
+            topicDescription: 'desc',
+          }),
+        getRecentQuestionTextsByTopic: () => Promise.resolve([]),
+        getQuestionTextsByIds: () => Promise.resolve([]),
+        createManyWithOutbox,
+      } as unknown as QuestionsService,
+      {
+        embed: () => Promise.resolve(fakeEmbedding('query')),
+        embedMany: (texts: string[]) =>
+          Promise.resolve(texts.map(fakeEmbedding)),
+      } as unknown as EmbeddingsService,
+      { search: () => Promise.resolve([]) } as unknown as VectorService,
+    );
+    (processor as unknown as { logger: Record<string, jest.Mock> }).logger = {
+      warn: jest.fn(),
+      log: jest.fn(),
+      error: jest.fn(),
+      debug: jest.fn(),
+    };
+
+    await runJob(processor, 10);
+
+    expect(createManyWithOutbox.mock.calls[0][0]).toHaveLength(10);
+  });
+
   it('carries accepted questions into the next round so a top-up cannot repeat them', async () => {
     const { processor, generationPrompts } = buildProcessor(
       (q) => q === 'wug1 lorp1 blint praxil',

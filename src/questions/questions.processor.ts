@@ -763,6 +763,15 @@ export class QuestionsProcessor extends WorkerHost {
     },
     need: number,
     needCounts: DifficultyCounts | null,
+    /**
+     * Last chance to reach the count, so preferences give way to it.
+     *
+     * Variety and the difficulty mix are both things worth having and neither
+     * is worth returning a short batch for. Holding out for them on the final
+     * round spends it and ends with fewer questions than asked for, which is
+     * the outcome both were meant to improve on.
+     */
+    relaxPreferences: boolean,
     avoidTexts: string[],
   ): Promise<Array<Record<string, any>>> {
     const { topicName, topicDescription, orgId } = ctx;
@@ -852,7 +861,16 @@ export class QuestionsProcessor extends WorkerHost {
     // contain no repeats and still practise one exercise seven times with the
     // numbers changed; the numeric guard that keeps "arrange 3 books" apart
     // from "arrange 5 books" is exactly what lets that through.
-    findTemplateRepeats(selected, avoidTexts).forEach((t) => {
+    //
+    // Skipped on the final round. A narrow topic has genuinely few exercises,
+    // so enforcing variety to the end guarantees a short batch on exactly the
+    // topics where the count is hardest to reach. Every earlier round pushes
+    // for variety; the last one takes what it can get.
+    const templateRepeats = relaxPreferences
+      ? []
+      : findTemplateRepeats(selected, avoidTexts);
+
+    templateRepeats.forEach((t) => {
       dropped.set(t.index, `template repeat: ${t.reason}`);
       this.logger.warn(
         `[generation-rejected] job=${job.id} question=${t.index + 1} reason=template-repeat ` +
@@ -1013,11 +1031,12 @@ export class QuestionsProcessor extends WorkerHost {
               )
             : null;
 
-        if (targetCounts && lastRound && need > 0) {
+        if (lastRound && need > 0) {
           this.logger.warn(
             `Job ${job.id}: final round for topic "${topicName}"; asking for the remaining ` +
-              `${need} question(s) without a difficulty constraint so the batch reaches ` +
-              `${count}. The stored difficulty mix may not match what was requested.`,
+              `${need} question(s) with the difficulty mix and variety checks relaxed so the ` +
+              `batch reaches ${count}. Some may repeat an exercise already covered, or sit at ` +
+              `a different difficulty than requested.`,
           );
         } else if (round > 1) {
           this.logger.log(
@@ -1033,6 +1052,7 @@ export class QuestionsProcessor extends WorkerHost {
           { topicName, topicDescription, orgId },
           need,
           needCounts,
+          lastRound,
           avoidTexts,
         );
 

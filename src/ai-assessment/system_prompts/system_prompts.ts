@@ -468,8 +468,16 @@ export function verifyMcqAnswerPrompt(params: {
     '',
     'Respond with ONLY a JSON object of exactly this shape, keys in this order:',
     params.topic
-      ? '{"computedAnswer": "<your answer, stated plainly>", "correctOption": <1, 2, 3, 4 or null>, "onTopic": <true or false>, "difficulty": "<easy, medium or hard>"}'
-      : '{"computedAnswer": "<your answer, stated plainly>", "correctOption": <1, 2, 3, 4 or null>}',
+      ? '{"working": "<your step by step working>", "computedAnswer": "<your answer, stated plainly>", "correctOption": <1, 2, 3, 4 or null>, "onTopic": <true or false>, "difficulty": "<easy, medium or hard>"}'
+      : '{"working": "<your step by step working>", "computedAnswer": "<your answer, stated plainly>", "correctOption": <1, 2, 3, 4 or null>}',
+    '',
+    'Write "working" FIRST and in full. Show every step, name each constraint in the',
+    'question and say how you applied it, and restate the question in your own words',
+    'before computing. Do not summarise the working or skip to the answer: an answer',
+    'produced before the working is reasoning you have not done, and on constrained',
+    'counting questions it is usually wrong.',
+    'Re-read the question once the working is complete and confirm you used every',
+    'condition it states. Missing one is the most common way to get these wrong.',
     '',
     'Set "correctOption" to the number of the option matching your computed answer.',
     'Match on value and meaning, not on exact wording, units formatting or rounding style.',

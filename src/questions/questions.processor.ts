@@ -68,7 +68,8 @@ const VERIFY_CONCURRENCY = 5;
  * has to be set deliberately.
  */
 const VERIFY_GENERATED_ANSWERS =
-  String(process.env.VERIFY_GENERATED_ANSWERS ?? 'true').toLowerCase() !== 'false';
+  String(process.env.VERIFY_GENERATED_ANSWERS ?? 'true').toLowerCase() !==
+  'false';
 
 /**
  * Which provider solves the verification question first.
@@ -122,7 +123,9 @@ function normalizeDifficultyCounts(
   return counts.easy + counts.medium + counts.hard > 0 ? counts : null;
 }
 
-function countByDifficulty(items: Array<Record<string, any>>): DifficultyCounts {
+function countByDifficulty(
+  items: Array<Record<string, any>>,
+): DifficultyCounts {
   const counts: DifficultyCounts = { easy: 0, medium: 0, hard: 0 };
   items.forEach((q) => {
     const difficulty = String(q.difficulty ?? '')
@@ -167,7 +170,10 @@ export class QuestionsProcessor extends WorkerHost {
     super();
   }
 
-  override async process(job: Job<GenerateTopicBatchJobPayload, void, string>, token?: string): Promise<void> {
+  override async process(
+    job: Job<GenerateTopicBatchJobPayload, void, string>,
+    token?: string,
+  ): Promise<void> {
     if (job.name === JOB_NAME) {
       return this.handleGenerateTopicBatch(job);
     }
@@ -203,8 +209,13 @@ export class QuestionsProcessor extends WorkerHost {
       }
 
       const keys = Object.keys(options);
-      if (keys.length !== OPTION_KEYS.length || !OPTION_KEYS.every((k) => k in options)) {
-        problems.push(`${where}: options keys are [${keys.join(', ')}], expected 1-4`);
+      if (
+        keys.length !== OPTION_KEYS.length ||
+        !OPTION_KEYS.every((k) => k in options)
+      ) {
+        problems.push(
+          `${where}: options keys are [${keys.join(', ')}], expected 1-4`,
+        );
         return;
       }
 
@@ -220,8 +231,13 @@ export class QuestionsProcessor extends WorkerHost {
       }
 
       const correct = Number(q.correctOption);
-      if (!Number.isInteger(correct) || !OPTION_KEYS.includes(String(correct))) {
-        problems.push(`${where}: correctOption is ${q.correctOption}, expected 1-4`);
+      if (
+        !Number.isInteger(correct) ||
+        !OPTION_KEYS.includes(String(correct))
+      ) {
+        problems.push(
+          `${where}: correctOption is ${q.correctOption}, expected 1-4`,
+        );
       }
 
       // Stylistic only: the prompt forbids these, but one slipping through
@@ -286,7 +302,13 @@ export class QuestionsProcessor extends WorkerHost {
 
     let unreadable = 0;
 
-    const verifyOne = async ({ q, index }: { q: Record<string, any>; index: number }) => {
+    const verifyOne = async ({
+      q,
+      index,
+    }: {
+      q: Record<string, any>;
+      index: number;
+    }) => {
       const prompt = verifyMcqAnswerPrompt({
         question: String(q.question ?? ''),
         options: q.options as Record<string, string>,
@@ -340,13 +362,16 @@ export class QuestionsProcessor extends WorkerHost {
     // larger batch size later cannot turn into a burst of parallel calls.
     let next = 0;
     await Promise.all(
-      Array.from({ length: Math.min(VERIFY_CONCURRENCY, candidates.length) }, async () => {
-        while (true) {
-          const cursor = next++;
-          if (cursor >= candidates.length) return;
-          await verifyOne(candidates[cursor]);
-        }
-      }),
+      Array.from(
+        { length: Math.min(VERIFY_CONCURRENCY, candidates.length) },
+        async () => {
+          while (true) {
+            const cursor = next++;
+            if (cursor >= candidates.length) return;
+            await verifyOne(candidates[cursor]);
+          }
+        },
+      ),
     );
 
     if (unreadable) {
@@ -423,7 +448,10 @@ export class QuestionsProcessor extends WorkerHost {
         if (!ids.length) return;
 
         // The vector store carries no orgId, so tenant scoping happens here.
-        neighbourTexts = await this.questionsService.getQuestionTextsByIds(ids, orgId);
+        neighbourTexts = await this.questionsService.getQuestionTextsByIds(
+          ids,
+          orgId,
+        );
       } catch (err) {
         this.logger.warn(
           `Job ${jobId}: bank duplicate lookup failed for question ${index + 1}: ` +
@@ -447,13 +475,16 @@ export class QuestionsProcessor extends WorkerHost {
 
     let next = 0;
     await Promise.all(
-      Array.from({ length: Math.min(VERIFY_CONCURRENCY, candidates.length) }, async () => {
-        while (true) {
-          const cursor = next++;
-          if (cursor >= candidates.length) return;
-          await checkOne(cursor);
-        }
-      }),
+      Array.from(
+        { length: Math.min(VERIFY_CONCURRENCY, candidates.length) },
+        async () => {
+          while (true) {
+            const cursor = next++;
+            if (cursor >= candidates.length) return;
+            await checkOne(cursor);
+          }
+        },
+      ),
     );
 
     return found;
@@ -527,7 +558,11 @@ export class QuestionsProcessor extends WorkerHost {
    */
   private async generateFilteredRound(
     job: Job<GenerateTopicBatchJobPayload, void, string>,
-    ctx: { topicName: string; topicDescription: string; orgId: number | undefined },
+    ctx: {
+      topicName: string;
+      topicDescription: string;
+      orgId: number | undefined;
+    },
     need: number,
     needCounts: DifficultyCounts | null,
     avoidTexts: string[],
@@ -554,7 +589,9 @@ export class QuestionsProcessor extends WorkerHost {
     }
 
     const parsed = await parseLlmMcq(aiResponse.text);
-    const evaluations = (parsed.evaluations ?? []) as Array<Record<string, any>>;
+    const evaluations = (parsed.evaluations ?? []) as Array<
+      Record<string, any>
+    >;
     this.assertWellFormedMcqs(evaluations, job.id);
 
     if (evaluations.length !== need) {
@@ -581,7 +618,10 @@ export class QuestionsProcessor extends WorkerHost {
     const dropped = new Map<number, string>();
 
     findDuplicateQuestions(evaluations, avoidTexts).forEach((d) => {
-      dropped.set(d.index, `duplicate (similarity ${d.similarity.toFixed(2)}): ${d.reason}`);
+      dropped.set(
+        d.index,
+        `duplicate (similarity ${d.similarity.toFixed(2)}): ${d.reason}`,
+      );
       this.logger.warn(
         `[generation-rejected] job=${job.id} question=${d.index + 1} reason=duplicate ` +
           `similarity=${d.similarity.toFixed(2)} detail=${JSON.stringify(d.reason)}`,
@@ -596,7 +636,11 @@ export class QuestionsProcessor extends WorkerHost {
     // Against the whole bank, not just the questions shown to the model.
     // Runs before verification so a repeat is dropped without paying for a
     // second opinion on it.
-    const bankDuplicates = await this.findBankDuplicates(survivors(), orgId, job.id);
+    const bankDuplicates = await this.findBankDuplicates(
+      survivors(),
+      orgId,
+      job.id,
+    );
     bankDuplicates.forEach((reason, index) => {
       dropped.set(index, `duplicate in bank: ${reason}`);
     });
@@ -624,188 +668,201 @@ export class QuestionsProcessor extends WorkerHost {
     job: Job<GenerateTopicBatchJobPayload, void, string>,
   ) {
     try {
-    const { topic, count, levelId, orgId } = job.data;
-    const attempt = (job.attemptsMade ?? 0) + 1;
+      const { topic, count, levelId, orgId } = job.data;
+      const attempt = (job.attemptsMade ?? 0) + 1;
 
-    const resolved = await this.questionsService.resolveCanonicalTopic(
-      orgId,
-      job.data.topicName ?? topic,
-    );
-    const topicName = resolved.topicName || (job.data.topicName ?? topic);
-    const topicDescription =
-      job.data.topicDescription?.trim() || resolved.topicDescription || '';
-
-    if (attempt > 1) {
-      this.logger.log(
-        `Retry attempt ${attempt} for job ${job.id} (topic=${topicName}); previous attempts failed (e.g. rate limit).`,
+      const resolved = await this.questionsService.resolveCanonicalTopic(
+        orgId,
+        job.data.topicName ?? topic,
       );
-    }
+      const topicName = resolved.topicName || (job.data.topicName ?? topic);
+      const topicDescription =
+        job.data.topicDescription?.trim() || resolved.topicDescription || '';
 
-    this.logger.log(
-      `Processing job ${job.id}: appending ${count} questions to topic=${topicName}, orgId=${orgId ?? 'none'}, levelId=${levelId ?? 'null'}`,
-    );
-
-    // The two lookups answer different questions and both are needed.
-    //
-    // Semantic neighbours cross the topic-name fragmentation in this database
-    // ("Time and Distance" vs "Time And Distance", four spellings of Function
-    // and Scopes) but cannot see rows written in the last few seconds, because
-    // indexing runs off an outbox poller.
-    //
-    // The recency list is exact-match and misses variant spellings, but it is
-    // the only path that sees the sibling batches of the same request. A
-    // 60-question generation is six jobs of ten, so without it job six repeats
-    // what job one already wrote - which is exactly how three restatements of
-    // one shelf-arrangement question reached a student.
-    const [similar, recent] = await Promise.all([
-      this.findSimilarQuestionTexts(job, topicName, topicDescription, orgId),
-      this.questionsService
-        .getRecentQuestionTextsByTopic(topicName, orgId, RECENT_TOPIC_QUESTIONS)
-        .catch((err) => {
-          this.logger.warn(
-            `Job ${job.id}: could not load recent questions for topic "${topicName}", ` +
-              `continuing without them: ${err instanceof Error ? err.message : String(err)}`,
-          );
-          return [] as string[];
-        }),
-    ]);
-
-    // Recent first: those are the ones a sibling batch just wrote, so they
-    // survive the truncation below if the combined list is long.
-    const seen = new Set<string>();
-    const existingTexts: string[] = [];
-    for (const text of [...recent, ...(similar ?? [])]) {
-      const key = String(text ?? '').trim().toLowerCase();
-      if (!key || seen.has(key)) continue;
-      seen.add(key);
-      existingTexts.push(text);
-      if (existingTexts.length >= MAX_EXISTING_TEXTS) break;
-    }
-
-    if (existingTexts.length > 0) {
-      this.logger.log(
-        `Job ${job.id}: including ${existingTexts.length} existing questions ` +
-          `(${recent.length} recent, ${similar?.length ?? 0} semantic) ` +
-          `for topic "${topicName}" in prompt to avoid duplicates.`,
-      );
-    }
-
-    // A job stores exactly the count it was asked for. Quality filtering drops
-    // individual questions, so the shortfall is regenerated rather than
-    // delivered short: asking for 60 and storing 57 is not an answer.
-    //
-    // Each round requests only the deficit, and the deficit per difficulty, so
-    // a dropped hard question is replaced by a hard one. Questions accepted so
-    // far are carried into the next round's "do not repeat" list, so a top-up
-    // cannot restate what it is topping up.
-    const targetCounts = normalizeDifficultyCounts(job.data.batchQuestionCounts);
-    const accepted: Array<Record<string, any>> = [];
-    const avoidTexts = [...existingTexts];
-    let roundsUsed = 0;
-
-    for (let round = 1; round <= MAX_GENERATION_ROUNDS; round++) {
-      const need = count - accepted.length;
-      if (need <= 0) break;
-      roundsUsed = round;
-
-      const needCounts = targetCounts
-        ? subtractDifficultyCounts(targetCounts, countByDifficulty(accepted))
-        : null;
-
-      if (round > 1) {
+      if (attempt > 1) {
         this.logger.log(
-          `Job ${job.id}: round ${round}, regenerating ${need} question(s) to reach ${count}` +
-            (needCounts
-              ? ` (easy=${needCounts.easy}, medium=${needCounts.medium}, hard=${needCounts.hard})`
-              : ''),
+          `Retry attempt ${attempt} for job ${job.id} (topic=${topicName}); previous attempts failed (e.g. rate limit).`,
         );
       }
 
-      const roundAccepted = await this.generateFilteredRound(
-        job,
-        { topicName, topicDescription, orgId },
-        need,
-        needCounts,
-        avoidTexts,
-      );
-
-      roundAccepted.forEach((q) => {
-        accepted.push(q);
-        // Front of the list: a question written seconds ago is the one the
-        // next round is most likely to restate, and the list gets truncated.
-        avoidTexts.unshift(String(q.question ?? ''));
-      });
-    }
-
-    if (accepted.length < count) {
-      // Deliberately a failure rather than a short batch. The caller asked for
-      // an exact count, and storing fewer without saying so is the behaviour
-      // this loop exists to remove. The job retries with backoff and a fresh
-      // prompt, and the existing pool is untouched because nothing is written
-      // until the count is met.
-      throw new Error(
-        `Job ${job.id}: produced only ${accepted.length}/${count} usable questions for topic ` +
-          `"${topicName}" after ${roundsUsed} round(s); the rest were dropped as duplicates or ` +
-          `failed answer verification. Job will retry.`,
-      );
-    }
-
-    if (roundsUsed > 1) {
       this.logger.log(
-        `Job ${job.id}: reached the full ${count} question(s) for topic "${topicName}" ` +
-          `in ${roundsUsed} rounds.`,
+        `Processing job ${job.id}: appending ${count} questions to topic=${topicName}, orgId=${orgId ?? 'none'}, levelId=${levelId ?? 'null'}`,
       );
-    }
 
-    const requestedByUserId = job.data.requestedByUserId;
-    const inserted = await this.questionsService.createManyWithOutbox(
-      accepted.map((q) => {
-        const rawLevel = (q as any).level;
-        const normalizedLevel =
-          typeof rawLevel === 'string'
-            ? rawLevel.trim().toUpperCase()
-            : null;
-        const allowedBands = ['A+', 'A', 'B', 'C', 'D', 'E'] as const;
-        const levelBand: (typeof allowedBands)[number] | null =
-          normalizedLevel && (allowedBands as readonly string[]).includes(normalizedLevel)
-            ? (normalizedLevel as (typeof allowedBands)[number])
-            : levelId &&
-                (allowedBands as readonly string[]).includes(String(levelId).toUpperCase())
-              ? (String(levelId).toUpperCase() as (typeof allowedBands)[number])
-              : null;
+      // The two lookups answer different questions and both are needed.
+      //
+      // Semantic neighbours cross the topic-name fragmentation in this database
+      // ("Time and Distance" vs "Time And Distance", four spellings of Function
+      // and Scopes) but cannot see rows written in the last few seconds, because
+      // indexing runs off an outbox poller.
+      //
+      // The recency list is exact-match and misses variant spellings, but it is
+      // the only path that sees the sibling batches of the same request. A
+      // 60-question generation is six jobs of ten, so without it job six repeats
+      // what job one already wrote - which is exactly how three restatements of
+      // one shelf-arrangement question reached a student.
+      const [similar, recent] = await Promise.all([
+        this.findSimilarQuestionTexts(job, topicName, topicDescription, orgId),
+        this.questionsService
+          .getRecentQuestionTextsByTopic(
+            topicName,
+            orgId,
+            RECENT_TOPIC_QUESTIONS,
+          )
+          .catch((err) => {
+            this.logger.warn(
+              `Job ${job.id}: could not load recent questions for topic "${topicName}", ` +
+                `continuing without them: ${err instanceof Error ? err.message : String(err)}`,
+            );
+            return [] as string[];
+          }),
+      ]);
 
-        const { options: shuffledOptions, correctOption: shuffledCorrectOption } =
-          shuffleMcqOptionOrder(
+      // Recent first: those are the ones a sibling batch just wrote, so they
+      // survive the truncation below if the combined list is long.
+      const seen = new Set<string>();
+      const existingTexts: string[] = [];
+      for (const text of [...recent, ...(similar ?? [])]) {
+        const key = String(text ?? '')
+          .trim()
+          .toLowerCase();
+        if (!key || seen.has(key)) continue;
+        seen.add(key);
+        existingTexts.push(text);
+        if (existingTexts.length >= MAX_EXISTING_TEXTS) break;
+      }
+
+      if (existingTexts.length > 0) {
+        this.logger.log(
+          `Job ${job.id}: including ${existingTexts.length} existing questions ` +
+            `(${recent.length} recent, ${similar?.length ?? 0} semantic) ` +
+            `for topic "${topicName}" in prompt to avoid duplicates.`,
+        );
+      }
+
+      // A job stores exactly the count it was asked for. Quality filtering drops
+      // individual questions, so the shortfall is regenerated rather than
+      // delivered short: asking for 60 and storing 57 is not an answer.
+      //
+      // Each round requests only the deficit, and the deficit per difficulty, so
+      // a dropped hard question is replaced by a hard one. Questions accepted so
+      // far are carried into the next round's "do not repeat" list, so a top-up
+      // cannot restate what it is topping up.
+      const targetCounts = normalizeDifficultyCounts(
+        job.data.batchQuestionCounts,
+      );
+      const accepted: Array<Record<string, any>> = [];
+      const avoidTexts = [...existingTexts];
+      let roundsUsed = 0;
+
+      for (let round = 1; round <= MAX_GENERATION_ROUNDS; round++) {
+        const need = count - accepted.length;
+        if (need <= 0) break;
+        roundsUsed = round;
+
+        const needCounts = targetCounts
+          ? subtractDifficultyCounts(targetCounts, countByDifficulty(accepted))
+          : null;
+
+        if (round > 1) {
+          this.logger.log(
+            `Job ${job.id}: round ${round}, regenerating ${need} question(s) to reach ${count}` +
+              (needCounts
+                ? ` (easy=${needCounts.easy}, medium=${needCounts.medium}, hard=${needCounts.hard})`
+                : ''),
+          );
+        }
+
+        const roundAccepted = await this.generateFilteredRound(
+          job,
+          { topicName, topicDescription, orgId },
+          need,
+          needCounts,
+          avoidTexts,
+        );
+
+        roundAccepted.forEach((q) => {
+          accepted.push(q);
+          // Front of the list: a question written seconds ago is the one the
+          // next round is most likely to restate, and the list gets truncated.
+          avoidTexts.unshift(String(q.question ?? ''));
+        });
+      }
+
+      if (accepted.length < count) {
+        // Deliberately a failure rather than a short batch. The caller asked for
+        // an exact count, and storing fewer without saying so is the behaviour
+        // this loop exists to remove. The job retries with backoff and a fresh
+        // prompt, and the existing pool is untouched because nothing is written
+        // until the count is met.
+        throw new Error(
+          `Job ${job.id}: produced only ${accepted.length}/${count} usable questions for topic ` +
+            `"${topicName}" after ${roundsUsed} round(s); the rest were dropped as duplicates or ` +
+            `failed answer verification. Job will retry.`,
+        );
+      }
+
+      if (roundsUsed > 1) {
+        this.logger.log(
+          `Job ${job.id}: reached the full ${count} question(s) for topic "${topicName}" ` +
+            `in ${roundsUsed} rounds.`,
+        );
+      }
+
+      const requestedByUserId = job.data.requestedByUserId;
+      const inserted = await this.questionsService.createManyWithOutbox(
+        accepted.map((q) => {
+          const rawLevel = (q as any).level;
+          const normalizedLevel =
+            typeof rawLevel === 'string' ? rawLevel.trim().toUpperCase() : null;
+          const allowedBands = ['A+', 'A', 'B', 'C', 'D', 'E'] as const;
+          const levelBand: (typeof allowedBands)[number] | null =
+            normalizedLevel &&
+            (allowedBands as readonly string[]).includes(normalizedLevel)
+              ? (normalizedLevel as (typeof allowedBands)[number])
+              : levelId &&
+                  (allowedBands as readonly string[]).includes(
+                    String(levelId).toUpperCase(),
+                  )
+                ? (String(
+                    levelId,
+                  ).toUpperCase() as (typeof allowedBands)[number])
+                : null;
+
+          const {
+            options: shuffledOptions,
+            correctOption: shuffledCorrectOption,
+          } = shuffleMcqOptionOrder(
             q.options as Record<string, string>,
             Number(q.correctOption),
           );
 
-        return {
-          orgId: orgId ?? undefined,
-          topicName,
-          topicDescription,
-          subtopics: job.data.subtopics,
-          learningObjectives: job.data.learningObjectives,
-          targetAudience: job.data.targetAudience,
-          focusAreas: job.data.focusAreas,
-          bloomsLevel: job.data.bloomsLevel,
-          questionStyle: job.data.questionStyle,
-          difficultyDistribution: job.data.difficultyDistribution,
-          questionCounts: job.data.questionCounts,
-          levelId: levelBand,
-          question: q.question,
-          difficulty: q.difficulty,
-          language: q.language,
-          options: shuffledOptions as any,
-          correctOption: shuffledCorrectOption,
-        };
-      }),
-      requestedByUserId,
-    );
+          return {
+            orgId: orgId ?? undefined,
+            topicName,
+            topicDescription,
+            subtopics: job.data.subtopics,
+            learningObjectives: job.data.learningObjectives,
+            targetAudience: job.data.targetAudience,
+            focusAreas: job.data.focusAreas,
+            bloomsLevel: job.data.bloomsLevel,
+            questionStyle: job.data.questionStyle,
+            difficultyDistribution: job.data.difficultyDistribution,
+            questionCounts: job.data.questionCounts,
+            levelId: levelBand,
+            question: q.question,
+            difficulty: q.difficulty,
+            language: q.language,
+            options: shuffledOptions as any,
+            correctOption: shuffledCorrectOption,
+          };
+        }),
+        requestedByUserId,
+      );
 
-    this.logger.log(
-      `Job ${job.id} completed: appended ${inserted.length} questions for topic ${topicName} (existing pool preserved)`,
-    );
+      this.logger.log(
+        `Job ${job.id} completed: appended ${inserted.length} questions for topic ${topicName} (existing pool preserved)`,
+      );
     } catch (error) {
       this.logger.error('Error processing job:', error);
       throw error;

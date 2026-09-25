@@ -233,45 +233,55 @@ export function generateMcqPromptFromSpec(
 
   const sections: string[] = [];
 
-  sections.push(`You are an expert assessment author and subject-matter expert. Generate EXACTLY ${count} high-quality multiple-choice questions (MCQs) in strict JSON format.`);
+  sections.push(
+    `You are an expert assessment author and subject-matter expert. Generate EXACTLY ${count} high-quality multiple-choice questions (MCQs) in strict JSON format.`,
+  );
   sections.push('');
-  
+
   sections.push('CONTEXT:');
   if (topicName) sections.push(`- Topic name: ${topicName}`);
-  if (topicDescription) sections.push(`- Topic description: ${topicDescription}`);
+  if (topicDescription)
+    sections.push(`- Topic description: ${topicDescription}`);
   sections.push(`- Primary topic for this batch: ${topic}`);
   if (subtopics?.length) {
     sections.push(`- Selected subtopics/concepts: ${subtopics.join(', ')}`);
-    sections.push('- Generate questions only from the selected subtopics/concepts.');
+    sections.push(
+      '- Generate questions only from the selected subtopics/concepts.',
+    );
   }
-  if (learningObjectives) sections.push(`- Learning objectives: ${learningObjectives}`);
+  if (learningObjectives)
+    sections.push(`- Learning objectives: ${learningObjectives}`);
   if (targetAudience) sections.push(`- Target audience: ${targetAudience}`);
   if (focusAreas) sections.push(`- Focus areas: ${focusAreas}`);
   if (bloomsLevel) sections.push(`- Bloom's taxonomy level: ${bloomsLevel}`);
   if (questionStyle) sections.push(`- Question style: ${questionStyle}`);
   if (hasRequiredDifficultyCounts) {
     sections.push(
-      `- REQUIRED DIFFICULTY COUNTS (MANDATORY): Generate exactly ${requiredEasyCount} easy, ${requiredMediumCount} medium, and ${requiredHardCount} hard questions. Missing keys mean 0. Do not exceed or fall short for any level.`
+      `- REQUIRED DIFFICULTY COUNTS (MANDATORY): Generate exactly ${requiredEasyCount} easy, ${requiredMediumCount} medium, and ${requiredHardCount} hard questions. Missing keys mean 0. Do not exceed or fall short for any level.`,
     );
     sections.push(
-      `- HARD CONSTRAINT: The difficulty counts must sum to ${count} exactly. If they do not sum to ${count}, return: { "error": "GENERATION_FAILED", "reason": "DIFFICULTY_COUNT_MISMATCH" }.`
+      `- HARD CONSTRAINT: The difficulty counts must sum to ${count} exactly. If they do not sum to ${count}, return: { "error": "GENERATION_FAILED", "reason": "DIFFICULTY_COUNT_MISMATCH" }.`,
     );
   }
-  
+
   if (existingQuestionTexts && existingQuestionTexts.length > 0) {
     sections.push('');
-    sections.push('EXISTING QUESTIONS IN THIS DOMAIN (do NOT repeat or closely rephrase these):');
+    sections.push(
+      'EXISTING QUESTIONS IN THIS DOMAIN (do NOT repeat or closely rephrase these):',
+    );
     existingQuestionTexts.forEach((q, i) => {
       sections.push(`${i + 1}. ${q.trim()}`);
     });
   }
-  
+
   sections.push('');
   sections.push('CRITICAL GENERATION RULES (MANDATORY):');
-  sections.push('For EACH question, follow this order and WRITE each step down:');
+  sections.push(
+    'For EACH question, follow this order and WRITE each step down:',
+  );
   sections.push('1. Construct a clear, unambiguous question.');
   sections.push(
-    '2. Solve it step by step and write the working out in the "solution" field. Do this BEFORE writing any option. Do not solve it silently: the written working is what keeps the answer honest.'
+    '2. Solve it step by step and write the working out in the "solution" field. Do this BEFORE writing any option. Do not solve it silently: the written working is what keeps the answer honest.',
   );
   sections.push('3. State the single correct answer at the end of "solution".');
   sections.push('4. Generate exactly 4 options:');
@@ -282,65 +292,109 @@ export function generateMcqPromptFromSpec(
   sections.push('   - Only ONE option is correct (no ambiguity)');
   sections.push('   - No duplicate or semantically identical options');
   sections.push('   - No partially correct options');
-  sections.push('   - The question has a definite, verifiable answer (not opinion-based)');
-  sections.push('6. If ANY validation fails, DISCARD and regenerate the question.');
-  sections.push('7. Do NOT guess. Only include questions where correctness is certain.');
-  sections.push('8. NUMERICAL QUESTION PROTOCOL (MANDATORY when arithmetic/calculation is involved):');
-  sections.push('   - Solve to a final numeric value internally before writing options.');
-  sections.push('   - Use consistent units and conversions; do not mix units across options.');
-  sections.push('   - Decide and apply a single rounding rule (or no rounding) consistently.');
-  sections.push('   - Ensure exactly one option matches the computed final value under that rule.');
-  sections.push('   - Ensure the other three options are definitively incorrect for the same units/rounding rule.');
-  sections.push('   - If no option matches exactly, regenerate the entire question and options.');
-  
+  sections.push(
+    '   - The question has a definite, verifiable answer (not opinion-based)',
+  );
+  sections.push(
+    '6. If ANY validation fails, DISCARD and regenerate the question.',
+  );
+  sections.push(
+    '7. Do NOT guess. Only include questions where correctness is certain.',
+  );
+  sections.push(
+    '8. NUMERICAL QUESTION PROTOCOL (MANDATORY when arithmetic/calculation is involved):',
+  );
+  sections.push(
+    '   - Solve to a final numeric value internally before writing options.',
+  );
+  sections.push(
+    '   - Use consistent units and conversions; do not mix units across options.',
+  );
+  sections.push(
+    '   - Decide and apply a single rounding rule (or no rounding) consistently.',
+  );
+  sections.push(
+    '   - Ensure exactly one option matches the computed final value under that rule.',
+  );
+  sections.push(
+    '   - Ensure the other three options are definitively incorrect for the same units/rounding rule.',
+  );
+  sections.push(
+    '   - If no option matches exactly, regenerate the entire question and options.',
+  );
+
   sections.push('');
   sections.push('SELF-VALIDATION PASS (MANDATORY):');
-  sections.push('After writing each question, check it against your own written solution:');
-  sections.push('1. Read back the final answer stated at the end of "solution".');
-  sections.push('2. Confirm the option "correctOption" points to expresses exactly that answer.');
-  sections.push('3. Confirm none of the other three options could also be correct.');
-  sections.push('4. If the working and the keyed option disagree, fix the option set or regenerate the question. Never key an option your own solution does not support.');
-  sections.push('5. For numerical questions, recompute by a different method and write that second computation into "solution" too. If the two computations disagree, regenerate the question rather than guessing.');
-  
+  sections.push(
+    'After writing each question, check it against your own written solution:',
+  );
+  sections.push(
+    '1. Read back the final answer stated at the end of "solution".',
+  );
+  sections.push(
+    '2. Confirm the option "correctOption" points to expresses exactly that answer.',
+  );
+  sections.push(
+    '3. Confirm none of the other three options could also be correct.',
+  );
+  sections.push(
+    '4. If the working and the keyed option disagree, fix the option set or regenerate the question. Never key an option your own solution does not support.',
+  );
+  sections.push(
+    '5. For numerical questions, recompute by a different method and write that second computation into "solution" too. If the two computations disagree, regenerate the question rather than guessing.',
+  );
+
   sections.push('');
   sections.push('OUTPUT REQUIREMENTS:');
-  sections.push('1. Output ONLY a single valid JSON object (no markdown, no code fence, no surrounding text).');
-  sections.push(`2. Generate exactly ${count} MCQs. All questions must align with the topic and context above.`);
-  sections.push('3. Top-level JSON MUST be: { "evaluations": [ /* array of question objects */ ] }');
+  sections.push(
+    '1. Output ONLY a single valid JSON object (no markdown, no code fence, no surrounding text).',
+  );
+  sections.push(
+    `2. Generate exactly ${count} MCQs. All questions must align with the topic and context above.`,
+  );
+  sections.push(
+    '3. Top-level JSON MUST be: { "evaluations": [ /* array of question objects */ ] }',
+  );
   sections.push(`4. There MUST be exactly ${count} objects in "evaluations".`);
   sections.push('5. Each question object MUST have:');
   sections.push(
-    '   { "question": "<string>", "solution": "<your step-by-step working, ending with the final answer>", "options": { "1": "<A>", "2": "<B>", "3": "<C>", "4": "<D>" }, "correctOption": <1|2|3|4>, "topic": "<string>", "difficulty": "<easy|medium|hard>", "language": "<string>", "level": "<A+|A|B|C|D|E>" }'
+    '   { "question": "<string>", "solution": "<your step-by-step working, ending with the final answer>", "options": { "1": "<A>", "2": "<B>", "3": "<C>", "4": "<D>" }, "correctOption": <1|2|3|4>, "topic": "<string>", "difficulty": "<easy|medium|hard>", "language": "<string>", "level": "<A+|A|B|C|D|E>" }',
   );
   sections.push(
-    '   The key order matters: write "solution" before "options" and "correctOption". "solution" is used for quality checking and is never shown to students.'
+    '   The key order matters: write "solution" before "options" and "correctOption". "solution" is used for quality checking and is never shown to students.',
   );
   sections.push(
-    '   where "level" is the conceptual depth band for this question: "A+" = highest / exceptional depth, "A" = most advanced, "B" = advanced, "C" = intermediate, "D" = basic, "E" = very basic / foundational.'
+    '   where "level" is the conceptual depth band for this question: "A+" = highest / exceptional depth, "A" = most advanced, "B" = advanced, "C" = intermediate, "D" = basic, "E" = very basic / foundational.',
   );
-  sections.push('6. Options: exactly 4 entries keyed "1" to "4", all non-empty and all different. correctOption must be 1, 2, 3, or 4. These are checked in code and a batch failing them is discarded.');
+  sections.push(
+    '6. Options: exactly 4 entries keyed "1" to "4", all non-empty and all different. correctOption must be 1, 2, 3, or 4. These are checked in code and a batch failing them is discarded.',
+  );
   sections.push('7. "correctOption" MUST correspond to the correct answer.');
-  sections.push('8. For numerical questions, one option must exactly equal the internally computed final answer (same units/rounding), and "correctOption" must point to it.');
+  sections.push(
+    '8. For numerical questions, one option must exactly equal the internally computed final answer (same units/rounding), and "correctOption" must point to it.',
+  );
   sections.push('9. Options MUST be mutually exclusive and non-overlapping.');
   sections.push(
-    '10. Vary the position of the correct answer across this batch: do NOT default to placing it at the same option number (e.g. always "1" or always "2") for most questions. Distribute correctOption roughly evenly across 1, 2, 3, and 4 across the batch.'
+    '10. Vary the position of the correct answer across this batch: do NOT default to placing it at the same option number (e.g. always "1" or always "2") for most questions. Distribute correctOption roughly evenly across 1, 2, 3, and 4 across the batch.',
   );
   sections.push('11. Do NOT include explanations, ids, or extra keys.');
   sections.push('12. Avoid "All of the above" or "None of the above".');
   sections.push('13. Avoid vague or ambiguous wording.');
-  sections.push('14. If you cannot ensure correctness, return: { "error": "GENERATION_FAILED", "reason": "<short reason>" }');
+  sections.push(
+    '14. If you cannot ensure correctness, return: { "error": "GENERATION_FAILED", "reason": "<short reason>" }',
+  );
   if (hasRequiredDifficultyCounts) {
     sections.push(
-      `15. FINAL BATCH CHECK (MANDATORY): Before output, count difficulties across all generated items. You MUST have easy=${requiredEasyCount}, medium=${requiredMediumCount}, hard=${requiredHardCount}, total=${count}.`
+      `15. FINAL BATCH CHECK (MANDATORY): Before output, count difficulties across all generated items. You MUST have easy=${requiredEasyCount}, medium=${requiredMediumCount}, hard=${requiredHardCount}, total=${count}.`,
     );
     sections.push(
-      '16. If final difficulty counts do not match exactly, regenerate/rebalance before output. Do not output partial or mismatched distribution.'
+      '16. If final difficulty counts do not match exactly, regenerate/rebalance before output. Do not output partial or mismatched distribution.',
     );
   }
-  
+
   sections.push('');
   sections.push('Produce the JSON only.');
-  
+
   return sections.join('\n');
 }
 

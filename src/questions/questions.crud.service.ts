@@ -1,4 +1,9 @@
-import { BadRequestException, Injectable, NotFoundException, Inject } from '@nestjs/common';
+import {
+  BadRequestException,
+  Injectable,
+  NotFoundException,
+  Inject,
+} from '@nestjs/common';
 import { DRIZZLE_DB } from 'src/db/constant';
 import { NodePgDatabase } from 'drizzle-orm/node-postgres';
 import { and, desc, eq, ne, notInArray, sql } from 'drizzle-orm';
@@ -87,7 +92,9 @@ export class QuestionsCrudService {
     const conditions = [
       eq(zuvyQuestions.orgId, orgId),
       difficulty ? eq(zuvyQuestions.difficulty, difficulty) : undefined,
-      topicName ? topicNameEquals(zuvyQuestions.topicName, topicName) : undefined,
+      topicName
+        ? topicNameEquals(zuvyQuestions.topicName, topicName)
+        : undefined,
     ].filter(Boolean);
 
     const whereClause = and(...(conditions as any));
@@ -210,7 +217,6 @@ export class QuestionsCrudService {
     return row;
   }
 
-
   async findReplacements(params: {
     orgId: number;
     topicName: string;
@@ -247,11 +253,17 @@ export class QuestionsCrudService {
       sql`LOWER(${zuvyQuestions.difficulty}) = LOWER(${difficulty})`,
     ];
 
-    if (params.excludeId && Number.isInteger(params.excludeId) && params.excludeId > 0) {
+    if (
+      params.excludeId &&
+      Number.isInteger(params.excludeId) &&
+      params.excludeId > 0
+    ) {
       conditions.push(ne(zuvyQuestions.id, params.excludeId));
     }
 
-    const existingQuestionIds = existingSetQuestions.map(({ questionId }) => questionId);
+    const existingQuestionIds = existingSetQuestions.map(
+      ({ questionId }) => questionId,
+    );
     if (existingQuestionIds.length > 0) {
       conditions.push(notInArray(zuvyQuestions.id, existingQuestionIds));
     }
@@ -282,12 +294,18 @@ export class QuestionsCrudService {
     };
   }
 
-  async replaceInQuestionSet(oldQuestionId: number, questionSetId: number, newQuestionId: number) {
+  async replaceInQuestionSet(
+    oldQuestionId: number,
+    questionSetId: number,
+    newQuestionId: number,
+  ) {
     if (!Number.isInteger(oldQuestionId) || oldQuestionId <= 0) {
       throw new BadRequestException('oldQuestionId must be a positive integer');
     }
     if (!Number.isInteger(newQuestionId) || newQuestionId <= 0) {
-      throw new BadRequestException('replacementQuestionId must be a positive integer');
+      throw new BadRequestException(
+        'replacementQuestionId must be a positive integer',
+      );
     }
     if (!Number.isInteger(questionSetId) || questionSetId <= 0) {
       throw new BadRequestException('questionSetId must be a positive integer');
@@ -297,11 +315,18 @@ export class QuestionsCrudService {
     const existing = await this.db
       .select()
       .from(aiAssessmentQuestions)
-      .where(and(eq(aiAssessmentQuestions.questionSetId, questionSetId), eq(aiAssessmentQuestions.questionId, newQuestionId)))
+      .where(
+        and(
+          eq(aiAssessmentQuestions.questionSetId, questionSetId),
+          eq(aiAssessmentQuestions.questionId, newQuestionId),
+        ),
+      )
       .limit(1);
 
     if (existing.length > 0) {
-      throw new BadRequestException('Replacement question already exists in the set');
+      throw new BadRequestException(
+        'Replacement question already exists in the set',
+      );
     }
 
     const [[replacedQuestion], [replacementQuestion]] = await Promise.all([
@@ -320,7 +345,12 @@ export class QuestionsCrudService {
     const [row] = await this.db
       .update(aiAssessmentQuestions)
       .set({ questionId: newQuestionId, updatedAt: sql`now()` } as any)
-      .where(and(eq(aiAssessmentQuestions.questionSetId, questionSetId), eq(aiAssessmentQuestions.questionId, oldQuestionId)))
+      .where(
+        and(
+          eq(aiAssessmentQuestions.questionSetId, questionSetId),
+          eq(aiAssessmentQuestions.questionId, oldQuestionId),
+        ),
+      )
       .returning();
 
     if (!row) {

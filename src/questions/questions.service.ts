@@ -10,7 +10,10 @@ import {
   GenerateQuestionsDto,
   GenerateTopicBatchJobPayload,
 } from './dto/generate-questions.dto';
-import { questionIndexOutbox, zuvyQuestions } from './schema/zuvy-questions.schema';
+import {
+  questionIndexOutbox,
+  zuvyQuestions,
+} from './schema/zuvy-questions.schema';
 import { topic } from 'src/topic/db/topic.schema';
 import { normalizeTopicName, topicNameEquals } from 'src/topic/topic-name.util';
 
@@ -93,13 +96,21 @@ export class QuestionsService {
       const numBatches = Math.ceil(count / BATCH_SIZE);
       const batchSizes: number[] = [];
       for (let i = 0; i < numBatches; i++) {
-        batchSizes.push(i < numBatches - 1 ? BATCH_SIZE : count - (numBatches - 1) * BATCH_SIZE);
+        batchSizes.push(
+          i < numBatches - 1
+            ? BATCH_SIZE
+            : count - (numBatches - 1) * BATCH_SIZE,
+        );
       }
       const topicCounts = this.toDifficultyCounts(
         perTopicCtx.questionCounts ?? perTopicCtx.difficultyDistribution,
       );
       const perBatchCounts = topicCounts
-        ? this.splitDifficultyCountsAcrossBatches(topicCounts, batchSizes, count)
+        ? this.splitDifficultyCountsAcrossBatches(
+            topicCounts,
+            batchSizes,
+            count,
+          )
         : null;
 
       for (let i = 0; i < numBatches; i++) {
@@ -186,9 +197,7 @@ export class QuestionsService {
       let pointer = 0;
       while (assigned < batchSize) {
         const current = sortedRemainders[pointer % sortedRemainders.length];
-        if (
-          allocated[current.level] < remaining[current.level]
-        ) {
+        if (allocated[current.level] < remaining[current.level]) {
           allocated[current.level] += 1;
           assigned += 1;
         }
@@ -230,7 +239,9 @@ export class QuestionsService {
     const [ownedTopic] = await this.db
       .select({ name: topic.name, description: topic.description })
       .from(topic)
-      .where(and(eq(topic.orgId, scopedOrgId), topicNameEquals(topic.name, trimmed)))
+      .where(
+        and(eq(topic.orgId, scopedOrgId), topicNameEquals(topic.name, trimmed)),
+      )
       .limit(1);
     if (ownedTopic?.name) {
       return {
@@ -372,7 +383,10 @@ export class QuestionsService {
    * all in a single transaction so we never index a question that wasn't saved.
    * @param requestedByUserId Optional user id (e.g. JWT sub) for per-user WS notification when indexing completes.
    */
-  async createManyWithOutbox(rows: CreateQuestionDto[], requestedByUserId?: string) {
+  async createManyWithOutbox(
+    rows: CreateQuestionDto[],
+    requestedByUserId?: string,
+  ) {
     if (!rows || rows.length === 0) return [];
     if (rows.some((r) => !r.orgId)) {
       throw new BadRequestException('orgId is required for each row');
@@ -429,7 +443,10 @@ export class QuestionsService {
    * Scoped by org when one is supplied: the vector store carries no orgId,
    * so tenant scoping has to happen here.
    */
-  async getQuestionTextsByIds(ids: number[], orgId?: number): Promise<string[]> {
+  async getQuestionTextsByIds(
+    ids: number[],
+    orgId?: number,
+  ): Promise<string[]> {
     if (!ids.length) return [];
 
     const conditions = [inArray(zuvyQuestions.id, ids)];
@@ -456,7 +473,9 @@ export class QuestionsService {
     const normalizedTopic = normalizeTopicName(topicName);
     if (!normalizedTopic) return [];
 
-    const conditions = [topicNameEquals(zuvyQuestions.topicName, normalizedTopic)];
+    const conditions = [
+      topicNameEquals(zuvyQuestions.topicName, normalizedTopic),
+    ];
     const scopedOrgId = orgId;
     if (scopedOrgId) {
       conditions.push(eq(zuvyQuestions.orgId, scopedOrgId));
@@ -488,20 +507,57 @@ export class QuestionsService {
     orgId?: number,
     limit = 60,
   ): Promise<string[]> {
+    const rows = await this.getRecentQuestionsByTopic(topicName, orgId, limit);
+    return rows.map((r) => r.question).filter(Boolean);
+  }
+
+  /**
+   * The same rows, with the options and the keyed answer.
+   *
+   * Repetition detection needs more than the text. A batch of permutation
+   * questions repeated one exercise seven times by changing only the noun -
+   * trophies, flags, markers, students - and every one was 3 -> 6. Wording
+   * comparison cannot see that; the numbers and the answer can, and both live
+   * in columns the text-only query left behind.
+   */
+  async getRecentQuestionsByTopic(
+    topicName: string,
+    orgId?: number,
+    limit = 60,
+  ): Promise<
+    Array<{
+      question: string;
+      options: Record<string, string> | null;
+      correctOption: number | null;
+    }>
+  > {
     const normalizedTopic = normalizeTopicName(topicName);
     if (!normalizedTopic) return [];
 
-    const conditions = [topicNameEquals(zuvyQuestions.topicName, normalizedTopic)];
+    const conditions = [
+      topicNameEquals(zuvyQuestions.topicName, normalizedTopic),
+    ];
     if (orgId) {
       conditions.push(eq(zuvyQuestions.orgId, orgId));
     }
 
     const rows = await this.db
-      .select({ question: zuvyQuestions.question })
+      .select({
+        question: zuvyQuestions.question,
+        options: zuvyQuestions.options,
+        correctOption: zuvyQuestions.correctOption,
+      })
       .from(zuvyQuestions)
       .where(and(...conditions))
       .orderBy(desc(zuvyQuestions.id))
       .limit(limit);
-    return rows.map((r) => r.question).filter(Boolean);
+
+    return rows
+      .filter((r) => r.question)
+      .map((r) => ({
+        question: r.question,
+        options: (r.options ?? null) as Record<string, string> | null,
+        correctOption: (r.correctOption ?? null) as number | null,
+      }));
   }
 }

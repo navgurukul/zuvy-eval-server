@@ -122,7 +122,7 @@ describe('QuestionsProcessor top-up loop', () => {
     const questionsService = {
       resolveCanonicalTopic: () =>
         Promise.resolve({ topicName: 'Permutation', topicDescription: 'desc' }),
-      getRecentQuestionTextsByTopic: () => Promise.resolve([]),
+      getRecentQuestionsByTopic: () => Promise.resolve([]),
       getQuestionTextsByIds: () => Promise.resolve([]),
       createManyWithOutbox,
     };
@@ -366,7 +366,7 @@ describe('QuestionsProcessor top-up loop', () => {
             topicName: 'Statistics',
             topicDescription: 'desc',
           }),
-        getRecentQuestionTextsByTopic: () => Promise.resolve([]),
+        getRecentQuestionsByTopic: () => Promise.resolve([]),
         getQuestionTextsByIds: () => Promise.resolve([]),
         createManyWithOutbox,
       } as unknown as QuestionsService,

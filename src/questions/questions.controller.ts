@@ -1,5 +1,25 @@
-import { BadRequestException, Body, Controller, Delete, Get, Param, Patch, Post, Put, Query, Req, UseGuards } from '@nestjs/common';
-import { ApiBearerAuth, ApiBody, ApiOperation, ApiParam, ApiQuery, ApiTags } from '@nestjs/swagger';
+import {
+  BadRequestException,
+  Body,
+  Controller,
+  Delete,
+  Get,
+  Param,
+  Patch,
+  Post,
+  Put,
+  Query,
+  Req,
+  UseGuards,
+} from '@nestjs/common';
+import {
+  ApiBearerAuth,
+  ApiBody,
+  ApiOperation,
+  ApiParam,
+  ApiQuery,
+  ApiTags,
+} from '@nestjs/swagger';
 import { Request } from 'express';
 import { JwtAuthGuard } from 'src/auth/guards/jwt-auth.guard';
 import { resolveOrgId } from 'src/auth/resolve-org-id';
@@ -39,26 +59,59 @@ export class QuestionsController {
     @Body() payload: GenerateQuestionsDto,
   ) {
     const orgId = resolveOrgId(req);
-    const requestedByUserId = req.user?.sub != null ? String(req.user.sub) : undefined;
-    return this.questionsService.enqueueGeneration(payload, orgId, requestedByUserId);
+    const requestedByUserId =
+      req.user?.sub != null ? String(req.user.sub) : undefined;
+    return this.questionsService.enqueueGeneration(
+      payload,
+      orgId,
+      requestedByUserId,
+    );
   }
 
   @Post()
   @UseGuards(JwtAuthGuard)
   create(
-    @Req() req: Request & { user?: { orgId?: number} },
+    @Req() req: Request & { user?: { orgId?: number } },
     @Body() createQuestionDto: CreateQuestionDto,
   ) {
-    return this.questionsCrudService.create(resolveOrgId(req), createQuestionDto);
+    return this.questionsCrudService.create(
+      resolveOrgId(req),
+      createQuestionDto,
+    );
   }
 
   @Get('replace')
   @UseGuards(JwtAuthGuard)
-  @ApiOperation({ summary: 'Get replacement questions filtered by topic and difficulty (used by Review → Replace)' })
-  @ApiQuery({ name: 'topicName', required: true, type: String, example: 'HTML & CSS' })
-  @ApiQuery({ name: 'difficulty', required: true, type: String, example: 'easy' })
-  @ApiQuery({ name: 'questionSetId', required: true, type: Number, example: 253, description: 'Question set whose existing questions must be excluded' })
-  @ApiQuery({ name: 'excludeId', required: false, type: Number, example: 42, description: 'ID of the current question to exclude' })
+  @ApiOperation({
+    summary:
+      'Get replacement questions filtered by topic and difficulty (used by Review → Replace)',
+  })
+  @ApiQuery({
+    name: 'topicName',
+    required: true,
+    type: String,
+    example: 'HTML & CSS',
+  })
+  @ApiQuery({
+    name: 'difficulty',
+    required: true,
+    type: String,
+    example: 'easy',
+  })
+  @ApiQuery({
+    name: 'questionSetId',
+    required: true,
+    type: Number,
+    example: 253,
+    description: 'Question set whose existing questions must be excluded',
+  })
+  @ApiQuery({
+    name: 'excludeId',
+    required: false,
+    type: Number,
+    example: 42,
+    description: 'ID of the current question to exclude',
+  })
   findReplacement(
     @Req() req: Request & { user?: { orgId?: number | string } },
     @Query('topicName') topicName: string,
@@ -108,8 +161,15 @@ export class QuestionsController {
 
   @Patch(':id')
   @UseGuards(JwtAuthGuard)
-  @ApiOperation({ summary: 'Update a question, its MCQ options, or the correct option' })
-  @ApiParam({ name: 'id', type: Number, description: 'Question ID', example: 1503 })
+  @ApiOperation({
+    summary: 'Update a question, its MCQ options, or the correct option',
+  })
+  @ApiParam({
+    name: 'id',
+    type: Number,
+    description: 'Question ID',
+    example: 1503,
+  })
   @ApiBody({
     type: UpdateQuestionDto,
     examples: {
@@ -136,13 +196,22 @@ export class QuestionsController {
     @Param('id') id: string,
     @Body() updateQuestionDto: UpdateQuestionDto,
   ) {
-    return this.questionsCrudService.update(resolveOrgId(req), Number(id), updateQuestionDto);
+    return this.questionsCrudService.update(
+      resolveOrgId(req),
+      Number(id),
+      updateQuestionDto,
+    );
   }
 
   @Put(':oldQuestionId/replace')
   @UseGuards(JwtAuthGuard)
   @ApiOperation({ summary: 'Replace a question in a question set' })
-  @ApiParam({ name: 'oldQuestionId', type: Number, description: 'ID of the existing question that will be replaced in the set', example: 1503 })
+  @ApiParam({
+    name: 'oldQuestionId',
+    type: Number,
+    description: 'ID of the existing question that will be replaced in the set',
+    example: 1503,
+  })
   @ApiBody({ type: ReplaceQuestionDto })
   replace(
     @Req() req: Request & { user?: { orgId?: number | string } },
@@ -153,13 +222,18 @@ export class QuestionsController {
       throw new BadRequestException('Request body is required');
     }
 
-    const { questionSetId, replacementQuestionId } = body as ReplaceQuestionDto;
+    const { questionSetId, replacementQuestionId } = body;
 
     if (!Number.isInteger(questionSetId) || questionSetId <= 0) {
       throw new BadRequestException('questionSetId must be a positive integer');
     }
-    if (!Number.isInteger(replacementQuestionId) || replacementQuestionId <= 0) {
-      throw new BadRequestException('replacementQuestionId must be a positive integer');
+    if (
+      !Number.isInteger(replacementQuestionId) ||
+      replacementQuestionId <= 0
+    ) {
+      throw new BadRequestException(
+        'replacementQuestionId must be a positive integer',
+      );
     }
 
     return this.questionsCrudService.replaceInQuestionSet(

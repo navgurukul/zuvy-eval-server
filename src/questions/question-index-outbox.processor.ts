@@ -48,7 +48,11 @@ export class QuestionIndexOutboxProcessor extends WorkerHost {
         and(
           // Also pick up stuck "processing" events so we can re-drive them
           // after a crash or unexpected termination.
-          inArray(questionIndexOutbox.status, ['pending', 'failed', 'processing']),
+          inArray(questionIndexOutbox.status, [
+            'pending',
+            'failed',
+            'processing',
+          ]),
           lt(questionIndexOutbox.attempts, MAX_ATTEMPTS),
         ),
       )
@@ -75,9 +79,13 @@ export class QuestionIndexOutboxProcessor extends WorkerHost {
     }
 
     const questionIds = pending.map((p) => p.questionId);
-    const requestedByUserIds = [...new Set(
-      pending.map((p) => p.requestedByUserId).filter((id): id is string => id != null && id !== ''),
-    )];
+    const requestedByUserIds = [
+      ...new Set(
+        pending
+          .map((p) => p.requestedByUserId)
+          .filter((id): id is string => id != null && id !== ''),
+      ),
+    ];
 
     // 3) Enqueue a single batch index job.
     await this.indexQueue.add(

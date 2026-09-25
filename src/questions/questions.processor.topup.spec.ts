@@ -204,16 +204,53 @@ describe('QuestionsProcessor top-up loop', () => {
     expect(requestedCount(generationPrompts[1])).toBe(2);
   });
 
-  it('never stores the questions it did reach when it cannot reach the count', async () => {
-    // Nothing ever passes, so no round can make progress.
+  it('retries when nothing at all survived', async () => {
+    // Nothing ever passes, so no round makes progress and there is nothing
+    // worth keeping. A fresh prompt on a retry is the only way forward.
     const { processor, createManyWithOutbox } = buildProcessor(() => true);
 
-    await expect(runJob(processor, 10)).rejects.toThrow(/produced only 0\/10/);
-
-    // The point of accumulating before writing: a job that cannot deliver the
-    // full count writes nothing at all, rather than leaving a partial batch
-    // behind for the retry to duplicate.
+    await expect(runJob(processor, 10)).rejects.toThrow(/no usable questions/);
     expect(createManyWithOutbox).not.toHaveBeenCalled();
+  });
+
+  it('keeps what passed when it cannot reach the full count', async () => {
+    // One question is rejected forever, so the job can never reach ten. It
+    // used to throw and discard the nine that were verified and good, then
+    // retry five times regenerating them: a request for 30 came back as 20
+    // because one question was missing, not because ten were bad.
+    let seen = 0;
+    const { processor, createManyWithOutbox } = buildProcessor(() => {
+      // Reject exactly one question per round, whichever comes last.
+      seen += 1;
+      return seen % 10 === 0;
+    });
+
+    await runJob(processor, 10);
+
+    expect(createManyWithOutbox).toHaveBeenCalledTimes(1);
+    const stored = createManyWithOutbox.mock.calls[0][0];
+    expect(stored.length).toBeGreaterThan(0);
+    expect(stored.length).toBeLessThanOrEqual(10);
+  });
+
+  it('succeeds on a short batch so BullMQ does not retry it', async () => {
+    // Succeeding rather than throwing is what removes the retry, and with it
+    // the risk a partial write was guarding against: nothing regenerates, so
+    // nothing can be stored twice.
+    const rejectAll = new Set<string>();
+    const { processor, createManyWithOutbox } = buildProcessor((q) => {
+      // Let the first round through, reject every top-up after it.
+      if (rejectAll.has('started')) return true;
+      if (q.includes('number 10')) {
+        rejectAll.add('started');
+        return true;
+      }
+      return false;
+    });
+
+    // Resolves rather than rejects: the job is done, not failed.
+    await expect(runJob(processor, 10)).resolves.toBeUndefined();
+    expect(createManyWithOutbox.mock.calls[0][0]).toHaveLength(9);
   });
 
   it('trims an over-long batch instead of failing the job', async () => {

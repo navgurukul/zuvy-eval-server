@@ -1031,16 +1031,39 @@ export class QuestionsProcessor extends WorkerHost {
         });
       }
 
-      if (accepted.length < count) {
-        // Deliberately a failure rather than a short batch. The caller asked for
-        // an exact count, and storing fewer without saying so is the behaviour
-        // this loop exists to remove. The job retries with backoff and a fresh
-        // prompt, and the existing pool is untouched because nothing is written
-        // until the count is met.
+      if (accepted.length === 0) {
+        // Nothing survived, so there is nothing to keep and a retry is the only
+        // way forward. A fresh prompt may do better; storing zero and calling
+        // it done would not.
         throw new Error(
-          `Job ${job.id}: produced only ${accepted.length}/${count} usable questions for topic ` +
-            `"${topicName}" after ${roundsUsed} round(s); the rest were dropped as duplicates or ` +
-            `failed answer verification. Job will retry.`,
+          `Job ${job.id}: produced no usable questions for topic "${topicName}" after ` +
+            `${roundsUsed} round(s); every one was dropped as a duplicate or failed answer ` +
+            `verification. Job will retry.`,
+        );
+      }
+
+      if (accepted.length < count) {
+        // Short, but keep what passed.
+        //
+        // This used to throw, on the reasoning that an exact count was the
+        // promise. In practice it cost far more than it protected: a job one
+        // question short discarded the other nine, then BullMQ retried it five
+        // times with exponential backoff, regenerating and re-verifying work
+        // that was already good. A request for 30 came back as 20 - not
+        // because ten questions were bad, but because one was missing.
+        //
+        // The rule existed to stop a partial write plus a retry from storing
+        // the same questions twice. Succeeding rather than throwing removes
+        // the retry, so that risk goes away instead of being traded off.
+        //
+        // Logged at error level because it is not routine: it means the topic
+        // could not yield the questions asked for, and the shortfall is real
+        // and needs someone to notice.
+        this.logger.error(
+          `Job ${job.id}: storing ${accepted.length} of the ${count} question(s) requested for ` +
+            `topic "${topicName}" after ${roundsUsed} round(s). The rest were dropped as ` +
+            `duplicates or failed answer verification, and regenerating produced no more. ` +
+            `Generate again for this topic if the full count is needed.`,
         );
       }
 

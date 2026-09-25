@@ -62,6 +62,27 @@ function extractFirstJson(raw: string) {
   return null;
 }
 
+/**
+ * The model declining to generate, rather than failing to.
+ *
+ * generateMcqPromptFromSpec explicitly asks for this: "If you cannot ensure
+ * correctness, return { error: GENERATION_FAILED }". It is the honest answer
+ * when a topic is exhausted - a narrow subject with a long do-not-repeat list
+ * eventually has nothing new to say - and the model gives it most often on a
+ * top-up round asking for the last question or two.
+ *
+ * It is a distinct type because it is not a parse failure and should not read
+ * like one. Treating it as malformed JSON produced a zod schema dump in the
+ * logs and killed the whole job, which is the opposite of what a co-operative
+ * refusal deserves.
+ */
+export class GenerationRefusedError extends Error {
+  constructor(public readonly reason: string) {
+    super(`Model declined to generate: ${reason}`);
+    this.name = 'GenerationRefusedError';
+  }
+}
+
 export function parseLlmMcq(raw: string): LlmMcq {
   const cleaned = stripFencesAndNoise(raw);
   const jsonChunk = extractFirstJson(cleaned);
@@ -81,6 +102,20 @@ export function parseLlmMcq(raw: string): LlmMcq {
   let candidate: unknown = parsed;
   if (Array.isArray(parsed)) {
     candidate = { evaluations: parsed };
+  }
+
+  // Checked before the schema, or the refusal we asked for reads as a broken
+  // reply: it carries no "evaluations" array, so zod reports a missing field
+  // and the real message ("I could not do this, and here is why") is lost.
+  if (
+    candidate &&
+    typeof candidate === 'object' &&
+    (candidate as Record<string, unknown>).error === 'GENERATION_FAILED'
+  ) {
+    const reason = (candidate as Record<string, unknown>).reason;
+    throw new GenerationRefusedError(
+      typeof reason === 'string' && reason.trim() ? reason : 'no reason given',
+    );
   }
 
   const result = LlmMcqSchema.safeParse(candidate);

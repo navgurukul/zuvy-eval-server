@@ -6,7 +6,10 @@ import {
   parseVerifierVerdict,
   verifyMcqAnswerPrompt,
 } from 'src/ai-assessment/system_prompts/system_prompts';
-import { parseLlmMcq } from 'src/llm/llm_response_parsers/mcqParser';
+import {
+  GenerationRefusedError,
+  parseLlmMcq,
+} from 'src/llm/llm_response_parsers/mcqParser';
 import { LlmService } from 'src/llm/llm.service';
 import { EmbeddingsService } from 'src/llm/embeddings.service';
 import { VectorService } from 'src/vector/vector.service';
@@ -782,10 +785,24 @@ export class QuestionsProcessor extends WorkerHost {
       );
     }
 
-    const parsed = await parseLlmMcq(aiResponse.text);
-    const evaluations = (parsed.evaluations ?? []) as Array<
-      Record<string, any>
-    >;
+    let evaluations: Array<Record<string, any>>;
+    try {
+      const parsed = await parseLlmMcq(aiResponse.text);
+      evaluations = (parsed.evaluations ?? []) as Array<Record<string, any>>;
+    } catch (err) {
+      if (err instanceof GenerationRefusedError) {
+        // A refusal is information, not a fault: the topic has run out of
+        // questions it can write that are not repeats of the do-not-repeat
+        // list. Returning nothing lets the caller decide, rather than killing
+        // a job that may already hold most of its batch.
+        this.logger.warn(
+          `Job ${job.id}: model declined to generate ${need} more question(s) for topic ` +
+            `"${topicName}": ${err.reason}`,
+        );
+        return [];
+      }
+      throw err;
+    }
     this.assertWellFormedMcqs(evaluations, job.id);
 
     if (!evaluations.length) {

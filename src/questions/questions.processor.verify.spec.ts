@@ -1,4 +1,4 @@
-import { QuestionsProcessor } from './questions.processor';
+import { QuestionsProcessor, reviewableTopic } from './questions.processor';
 import { parseVerifierVerdict } from 'src/ai-assessment/system_prompts/system_prompts';
 import { LlmService } from 'src/llm/llm.service';
 import { EmbeddingsService } from 'src/llm/embeddings.service';
@@ -48,6 +48,7 @@ type Internals = {
   verifyKeyedAnswers(
     candidates: Array<{ q: Mcq; index: number }>,
     jobId: string,
+    topic?: { name: string; description?: string; subtopics?: string[] } | null,
   ): Promise<Set<number>>;
   findBankDuplicates(
     candidates: Array<{ q: Mcq; index: number }>,
@@ -58,6 +59,30 @@ type Internals = {
 };
 
 type VectorHit = { id: number; payload: { questionId: number } };
+
+/**
+ * Stand-in for a real embedding: one dimension per distinct word.
+ *
+ * It has to behave like one in the two ways the code depends on - identical
+ * text gives identical vectors, and text sharing no words gives orthogonal
+ * ones. A mock returning the same vector for everything makes every question a
+ * paraphrase of every other and hides real behaviour behind passing tests.
+ */
+function fakeEmbedding(text: string): number[] {
+  const vector = new Array(64).fill(0) as number[];
+  String(text)
+    .toLowerCase()
+    .split(/[^a-z0-9]+/)
+    .filter(Boolean)
+    .forEach((word) => {
+      let hash = 0;
+      for (let i = 0; i < word.length; i++) {
+        hash = (hash * 31 + word.charCodeAt(i)) >>> 0;
+      }
+      vector[hash % 64] += 1;
+    });
+  return vector;
+}
 
 type Deps = {
   completion?: (prompt: string) => Promise<{ text: string }>;
@@ -73,7 +98,7 @@ function buildProcessor(deps: Deps = {}) {
   );
   const embedMany = jest.fn(
     deps.embedMany ??
-      ((texts: string[]) => Promise.resolve(texts.map(() => [0.1, 0.2]))),
+      ((texts: string[]) => Promise.resolve(texts.map(fakeEmbedding))),
   );
   const search = jest.fn(
     deps.search ??
@@ -84,7 +109,10 @@ function buildProcessor(deps: Deps = {}) {
   );
 
   const processor = new QuestionsProcessor(
-    { generateCompletion, generateCompletionPreferring: (_p, prompt) => generateCompletion(prompt) } as unknown as LlmService,
+    {
+      generateCompletion,
+      generateCompletionPreferring: (_p, prompt) => generateCompletion(prompt),
+    } as unknown as LlmService,
     { getQuestionTextsByIds } as unknown as QuestionsService,
     { embedMany } as unknown as EmbeddingsService,
     { search } as unknown as VectorService,
@@ -110,8 +138,14 @@ function buildProcessor(deps: Deps = {}) {
 const withCandidates = (items: Mcq[]) =>
   items.map((q, index) => ({ q, index }));
 
-const verify = (processor: Internals, items: Mcq[]): Promise<Set<number>> =>
-  processor.verifyKeyedAnswers(withCandidates(items), 'test-job');
+const verify = (
+  processor: Internals,
+  items: Mcq[],
+  topic?: { name: string; description?: string; subtopics?: string[] } | null,
+): Promise<Set<number>> =>
+  processor.verifyKeyedAnswers(withCandidates(items), 'test-job', topic);
+
+const TOPIC = { name: 'Permutation and Combination' };
 
 const checkBank = (
   processor: Internals,
@@ -124,6 +158,8 @@ describe('parseVerifierVerdict', () => {
     expect(parseVerifierVerdict(reply(null, '7'))).toEqual({
       computedAnswer: '7',
       correctOption: null,
+      onTopic: null,
+      difficulty: null,
     });
     expect(parseVerifierVerdict('the model rambled')).toBeNull();
     expect(parseVerifierVerdict('')).toBeNull();
@@ -135,6 +171,34 @@ describe('parseVerifierVerdict', () => {
     expect(parseVerifierVerdict(fenced)).toEqual({
       computedAnswer: null,
       correctOption: 1,
+      onTopic: null,
+      difficulty: null,
+    });
+  });
+
+  it('reads the review fields when they are present', () => {
+    const verdict = parseVerifierVerdict(
+      '{"computedAnswer":"6","correctOption":2,"onTopic":false,"difficulty":"HARD"}',
+    );
+    expect(verdict).toEqual({
+      computedAnswer: '6',
+      correctOption: 2,
+      onTopic: false,
+      difficulty: 'hard',
+    });
+  });
+
+  it('treats a missing or unusable review field as "not answered", not as a failure', () => {
+    // The answer check is what matters; a reply that omits or garbles the
+    // review fields must still produce a usable verdict rather than collapsing
+    // to "unverified" and letting the question through unchecked.
+    const verdict = parseVerifierVerdict(
+      '{"computedAnswer":"6","correctOption":2,"onTopic":"yes","difficulty":"quite hard"}',
+    );
+    expect(verdict).toMatchObject({
+      correctOption: 2,
+      onTopic: null,
+      difficulty: null,
     });
   });
 
@@ -230,6 +294,119 @@ describe('QuestionsProcessor.verifyKeyedAnswers', () => {
   });
 });
 
+describe('reviewableTopic', () => {
+  it('accepts a topic with a real name', () => {
+    expect(reviewableTopic('Permutation', '', undefined)).toEqual({
+      name: 'Permutation',
+      description: undefined,
+      subtopics: undefined,
+    });
+  });
+
+  it('refuses to judge relevance against a numeric topic name', () => {
+    // Topic names in this database include bare numbers. "Is this question
+    // about 115?" gets a confident no for every question, which would drop a
+    // whole batch and fail the job.
+    expect(reviewableTopic('115', '', undefined)).toBeNull();
+    expect(reviewableTopic('', '', [])).toBeNull();
+  });
+
+  it('accepts a meaningless name when there is a description or subtopics to go on', () => {
+    expect(
+      reviewableTopic('115', 'Counting arrangements and selections', undefined),
+    ).toMatchObject({ description: 'Counting arrangements and selections' });
+    expect(reviewableTopic('115', '', ['circular permutations'])).toMatchObject(
+      {
+        subtopics: ['circular permutations'],
+      },
+    );
+  });
+
+  it('ignores blank subtopics rather than counting them as context', () => {
+    expect(reviewableTopic('115', '', ['', '   '])).toBeNull();
+  });
+});
+
+describe('QuestionsProcessor review of relevance and difficulty', () => {
+  const withReview = (
+    correctOption: number,
+    extra: Record<string, unknown>,
+  ): string => JSON.stringify({ computedAnswer: 'x', correctOption, ...extra });
+
+  it('drops a question the reviewer says belongs to another subject', async () => {
+    const { processor } = buildProcessor({
+      completion: () =>
+        Promise.resolve({ text: withReview(2, { onTopic: false }) }),
+    });
+    await expect(verify(processor, [ITEM], TOPIC)).resolves.toEqual(
+      new Set([0]),
+    );
+  });
+
+  it('keeps a question the reviewer says is on topic', async () => {
+    const { processor } = buildProcessor({
+      completion: () =>
+        Promise.resolve({ text: withReview(2, { onTopic: true }) }),
+    });
+    await expect(verify(processor, [ITEM], TOPIC)).resolves.toEqual(new Set());
+  });
+
+  it('keeps a question when the reviewer does not judge relevance at all', async () => {
+    // Only an explicit false drops. A model that omits the field must leave
+    // the question exactly as the answer check left it.
+    const { processor } = buildProcessor({
+      completion: () => Promise.resolve({ text: withReview(2, {}) }),
+    });
+    await expect(verify(processor, [ITEM], TOPIC)).resolves.toEqual(new Set());
+  });
+
+  it('does not ask for a relevance judgement when no topic is supplied', async () => {
+    const { processor, generateCompletion } = buildProcessor({
+      completion: () => Promise.resolve({ text: withReview(2, {}) }),
+    });
+
+    await verify(processor, [ITEM]);
+
+    const prompt: string = generateCompletion.mock.calls[0][0];
+    expect(prompt).not.toContain('onTopic');
+  });
+
+  it('keeps a question whose difficulty the reviewer disputes', async () => {
+    // Difficulty is observability, not a gate: two models disagree about
+    // easy-versus-medium on plenty of sound questions.
+    const { processor } = buildProcessor({
+      completion: () =>
+        Promise.resolve({
+          text: withReview(2, { onTopic: true, difficulty: 'hard' }),
+        }),
+    });
+
+    const items = [
+      { ...ITEM, difficulty: 'easy' } as Mcq & { difficulty: string },
+    ];
+    await expect(verify(processor, items, TOPIC)).resolves.toEqual(new Set());
+  });
+
+  it('drops an off-topic question without also blaming the answer', async () => {
+    // The answer agrees; only relevance fails. The reason logged has to be the
+    // real one or the log stops being usable for triage.
+    const { processor } = buildProcessor({
+      completion: () =>
+        Promise.resolve({ text: withReview(2, { onTopic: false }) }),
+    });
+
+    await verify(processor, [ITEM], TOPIC);
+
+    const warnings: string[] = processor.logger.warn.mock.calls.map(
+      ([message]: [unknown]) => String(message),
+    );
+    expect(warnings.some((w) => w.includes('reason=off-topic'))).toBe(true);
+    expect(warnings.some((w) => w.includes('reason=answer-disagreement'))).toBe(
+      false,
+    );
+  });
+});
+
 describe('QuestionsProcessor.findBankDuplicates', () => {
   it('drops a question that already exists in the bank', async () => {
     const { processor } = buildProcessor({ neighbourTexts: [ITEM.question] });
@@ -256,12 +433,51 @@ describe('QuestionsProcessor.findBankDuplicates', () => {
 
     await checkBank(processor, [ITEM, OTHER_ITEM]);
 
-    expect(embedMany).toHaveBeenCalledTimes(1);
+    // Every question in the batch is embedded together, in one call.
     expect(embedMany.mock.calls[0][0]).toEqual([
       ITEM.question,
       OTHER_ITEM.question,
     ]);
+    // ...and each is then searched for separately.
     expect(search).toHaveBeenCalledTimes(2);
+  });
+
+  it('does not embed neighbours when the store returned none', async () => {
+    const { processor, embedMany } = buildProcessor({ neighbourTexts: [] });
+
+    await checkBank(processor, [ITEM]);
+
+    // Only the batch itself; no wasted call on an empty neighbour list.
+    expect(embedMany).toHaveBeenCalledTimes(1);
+  });
+
+  it('drops a bank question that means the same despite different wording', async () => {
+    // Token overlap cannot see this pair, because the mock embedding makes the
+    // two texts identical in meaning while sharing no words.
+    const { processor } = buildProcessor({
+      neighbourTexts: ['skarn velm tarn quillow frennet'],
+      embedMany: (texts: string[]) =>
+        Promise.resolve(texts.map(() => [1, 0, 0])),
+    });
+
+    const found = await checkBank(processor, [ITEM]);
+
+    expect(found.has(0)).toBe(true);
+    expect(found.get(0)).toContain('means the same');
+  });
+
+  it('drops a paraphrase of an earlier question in the same batch', async () => {
+    const { processor } = buildProcessor({
+      neighbourTexts: [],
+      embedMany: (texts: string[]) =>
+        Promise.resolve(texts.map(() => [1, 0, 0])),
+    });
+
+    const found = await checkBank(processor, [ITEM, OTHER_ITEM]);
+
+    // The earlier one survives; only the later is dropped.
+    expect(found.has(0)).toBe(false);
+    expect(found.get(1)).toContain('means the same as an earlier question');
   });
 
   it('keeps everything when embedding fails', async () => {

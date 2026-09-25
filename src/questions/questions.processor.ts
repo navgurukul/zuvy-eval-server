@@ -13,7 +13,11 @@ import { VectorService } from 'src/vector/vector.service';
 import { GenerateTopicBatchJobPayload } from './dto/generate-questions.dto';
 import { QuestionsService } from './questions.service';
 import { shuffleMcqOptionOrder } from './mcq-option-shuffle.util';
-import { findDuplicateQuestions } from './question-similarity.util';
+import {
+  describeQuestionText,
+  findDuplicateQuestions,
+  isSemanticDuplicate,
+} from './question-similarity.util';
 
 const JOB_NAME = 'generate-topic-batch';
 const QDRANT_QUESTIONS_COLLECTION = 'QUESTIONS';
@@ -151,6 +155,42 @@ function subtractDifficultyCounts(
     easy: Math.max(0, target.easy - have.easy),
     medium: Math.max(0, target.medium - have.medium),
     hard: Math.max(0, target.hard - have.hard),
+  };
+}
+
+/**
+ * Whether there is enough topic context to judge a question's relevance by.
+ *
+ * Topic names in this database are not reliably meaningful: alongside real
+ * names there are numeric ones like "115" and several spellings of the same
+ * subject. Asking a model "is this question about 115?" gets a confident no
+ * for every question, which would drop an entire batch and fail the job.
+ *
+ * So relevance is only reviewed when the topic says something a reader could
+ * act on: a name with letters in it, or a description or subtopics to fall
+ * back on. Otherwise the review fields are not requested at all and the
+ * verifier does only what it did before.
+ */
+export function reviewableTopic(
+  name: string,
+  description: string,
+  subtopics: string[] | undefined,
+): { name: string; description?: string; subtopics?: string[] } | null {
+  const trimmedName = String(name ?? '').trim();
+  const trimmedDescription = String(description ?? '').trim();
+  const cleanSubtopics = (subtopics ?? [])
+    .map((s) => String(s ?? '').trim())
+    .filter(Boolean);
+
+  const nameIsMeaningful = /[a-z]{3}/i.test(trimmedName);
+  if (!nameIsMeaningful && !trimmedDescription && !cleanSubtopics.length) {
+    return null;
+  }
+
+  return {
+    name: trimmedName || '(unnamed)',
+    description: trimmedDescription || undefined,
+    subtopics: cleanSubtopics.length ? cleanSubtopics : undefined,
   };
 }
 
@@ -296,6 +336,7 @@ export class QuestionsProcessor extends WorkerHost {
   private async verifyKeyedAnswers(
     candidates: Array<{ q: Record<string, any>; index: number }>,
     jobId: string | number | undefined,
+    topic?: { name: string; description?: string; subtopics?: string[] } | null,
   ): Promise<Set<number>> {
     const rejected = new Set<number>();
     if (!candidates.length) return rejected;
@@ -312,6 +353,7 @@ export class QuestionsProcessor extends WorkerHost {
       const prompt = verifyMcqAnswerPrompt({
         question: String(q.question ?? ''),
         options: q.options as Record<string, string>,
+        topic: topic ?? undefined,
       });
 
       let verdict: ReturnType<typeof parseVerifierVerdict> = null;
@@ -353,6 +395,37 @@ export class QuestionsProcessor extends WorkerHost {
           `[generation-rejected] job=${jobId} question=${index + 1} reason=answer-disagreement ` +
             `keyed=${keyed} verifier=${verdict.correctOption} ` +
             `verifierAnswer=${JSON.stringify(verdict.computedAnswer)} ` +
+            `question=${JSON.stringify(String(q.question ?? '').slice(0, 120))}`,
+        );
+        return;
+      }
+
+      // A question about a different subject than the one requested is a
+      // defect the same way a wrong answer is: the assessment stops measuring
+      // what it claims to. Only an explicit false drops it, so a model that
+      // omits the field leaves the question alone.
+      if (verdict.onTopic === false) {
+        rejected.add(index);
+        this.logger.warn(
+          `[generation-rejected] job=${jobId} question=${index + 1} reason=off-topic ` +
+            `topic=${JSON.stringify(topic?.name ?? '')} ` +
+            `question=${JSON.stringify(String(q.question ?? '').slice(0, 120))}`,
+        );
+        return;
+      }
+
+      // Difficulty is logged, never enforced. Two models disagree about
+      // easy-versus-medium on plenty of sound questions, so dropping on it
+      // would churn the top-up loop for a label nobody is scored on. This
+      // makes the disagreement rate visible first; enforcing it is a decision
+      // to take once there are numbers behind it.
+      const labelled = String(q.difficulty ?? '')
+        .trim()
+        .toLowerCase();
+      if (verdict.difficulty && labelled && verdict.difficulty !== labelled) {
+        this.logger.warn(
+          `[generation-difficulty-mismatch] job=${jobId} question=${index + 1} ` +
+            `labelled=${labelled} reviewer=${verdict.difficulty} ` +
             `question=${JSON.stringify(String(q.question ?? '').slice(0, 120))}`,
         );
       }
@@ -460,8 +533,7 @@ export class QuestionsProcessor extends WorkerHost {
         return;
       }
 
-      // Same rules as the intra-batch check, so a question cannot be judged
-      // one way against a sibling and another way against the bank.
+      // Wording first: free, and it catches the obvious restatements.
       const verdicts = findDuplicateQuestions([q], neighbourTexts);
       if (verdicts.length) {
         found.set(index, verdicts[0].reason);
@@ -470,8 +542,79 @@ export class QuestionsProcessor extends WorkerHost {
             `similarity=${verdicts[0].similarity.toFixed(2)} ` +
             `detail=${JSON.stringify(verdicts[0].reason)}`,
         );
+        return;
+      }
+
+      // Then meaning, which is what catches a paraphrase sharing no wording -
+      // the case that dominates on conceptual topics. Embedding the
+      // neighbours costs one more call per question and is the only way to
+      // compare them like for like: the store's own score is not comparable
+      // across the Qdrant and OpenSearch backends, so the decision cannot be
+      // built on it.
+      if (!neighbourTexts.length) return;
+
+      let neighbourVectors: number[][];
+      try {
+        neighbourVectors = await this.embeddingsService.embedMany(neighbourTexts);
+      } catch (err) {
+        this.logger.warn(
+          `Job ${jobId}: could not embed bank neighbours for question ${index + 1}, ` +
+            `wording check only: ` +
+            (err instanceof Error ? err.message : String(err)),
+        );
+        return;
+      }
+
+      const self = describeQuestionText(String(q.question ?? ''));
+      for (let i = 0; i < neighbourTexts.length; i++) {
+        const similarity = isSemanticDuplicate(
+          self,
+          describeQuestionText(neighbourTexts[i]),
+          queryVector,
+          neighbourVectors[i] ?? [],
+        );
+        if (similarity === null) continue;
+
+        const reason =
+          `means the same as a question already in the bank: ` +
+          `"${neighbourTexts[i].slice(0, 80)}"`;
+        found.set(index, reason);
+        this.logger.warn(
+          `[generation-rejected] job=${jobId} question=${index + 1} reason=paraphrase-in-bank ` +
+            `cosine=${similarity.toFixed(3)} detail=${JSON.stringify(reason)}`,
+        );
+        return;
       }
     };
+
+    // Paraphrases of each other inside this one batch, before any of them are
+    // compared with the bank. The vectors are already in hand, so this costs
+    // nothing, and it closes the same gap the token rules leave: two questions
+    // generated seconds apart phrased entirely differently.
+    //
+    // The earlier of any pair is kept, matching findDuplicateQuestions, so a
+    // batch never loses both copies of a question.
+    for (let i = 0; i < candidates.length; i++) {
+      if (found.has(candidates[i].index)) continue;
+      const a = describeQuestionText(String(candidates[i].q.question ?? ''));
+
+      for (let j = i + 1; j < candidates.length; j++) {
+        if (found.has(candidates[j].index)) continue;
+        const b = describeQuestionText(String(candidates[j].q.question ?? ''));
+
+        const similarity = isSemanticDuplicate(a, b, vectors[i] ?? [], vectors[j] ?? []);
+        if (similarity === null) continue;
+
+        const reason =
+          `means the same as an earlier question in this batch: "${a.text.slice(0, 80)}"`;
+        found.set(candidates[j].index, reason);
+        this.logger.warn(
+          `[generation-rejected] job=${jobId} question=${candidates[j].index + 1} ` +
+            `reason=paraphrase-in-batch cosine=${similarity.toFixed(3)} ` +
+            `detail=${JSON.stringify(reason)}`,
+        );
+      }
+    }
 
     let next = 0;
     await Promise.all(
@@ -481,6 +624,7 @@ export class QuestionsProcessor extends WorkerHost {
           while (true) {
             const cursor = next++;
             if (cursor >= candidates.length) return;
+            if (found.has(candidates[cursor].index)) continue;
             await checkOne(cursor);
           }
         },
@@ -648,7 +792,11 @@ export class QuestionsProcessor extends WorkerHost {
     if (VERIFY_GENERATED_ANSWERS) {
       // Returns original indices within this round, so the log lines and this
       // map agree on which question is which.
-      const rejected = await this.verifyKeyedAnswers(survivors(), job.id);
+      const rejected = await this.verifyKeyedAnswers(
+        survivors(),
+        job.id,
+        reviewableTopic(topicName, topicDescription, job.data.subtopics),
+      );
       rejected.forEach((index) => {
         dropped.set(index, 'answer verification');
       });

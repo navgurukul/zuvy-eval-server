@@ -14,19 +14,27 @@ const path = require('path');
  * every question is "kept unverified" and stored, so verification appears to be
  * on while doing nothing at all. This script is what turns that into a fact.
  *
- * Three cases, chosen so the arithmetic is not the variable under test:
+ * Five cases, on arithmetic plain enough that the model's ability is never the
+ * variable under test:
  *
- *   1. keyed correctly          -> verifier must agree      (question is kept)
- *   2. keyed wrongly            -> verifier must disagree   (question is dropped)
- *   3. right answer not present -> verifier must answer null (question is dropped)
+ *   1. keyed correctly          -> must agree       (question is kept)
+ *   2. keyed wrongly            -> must disagree    (question is dropped)
+ *   3. right answer not present -> must answer null (question is dropped)
+ *   4. question matches topic   -> must agree       (question is kept)
+ *   5. question is another subject -> must say off topic (question is dropped)
  *
- * Case 3 is the one a forced 1-of-4 choice hides, and it is the failure that
- * was reported from production alongside the wrong keys.
+ * Case 3 is the one a forced 1-of-4 choice hides, and it was reported from
+ * production alongside the wrong keys.
+ *
+ * Cases 4 and 5 cover the same silent-failure risk for the relevance review:
+ * onTopic is only acted on when it comes back an explicit false, so a provider
+ * that omits the field leaves every question on topic by default and the check
+ * quietly does nothing. Case 5 is what proves it is actually answering.
  *
  * Deliberately loads the BUILT files from dist/, so it exercises exactly the
  * prompt and parser that would be deployed. Run "npm run build" first.
  *
- * Touches no database and writes nothing. Three LLM calls.
+ * Touches no database and writes nothing. Five LLM calls.
  *
  * Usage:
  *   node scripts/preflight-verifier.js                     # dry run
@@ -47,27 +55,44 @@ const {
  * Plain arithmetic on purpose. A verifier that gets these wrong is not a
  * marginal call about a hard question, it is a broken integration.
  */
+const ARITHMETIC = {
+  question: 'What is 12 multiplied by 12?',
+  options: { 1: '144', 2: '121', 3: '132', 4: '156' },
+};
+
 const CASES = [
   {
     name: 'keyed correctly',
-    question: 'What is 12 multiplied by 12?',
-    options: { 1: '144', 2: '121', 3: '132', 4: '156' },
+    ...ARITHMETIC,
     keyed: 1,
     expect: 'agree',
   },
   {
     name: 'keyed wrongly',
-    question: 'What is 12 multiplied by 12?',
-    options: { 1: '144', 2: '121', 3: '132', 4: '156' },
+    ...ARITHMETIC,
     keyed: 4,
     expect: 'disagree',
   },
   {
     name: 'right answer absent from the options',
-    question: 'What is 12 multiplied by 12?',
+    question: ARITHMETIC.question,
     options: { 1: '121', 2: '132', 3: '156', 4: '169' },
     keyed: 1,
     expect: 'none',
+  },
+  {
+    name: 'on topic, when a topic is supplied',
+    ...ARITHMETIC,
+    keyed: 1,
+    topic: { name: 'Basic Arithmetic', subtopics: ['multiplication'] },
+    expect: 'agree',
+  },
+  {
+    name: 'belongs to a different subject than the topic asked for',
+    ...ARITHMETIC,
+    keyed: 1,
+    topic: { name: 'Photosynthesis', subtopics: ['chlorophyll', 'light reactions'] },
+    expect: 'off-topic',
   },
 ];
 
@@ -103,11 +128,20 @@ function buildProvider(which) {
   return { label: 'openai (gpt-4.1)', instance: new OpenAIProvider() };
 }
 
-/** What QuestionsProcessor would do with this verdict. */
+/**
+ * What QuestionsProcessor would do with this verdict.
+ *
+ * Order matters and mirrors verifyKeyedAnswers: the answer decides first, and
+ * relevance is only consulted for a question whose answer already checks out.
+ * A question that is both wrongly keyed and off topic is reported as wrongly
+ * keyed, because that is the reason the log would carry.
+ */
 function classify(verdict, keyed) {
   if (!verdict) return 'unreadable';
   if (verdict.correctOption === null) return 'none';
-  return verdict.correctOption === keyed ? 'agree' : 'disagree';
+  if (verdict.correctOption !== keyed) return 'disagree';
+  if (verdict.onTopic === false) return 'off-topic';
+  return 'agree';
 }
 
 async function main(confirmed, opts) {
@@ -134,6 +168,7 @@ async function main(confirmed, opts) {
     const prompt = verifyMcqAnswerPrompt({
       question: testCase.question,
       options: testCase.options,
+      topic: testCase.topic,
     });
 
     let raw = null;
@@ -160,7 +195,8 @@ async function main(confirmed, opts) {
     } else {
       console.log(
         `        verifier answered option ${verdict.correctOption === null ? 'null (none fit)' : verdict.correctOption}` +
-          ` computed=${JSON.stringify(verdict.computedAnswer)}`,
+          ` computed=${JSON.stringify(verdict.computedAnswer)}` +
+          (testCase.topic ? ` onTopic=${verdict.onTopic} difficulty=${verdict.difficulty}` : ''),
       );
     }
     console.log('');

@@ -422,13 +422,19 @@ export function generateMcqPromptFromSpec(
 export function verifyMcqAnswerPrompt(params: {
   question: string;
   options: Record<string, string>;
+  /**
+   * Topic to judge the question against. Omitted when the topic metadata is
+   * too thin to judge by, in which case the review fields are not requested
+   * at all - see reviewableTopic in QuestionsProcessor.
+   */
+  topic?: { name: string; description?: string; subtopics?: string[] };
 }): string {
   const options = Object.keys(params.options)
     .sort((a, b) => Number(a) - Number(b))
     .map((k) => `${k}. ${params.options[k]}`)
     .join('\n');
 
-  return [
+  const lines = [
     'Solve this multiple-choice question.',
     '',
     'Question:',
@@ -440,17 +446,50 @@ export function verifyMcqAnswerPrompt(params: {
     'Work in this order:',
     '1. Solve the question yourself and state your answer, before considering the options.',
     '2. Then check whether your answer appears among the four options above.',
+  ];
+
+  if (params.topic) {
+    lines.push(
+      '3. Only then, judge the question against the topic below. Judge it last: deciding',
+      '   what a question is about is easier than solving it, and doing it first invites',
+      '   you to reason about the answer from the topic instead of working it out.',
+      '',
+      `Topic: ${params.topic.name}`,
+    );
+    if (params.topic.description?.trim()) {
+      lines.push(`Topic description: ${params.topic.description.trim()}`);
+    }
+    if (params.topic.subtopics?.length) {
+      lines.push(`Subtopics: ${params.topic.subtopics.join(', ')}`);
+    }
+  }
+
+  lines.push(
     '',
     'Respond with ONLY a JSON object of exactly this shape, keys in this order:',
-    '{"computedAnswer": "<your answer, stated plainly>", "correctOption": <1, 2, 3, 4 or null>}',
+    params.topic
+      ? '{"computedAnswer": "<your answer, stated plainly>", "correctOption": <1, 2, 3, 4 or null>, "onTopic": <true or false>, "difficulty": "<easy, medium or hard>"}'
+      : '{"computedAnswer": "<your answer, stated plainly>", "correctOption": <1, 2, 3, 4 or null>}',
     '',
     'Set "correctOption" to the number of the option matching your computed answer.',
     'Match on value and meaning, not on exact wording, units formatting or rounding style.',
     'Set "correctOption" to null only when none of the four options expresses your answer.',
     'Do not pick the nearest option when none matches: null is the correct response there.',
-    '',
-    'No explanation, no markdown, no code fences.',
-  ].join('\n');
+  );
+
+  if (params.topic) {
+    lines.push(
+      '',
+      'Set "onTopic" to false only when the question tests a different subject area than the',
+      'topic above. A question that is narrower, broader or unusually phrased is still on',
+      'topic. Judge the subject matter, not the wording or the quality.',
+      'Set "difficulty" to how hard the question is for the average student studying this topic.',
+    );
+  }
+
+  lines.push('', 'No explanation, no markdown, no code fences.');
+
+  return lines.join('\n');
 }
 
 /**
@@ -461,9 +500,13 @@ export function verifyMcqAnswerPrompt(params: {
  * failure, so the two must never collapse into one: the first means "no
  * signal, keep the question", the second means "drop the question".
  */
-export function parseVerifierVerdict(
-  text: string | undefined | null,
-): { computedAnswer: string | null; correctOption: number | null } | null {
+export function parseVerifierVerdict(text: string | undefined | null): {
+  computedAnswer: string | null;
+  correctOption: number | null;
+  /** null when not requested or not answered, never a parse failure. */
+  onTopic: boolean | null;
+  difficulty: 'easy' | 'medium' | 'hard' | null;
+} | null {
   if (!text) return null;
   const start = text.indexOf('{');
   const end = text.lastIndexOf('}');
@@ -489,5 +532,20 @@ export function parseVerifierVerdict(
   const computedAnswer =
     typeof parsed.computedAnswer === 'string' ? parsed.computedAnswer : null;
 
-  return { computedAnswer, correctOption };
+  // The review fields are additive. A reply missing them is a complete answer
+  // to the question that matters, so it must not fail the whole verdict and
+  // turn a usable answer check into "unverified".
+  const onTopic = typeof parsed.onTopic === 'boolean' ? parsed.onTopic : null;
+
+  const rawDifficulty = String(parsed.difficulty ?? '')
+    .trim()
+    .toLowerCase();
+  const difficulty =
+    rawDifficulty === 'easy' ||
+    rawDifficulty === 'medium' ||
+    rawDifficulty === 'hard'
+      ? rawDifficulty
+      : null;
+
+  return { computedAnswer, correctOption, onTopic, difficulty };
 }

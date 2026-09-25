@@ -1,5 +1,9 @@
 import {
+  DUPLICATE_STEM_THRESHOLD,
+  cosineSimilarity,
+  describeQuestionText,
   findDuplicateQuestions,
+  isSemanticDuplicate,
   jaccard,
   numericTokens,
   optionSetKey,
@@ -186,5 +190,73 @@ describe('independence from language', () => {
     expect(
       findDuplicateQuestions([q(stem(7, 4), 'a'), q(stem(7, 6), 'b')]),
     ).toHaveLength(0);
+  });
+});
+
+describe('semantic duplicate detection', () => {
+  // Stand-ins for embeddings. Direction carries the meaning; magnitude does
+  // not, since cosine normalises it.
+  const SAME_MEANING_A = [1, 0, 0, 0];
+  const SAME_MEANING_B = [0.99, 0.1, 0, 0];
+  const DIFFERENT_MEANING = [0, 1, 0, 0];
+
+  it('scores identical vectors as 1 and orthogonal ones as 0', () => {
+    expect(cosineSimilarity([1, 0], [1, 0])).toBeCloseTo(1);
+    expect(cosineSimilarity([1, 0], [0, 1])).toBeCloseTo(0);
+  });
+
+  it('ignores magnitude, so vector length cannot change a verdict', () => {
+    expect(cosineSimilarity([1, 0], [7, 0])).toBeCloseTo(1);
+  });
+
+  it('returns 0 rather than throwing on empty or mismatched vectors', () => {
+    expect(cosineSimilarity([], [])).toBe(0);
+    expect(cosineSimilarity([1, 0], [1, 0, 0])).toBe(0);
+    expect(cosineSimilarity([0, 0], [0, 0])).toBe(0);
+  });
+
+  it('catches a paraphrase that shares almost no wording', () => {
+    // The case token overlap cannot see: same question, different words.
+    const a = describeQuestionText('which structure uses lifo');
+    const b = describeQuestionText('which structure follows last in first out');
+    expect(jaccard(a.tokens, b.tokens)).toBeLessThan(DUPLICATE_STEM_THRESHOLD);
+
+    expect(
+      isSemanticDuplicate(a, b, SAME_MEANING_A, SAME_MEANING_B),
+    ).not.toBeNull();
+  });
+
+  it('leaves questions that merely share a subject alone', () => {
+    const a = describeQuestionText('which structure uses lifo');
+    const b = describeQuestionText('which structure uses fifo');
+    expect(
+      isSemanticDuplicate(a, b, SAME_MEANING_A, DIFFERENT_MEANING),
+    ).toBeNull();
+  });
+
+  it('never merges two questions that pose different quantities', () => {
+    // The guard that matters most here: "arrange 3 books" and "arrange 5
+    // books" sit almost on top of each other in embedding space and are
+    // different questions. Meaning cannot separate them; the digits can.
+    const a = describeQuestionText('arrange 3 items in a row');
+    const b = describeQuestionText('arrange 5 items in a row');
+    expect(
+      isSemanticDuplicate(a, b, SAME_MEANING_A, SAME_MEANING_A),
+    ).toBeNull();
+  });
+
+  it('still merges identical quantities phrased differently', () => {
+    const a = describeQuestionText('arrange 3 items in a row');
+    const b = describeQuestionText('count the orderings of 3 items');
+    expect(
+      isSemanticDuplicate(a, b, SAME_MEANING_A, SAME_MEANING_B),
+    ).not.toBeNull();
+  });
+
+  it('respects an explicitly supplied threshold', () => {
+    const a = describeQuestionText('alpha beta');
+    const b = describeQuestionText('gamma delta');
+    expect(isSemanticDuplicate(a, b, [1, 0], [0.8, 0.6], 0.9)).toBeNull();
+    expect(isSemanticDuplicate(a, b, [1, 0], [0.8, 0.6], 0.7)).not.toBeNull();
   });
 });

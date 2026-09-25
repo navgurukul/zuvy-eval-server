@@ -1,7 +1,11 @@
 import { Processor, WorkerHost } from '@nestjs/bullmq';
 import { Logger } from '@nestjs/common';
 import { Job } from 'bullmq';
-import { generateMcqPromptFromSpec } from 'src/ai-assessment/system_prompts/system_prompts';
+import {
+  generateMcqPromptFromSpec,
+  parseVerifierVerdict,
+  verifyMcqAnswerPrompt,
+} from 'src/ai-assessment/system_prompts/system_prompts';
 import { parseLlmMcq } from 'src/llm/llm_response_parsers/mcqParser';
 import { LlmService } from 'src/llm/llm.service';
 import { EmbeddingsService } from 'src/llm/embeddings.service';
@@ -9,6 +13,7 @@ import { VectorService } from 'src/vector/vector.service';
 import { GenerateTopicBatchJobPayload } from './dto/generate-questions.dto';
 import { QuestionsService } from './questions.service';
 import { shuffleMcqOptionOrder } from './mcq-option-shuffle.util';
+import { findDuplicateQuestions } from './question-similarity.util';
 
 const JOB_NAME = 'generate-topic-batch';
 const QDRANT_QUESTIONS_COLLECTION = 'QUESTIONS';
@@ -21,6 +26,130 @@ const QDRANT_QUESTIONS_COLLECTION = 'QUESTIONS';
  * set does more work for a fraction of the prompt.
  */
 const DEDUPE_NEIGHBOURS = 40;
+
+/**
+ * How many of the topic's most recent questions to load alongside the
+ * semantic neighbours.
+ *
+ * A 60-question request fans out to six independent jobs of ten. None of them
+ * can see the others through the vector store: indexing runs off an outbox
+ * poller, so a sibling batch inserted seconds ago is not searchable yet. The
+ * recency list is the only path that sees those rows, which is why it now runs
+ * alongside semantic retrieval instead of only as its fallback.
+ */
+const RECENT_TOPIC_QUESTIONS = 60;
+
+/** Upper bound on existing questions pasted into the generation prompt. */
+const MAX_EXISTING_TEXTS = 120;
+
+/**
+ * Neighbours to pull per generated question when checking it against the bank.
+ *
+ * Small on purpose. This search starts from the generated question itself, so
+ * a true repeat ranks at or near the top; a wide net would only add texts the
+ * token rules then reject, at the cost of a bigger id lookup.
+ */
+const BANK_NEIGHBOURS = 8;
+
+/**
+ * Verifier calls to keep in flight at once. Generation batches are ten
+ * questions, so this finishes a batch in two waves without presenting a burst
+ * large enough to trip provider rate limits.
+ */
+const VERIFY_CONCURRENCY = 5;
+
+/**
+ * Whether to take a second opinion on each keyed answer before storing it.
+ *
+ * On by default: shipping a question whose correct option is wrong is the
+ * worst failure this service has, because it marks a correct student answer
+ * wrong and the explanation then argues for the wrong option. It roughly
+ * doubles the LLM cost of generation, so there is an escape hatch, but it
+ * has to be set deliberately.
+ */
+const VERIFY_GENERATED_ANSWERS =
+  String(process.env.VERIFY_GENERATED_ANSWERS ?? 'true').toLowerCase() !== 'false';
+
+/**
+ * Which provider solves the verification question first.
+ *
+ * Defaults to the provider that did NOT generate the batch. Generation runs on
+ * OpenAI, so asking OpenAI to re-check its own work shares its blind spots: a
+ * question is keyed wrongly because of one specific mistake, and the model that
+ * made it tends to make it again when re-solving. A different model family
+ * fails differently, which is what makes the second opinion worth paying for.
+ *
+ * LlmService still falls back to the other provider, so if Gemini is
+ * unconfigured or down this degrades to same-model checking rather than to no
+ * checking. Set VERIFIER_PROVIDER=openai to pin it back to one provider.
+ */
+const VERIFIER_PROVIDER: 'openai' | 'genai' =
+  String(process.env.VERIFIER_PROVIDER ?? 'genai').toLowerCase() === 'openai'
+    ? 'openai'
+    : 'genai';
+
+/**
+ * How many times a job may regenerate to replace questions it dropped.
+ *
+ * A request for 60 questions must store 60, so a job that drops 3 asks for 3
+ * more rather than storing 57. Rounds are bounded because the shortfall is not
+ * guaranteed to shrink: a topic narrow enough that every new question repeats
+ * an existing one would otherwise regenerate forever.
+ *
+ * Five is generous for the observed drop rate. A ten-question round losing two
+ * needs one top-up of two, and that top-up would have to fail almost entirely
+ * for a third round to be needed.
+ */
+const MAX_GENERATION_ROUNDS = Math.max(
+  1,
+  Number(process.env.MAX_GENERATION_ROUNDS ?? 5) || 5,
+);
+
+type DifficultyCounts = { easy: number; medium: number; hard: number };
+
+const DIFFICULTIES: Array<keyof DifficultyCounts> = ['easy', 'medium', 'hard'];
+
+/** Null when no difficulty split was requested, so callers can skip the checks. */
+function normalizeDifficultyCounts(
+  source: { easy?: number; medium?: number; hard?: number } | undefined,
+): DifficultyCounts | null {
+  if (!source) return null;
+  const counts: DifficultyCounts = {
+    easy: source.easy ?? 0,
+    medium: source.medium ?? 0,
+    hard: source.hard ?? 0,
+  };
+  return counts.easy + counts.medium + counts.hard > 0 ? counts : null;
+}
+
+function countByDifficulty(items: Array<Record<string, any>>): DifficultyCounts {
+  const counts: DifficultyCounts = { easy: 0, medium: 0, hard: 0 };
+  items.forEach((q) => {
+    const difficulty = String(q.difficulty ?? '')
+      .trim()
+      .toLowerCase() as keyof DifficultyCounts;
+    if (DIFFICULTIES.includes(difficulty)) counts[difficulty] += 1;
+  });
+  return counts;
+}
+
+/**
+ * What is still owed per difficulty.
+ *
+ * Replacing a dropped hard question with a hard question is the whole point:
+ * asking only for "3 more" lets the model return three easy ones and quietly
+ * change the shape of the assessment.
+ */
+function subtractDifficultyCounts(
+  target: DifficultyCounts,
+  have: DifficultyCounts,
+): DifficultyCounts {
+  return {
+    easy: Math.max(0, target.easy - have.easy),
+    medium: Math.max(0, target.medium - have.medium),
+    hard: Math.max(0, target.hard - have.hard),
+  };
+}
 
 const OPTION_KEYS = ['1', '2', '3', '4'];
 const VAGUE_OPTION = /^(all|none) of the above$/i;
@@ -121,6 +250,216 @@ export class QuestionsProcessor extends WorkerHost {
   }
 
   /**
+   * Second opinion on every keyed answer, from a model that cannot see the key.
+   *
+   * This is the only check in the pipeline that can catch a generator which
+   * reasoned wrongly but consistently. assertWellFormedMcqs passes on a
+   * confidently wrong answer, and the generator's own "self-validation pass"
+   * is the same reasoning re-run, so it agrees with itself: the batch that
+   * keyed 288 for a permutation question whose answer is 144 passed every
+   * check that existed.
+   *
+   * Three outcomes, and the difference between the last two matters:
+   *
+   *   - verifier agrees          -> keep the question.
+   *   - verifier picks another   -> drop it. One of the two models is wrong
+   *                                 and we cannot tell which, so shipping it
+   *                                 is a coin flip on a student's score.
+   *   - verifier says "none"     -> drop it. This is the case where the right
+   *                                 answer is missing from the options
+   *                                 entirely, which a forced choice hides.
+   *   - verifier unreadable/down -> KEEP it. An unavailable provider must not
+   *                                 silently empty a batch; it degrades to the
+   *                                 old behaviour and says so in the log.
+   *
+   * Dropping rather than re-keying is deliberate. Measurement put the verifier
+   * itself at fault in a meaningful share of disagreements, so overwriting a
+   * stored answer on one dissenting opinion would introduce its own errors.
+   * Losing a question costs nothing a regeneration cannot replace.
+   */
+  private async verifyKeyedAnswers(
+    candidates: Array<{ q: Record<string, any>; index: number }>,
+    jobId: string | number | undefined,
+  ): Promise<Set<number>> {
+    const rejected = new Set<number>();
+    if (!candidates.length) return rejected;
+
+    let unreadable = 0;
+
+    const verifyOne = async ({ q, index }: { q: Record<string, any>; index: number }) => {
+      const prompt = verifyMcqAnswerPrompt({
+        question: String(q.question ?? ''),
+        options: q.options as Record<string, string>,
+      });
+
+      let verdict: ReturnType<typeof parseVerifierVerdict> = null;
+      try {
+        const response = await this.llmService.generateCompletionPreferring(
+          VERIFIER_PROVIDER,
+          prompt,
+        );
+        verdict = parseVerifierVerdict(response?.text);
+      } catch (err) {
+        this.logger.warn(
+          `Job ${jobId}: verifier call failed for question ${index + 1}: ` +
+            (err instanceof Error ? err.message : String(err)),
+        );
+      }
+
+      if (!verdict) {
+        // No signal. Keep the question rather than fail open in the
+        // destructive direction.
+        unreadable += 1;
+        return;
+      }
+
+      const keyed = Number(q.correctOption);
+
+      if (verdict.correctOption === null) {
+        rejected.add(index);
+        this.logger.warn(
+          `[generation-rejected] job=${jobId} question=${index + 1} reason=no-correct-option ` +
+            `keyed=${keyed} verifierAnswer=${JSON.stringify(verdict.computedAnswer)} ` +
+            `question=${JSON.stringify(String(q.question ?? '').slice(0, 120))}`,
+        );
+        return;
+      }
+
+      if (verdict.correctOption !== keyed) {
+        rejected.add(index);
+        this.logger.warn(
+          `[generation-rejected] job=${jobId} question=${index + 1} reason=answer-disagreement ` +
+            `keyed=${keyed} verifier=${verdict.correctOption} ` +
+            `verifierAnswer=${JSON.stringify(verdict.computedAnswer)} ` +
+            `question=${JSON.stringify(String(q.question ?? '').slice(0, 120))}`,
+        );
+      }
+    };
+
+    // Fixed-size pool rather than Promise.all over the whole batch, so a
+    // larger batch size later cannot turn into a burst of parallel calls.
+    let next = 0;
+    await Promise.all(
+      Array.from({ length: Math.min(VERIFY_CONCURRENCY, candidates.length) }, async () => {
+        while (true) {
+          const cursor = next++;
+          if (cursor >= candidates.length) return;
+          await verifyOne(candidates[cursor]);
+        }
+      }),
+    );
+
+    if (unreadable) {
+      this.logger.warn(
+        `Job ${jobId}: ${unreadable}/${candidates.length} question(s) could not be verified ` +
+          `(provider unavailable or unreadable reply); those were kept unverified.`,
+      );
+    }
+
+    return rejected;
+  }
+
+  /**
+   * Checks each generated question against the whole question bank.
+   *
+   * The existing-questions list pasted into the prompt is capped, so comparing
+   * against it only proves a question does not repeat one of those. In a bank
+   * with thousands of questions on a topic, a repeat of any question outside
+   * that window was invisible - the prompt never saw it and neither did the
+   * batch-level comparison.
+   *
+   * This closes that by searching from the generated question itself rather
+   * than from the topic: embed what the model actually wrote, pull its nearest
+   * neighbours out of the vector store, and run the same deterministic
+   * comparison used inside a batch. Searching per question is what makes the
+   * whole bank reachable; searching per topic returns the same neighbourhood
+   * every time regardless of what was generated.
+   *
+   * The vector score itself is deliberately not used as the threshold. Score
+   * semantics differ between the Qdrant and OpenSearch backends, so the store
+   * is used only to narrow the field and the accept/reject decision stays with
+   * the token rules, which behave identically either way.
+   *
+   * Fails open: a vector store outage logs and returns no duplicates rather
+   * than failing the job or emptying the batch.
+   */
+  private async findBankDuplicates(
+    candidates: Array<{ q: Record<string, any>; index: number }>,
+    orgId: number | undefined,
+    jobId: string | number | undefined,
+  ): Promise<Map<number, string>> {
+    const found = new Map<number, string>();
+    if (!candidates.length) return found;
+
+    let vectors: number[][];
+    try {
+      vectors = await this.embeddingsService.embedMany(
+        candidates.map(({ q }) => String(q.question ?? '')),
+      );
+    } catch (err) {
+      this.logger.warn(
+        `Job ${jobId}: could not embed generated questions, skipping the ` +
+          `bank-wide duplicate check: ` +
+          (err instanceof Error ? err.message : String(err)),
+      );
+      return found;
+    }
+
+    const checkOne = async (cursor: number) => {
+      const { q, index } = candidates[cursor];
+      const queryVector = vectors[cursor];
+      if (!queryVector?.length) return;
+
+      let neighbourTexts: string[];
+      try {
+        const hits = await this.vectorService.search({
+          collectionName: QDRANT_QUESTIONS_COLLECTION,
+          queryVector,
+          limit: BANK_NEIGHBOURS,
+        });
+        const ids = hits
+          .map((h) => Number(h.payload?.questionId ?? h.id))
+          .filter((id) => Number.isFinite(id));
+        if (!ids.length) return;
+
+        // The vector store carries no orgId, so tenant scoping happens here.
+        neighbourTexts = await this.questionsService.getQuestionTextsByIds(ids, orgId);
+      } catch (err) {
+        this.logger.warn(
+          `Job ${jobId}: bank duplicate lookup failed for question ${index + 1}: ` +
+            (err instanceof Error ? err.message : String(err)),
+        );
+        return;
+      }
+
+      // Same rules as the intra-batch check, so a question cannot be judged
+      // one way against a sibling and another way against the bank.
+      const verdicts = findDuplicateQuestions([q], neighbourTexts);
+      if (verdicts.length) {
+        found.set(index, verdicts[0].reason);
+        this.logger.warn(
+          `[generation-rejected] job=${jobId} question=${index + 1} reason=duplicate-in-bank ` +
+            `similarity=${verdicts[0].similarity.toFixed(2)} ` +
+            `detail=${JSON.stringify(verdicts[0].reason)}`,
+        );
+      }
+    };
+
+    let next = 0;
+    await Promise.all(
+      Array.from({ length: Math.min(VERIFY_CONCURRENCY, candidates.length) }, async () => {
+        while (true) {
+          const cursor = next++;
+          if (cursor >= candidates.length) return;
+          await checkOne(cursor);
+        }
+      }),
+    );
+
+    return found;
+  }
+
+  /**
    * Nearest existing questions by meaning, for the "do not repeat these" block.
    *
    * Deliberately unfiltered by topic. Topic names in this database are heavily
@@ -175,6 +514,112 @@ export class QuestionsProcessor extends WorkerHost {
     }
   }
 
+  /**
+   * One generate-and-filter pass. Returns only the questions worth storing.
+   *
+   * The checks fall into two kinds and they fail differently:
+   *
+   *   - Contract breaches (unparseable reply, wrong batch size, wrong
+   *     difficulty mix) throw. The model was asked for something specific and
+   *     did not deliver it, so the whole round is suspect.
+   *   - Quality failures (duplicate, disagreed answer) drop one question and
+   *     return the rest. The caller regenerates the difference.
+   */
+  private async generateFilteredRound(
+    job: Job<GenerateTopicBatchJobPayload, void, string>,
+    ctx: { topicName: string; topicDescription: string; orgId: number | undefined },
+    need: number,
+    needCounts: DifficultyCounts | null,
+    avoidTexts: string[],
+  ): Promise<Array<Record<string, any>>> {
+    const { topicName, topicDescription, orgId } = ctx;
+
+    const prompt = generateMcqPromptFromSpec(
+      {
+        ...job.data,
+        topic: topicName,
+        topicName,
+        topicDescription,
+        count: need,
+        batchQuestionCounts: needCounts ?? undefined,
+      },
+      avoidTexts.slice(0, MAX_EXISTING_TEXTS),
+    );
+
+    const aiResponse = await this.llmService.generateCompletion(prompt);
+    if (!aiResponse?.text) {
+      throw new Error(
+        'LLM returned no response (rate limit or provider down). Job will retry with backoff.',
+      );
+    }
+
+    const parsed = await parseLlmMcq(aiResponse.text);
+    const evaluations = (parsed.evaluations ?? []) as Array<Record<string, any>>;
+    this.assertWellFormedMcqs(evaluations, job.id);
+
+    if (evaluations.length !== need) {
+      throw new Error(
+        `Batch size mismatch for job ${job.id}: expected ${need}, got ${evaluations.length}`,
+      );
+    }
+
+    if (needCounts) {
+      const actual = countByDifficulty(evaluations);
+      if (
+        actual.easy !== needCounts.easy ||
+        actual.medium !== needCounts.medium ||
+        actual.hard !== needCounts.hard
+      ) {
+        throw new Error(
+          `Difficulty mismatch for job ${job.id}: expected easy=${needCounts.easy}, ` +
+            `medium=${needCounts.medium}, hard=${needCounts.hard}; got easy=${actual.easy}, ` +
+            `medium=${actual.medium}, hard=${actual.hard}`,
+        );
+      }
+    }
+
+    const dropped = new Map<number, string>();
+
+    findDuplicateQuestions(evaluations, avoidTexts).forEach((d) => {
+      dropped.set(d.index, `duplicate (similarity ${d.similarity.toFixed(2)}): ${d.reason}`);
+      this.logger.warn(
+        `[generation-rejected] job=${job.id} question=${d.index + 1} reason=duplicate ` +
+          `similarity=${d.similarity.toFixed(2)} detail=${JSON.stringify(d.reason)}`,
+      );
+    });
+
+    const survivors = () =>
+      evaluations
+        .map((q, index) => ({ q, index }))
+        .filter(({ index }) => !dropped.has(index));
+
+    // Against the whole bank, not just the questions shown to the model.
+    // Runs before verification so a repeat is dropped without paying for a
+    // second opinion on it.
+    const bankDuplicates = await this.findBankDuplicates(survivors(), orgId, job.id);
+    bankDuplicates.forEach((reason, index) => {
+      dropped.set(index, `duplicate in bank: ${reason}`);
+    });
+
+    if (VERIFY_GENERATED_ANSWERS) {
+      // Returns original indices within this round, so the log lines and this
+      // map agree on which question is which.
+      const rejected = await this.verifyKeyedAnswers(survivors(), job.id);
+      rejected.forEach((index) => {
+        dropped.set(index, 'answer verification');
+      });
+    }
+
+    if (dropped.size > 0) {
+      this.logger.warn(
+        `Job ${job.id}: dropped ${dropped.size}/${evaluations.length} generated question(s) ` +
+          `for topic "${topicName}". See the [generation-rejected] lines above for each reason.`,
+      );
+    }
+
+    return evaluations.filter((_, index) => !dropped.has(index));
+  }
+
   private async handleGenerateTopicBatch(
     job: Job<GenerateTopicBatchJobPayload, void, string>,
   ) {
@@ -200,89 +645,121 @@ export class QuestionsProcessor extends WorkerHost {
       `Processing job ${job.id}: appending ${count} questions to topic=${topicName}, orgId=${orgId ?? 'none'}, levelId=${levelId ?? 'null'}`,
     );
 
-    let existingTexts: string[] = [];
-    let dedupeSource = 'semantic';
+    // The two lookups answer different questions and both are needed.
+    //
+    // Semantic neighbours cross the topic-name fragmentation in this database
+    // ("Time and Distance" vs "Time And Distance", four spellings of Function
+    // and Scopes) but cannot see rows written in the last few seconds, because
+    // indexing runs off an outbox poller.
+    //
+    // The recency list is exact-match and misses variant spellings, but it is
+    // the only path that sees the sibling batches of the same request. A
+    // 60-question generation is six jobs of ten, so without it job six repeats
+    // what job one already wrote - which is exactly how three restatements of
+    // one shelf-arrangement question reached a student.
+    const [similar, recent] = await Promise.all([
+      this.findSimilarQuestionTexts(job, topicName, topicDescription, orgId),
+      this.questionsService
+        .getRecentQuestionTextsByTopic(topicName, orgId, RECENT_TOPIC_QUESTIONS)
+        .catch((err) => {
+          this.logger.warn(
+            `Job ${job.id}: could not load recent questions for topic "${topicName}", ` +
+              `continuing without them: ${err instanceof Error ? err.message : String(err)}`,
+          );
+          return [] as string[];
+        }),
+    ]);
 
-    const similar = await this.findSimilarQuestionTexts(
-      job,
-      topicName,
-      topicDescription,
-      orgId,
-    );
-
-    if (similar && similar.length > 0) {
-      existingTexts = similar;
-    } else {
-      // Exact topic-name match. Misses every variant spelling, but it needs no
-      // vector store, so it keeps generation working when that is down.
-      dedupeSource = 'topic-name';
-      try {
-        existingTexts = await this.questionsService.getQuestionTextsByTopic(
-          topicName,
-          orgId,
-          200,
-        );
-      } catch (err) {
-        this.logger.warn(
-          `Job ${job.id}: could not load existing questions for topic "${topicName}", continuing without them: ${
-            err instanceof Error ? err.message : String(err)
-          }`,
-        );
-      }
+    // Recent first: those are the ones a sibling batch just wrote, so they
+    // survive the truncation below if the combined list is long.
+    const seen = new Set<string>();
+    const existingTexts: string[] = [];
+    for (const text of [...recent, ...(similar ?? [])]) {
+      const key = String(text ?? '').trim().toLowerCase();
+      if (!key || seen.has(key)) continue;
+      seen.add(key);
+      existingTexts.push(text);
+      if (existingTexts.length >= MAX_EXISTING_TEXTS) break;
     }
 
     if (existingTexts.length > 0) {
       this.logger.log(
-        `Job ${job.id}: including ${existingTexts.length} existing questions (${dedupeSource}) ` +
+        `Job ${job.id}: including ${existingTexts.length} existing questions ` +
+          `(${recent.length} recent, ${similar?.length ?? 0} semantic) ` +
           `for topic "${topicName}" in prompt to avoid duplicates.`,
       );
     }
 
-    const prompt = generateMcqPromptFromSpec(
-      { ...job.data, topic: topicName, topicName, topicDescription },
-      existingTexts,
-    );
+    // A job stores exactly the count it was asked for. Quality filtering drops
+    // individual questions, so the shortfall is regenerated rather than
+    // delivered short: asking for 60 and storing 57 is not an answer.
+    //
+    // Each round requests only the deficit, and the deficit per difficulty, so
+    // a dropped hard question is replaced by a hard one. Questions accepted so
+    // far are carried into the next round's "do not repeat" list, so a top-up
+    // cannot restate what it is topping up.
+    const targetCounts = normalizeDifficultyCounts(job.data.batchQuestionCounts);
+    const accepted: Array<Record<string, any>> = [];
+    const avoidTexts = [...existingTexts];
+    let roundsUsed = 0;
 
-    const aiResponse = await this.llmService.generateCompletion(prompt);
-    if (!aiResponse?.text) {
-      throw new Error(
-        'LLM returned no response (rate limit or provider down). Job will retry with backoff.',
-      );
-    }
-    const parsed = await parseLlmMcq(aiResponse.text);
-    const evaluations = parsed.evaluations ?? [];
-    this.assertWellFormedMcqs(evaluations as Array<Record<string, any>>, job.id);
-    const requiredBatchCounts = job.data.batchQuestionCounts;
-    if (evaluations.length !== count) {
-      throw new Error(
-        `Batch size mismatch for job ${job.id}: expected ${count}, got ${evaluations.length}`,
-      );
-    }
-    if (requiredBatchCounts) {
-      const actualCounts = evaluations.reduce(
-        (acc, q) => {
-          const difficulty = String(q.difficulty ?? '').trim().toLowerCase();
-          if (difficulty === 'easy' || difficulty === 'medium' || difficulty === 'hard') {
-            acc[difficulty] += 1;
-          }
-          return acc;
-        },
-        { easy: 0, medium: 0, hard: 0 },
-      );
-      if (
-        actualCounts.easy !== requiredBatchCounts.easy ||
-        actualCounts.medium !== requiredBatchCounts.medium ||
-        actualCounts.hard !== requiredBatchCounts.hard
-      ) {
-        throw new Error(
-          `Difficulty mismatch for job ${job.id}: expected easy=${requiredBatchCounts.easy}, medium=${requiredBatchCounts.medium}, hard=${requiredBatchCounts.hard}; got easy=${actualCounts.easy}, medium=${actualCounts.medium}, hard=${actualCounts.hard}`,
+    for (let round = 1; round <= MAX_GENERATION_ROUNDS; round++) {
+      const need = count - accepted.length;
+      if (need <= 0) break;
+      roundsUsed = round;
+
+      const needCounts = targetCounts
+        ? subtractDifficultyCounts(targetCounts, countByDifficulty(accepted))
+        : null;
+
+      if (round > 1) {
+        this.logger.log(
+          `Job ${job.id}: round ${round}, regenerating ${need} question(s) to reach ${count}` +
+            (needCounts
+              ? ` (easy=${needCounts.easy}, medium=${needCounts.medium}, hard=${needCounts.hard})`
+              : ''),
         );
       }
+
+      const roundAccepted = await this.generateFilteredRound(
+        job,
+        { topicName, topicDescription, orgId },
+        need,
+        needCounts,
+        avoidTexts,
+      );
+
+      roundAccepted.forEach((q) => {
+        accepted.push(q);
+        // Front of the list: a question written seconds ago is the one the
+        // next round is most likely to restate, and the list gets truncated.
+        avoidTexts.unshift(String(q.question ?? ''));
+      });
+    }
+
+    if (accepted.length < count) {
+      // Deliberately a failure rather than a short batch. The caller asked for
+      // an exact count, and storing fewer without saying so is the behaviour
+      // this loop exists to remove. The job retries with backoff and a fresh
+      // prompt, and the existing pool is untouched because nothing is written
+      // until the count is met.
+      throw new Error(
+        `Job ${job.id}: produced only ${accepted.length}/${count} usable questions for topic ` +
+          `"${topicName}" after ${roundsUsed} round(s); the rest were dropped as duplicates or ` +
+          `failed answer verification. Job will retry.`,
+      );
+    }
+
+    if (roundsUsed > 1) {
+      this.logger.log(
+        `Job ${job.id}: reached the full ${count} question(s) for topic "${topicName}" ` +
+          `in ${roundsUsed} rounds.`,
+      );
     }
 
     const requestedByUserId = job.data.requestedByUserId;
     const inserted = await this.questionsService.createManyWithOutbox(
-      evaluations.map((q) => {
+      accepted.map((q) => {
         const rawLevel = (q as any).level;
         const normalizedLevel =
           typeof rawLevel === 'string'

@@ -343,3 +343,97 @@ export function generateMcqPromptFromSpec(
   
   return sections.join('\n');
 }
+
+/**
+ * Asks a model to solve one MCQ from scratch, with no sight of the keyed
+ * answer, so its verdict is genuinely independent of the generator's.
+ *
+ * This is the only check that can catch a generator that reasoned wrongly but
+ * consistently. The structural checks in QuestionsProcessor pass happily on a
+ * confidently wrong answer, and the generator's own self-validation pass is
+ * just more of the same reasoning that produced the error: a batch that keyed
+ * 288 for the SCHOOL arrangement question (the answer is 144) had written
+ * working agreeing with itself throughout.
+ *
+ * Wording is taken from scripts/measure-answer-disagreement.js, which is the
+ * version the disagreement numbers were measured with, so production and the
+ * harness stay comparable. Two details matter and are easy to lose:
+ *
+ *   - Solving BEFORE looking at the options. Asked the other way round, a
+ *     model talks itself into whichever option looks closest.
+ *   - "correctOption": null being a real, expected answer. Without an explicit
+ *     escape hatch a forced choice hides the case where the right answer is
+ *     missing from the four options entirely.
+ */
+export function verifyMcqAnswerPrompt(params: {
+  question: string;
+  options: Record<string, string>;
+}): string {
+  const options = Object.keys(params.options)
+    .sort((a, b) => Number(a) - Number(b))
+    .map((k) => `${k}. ${params.options[k]}`)
+    .join('\n');
+
+  return [
+    'Solve this multiple-choice question.',
+    '',
+    'Question:',
+    params.question,
+    '',
+    'Options:',
+    options,
+    '',
+    'Work in this order:',
+    '1. Solve the question yourself and state your answer, before considering the options.',
+    '2. Then check whether your answer appears among the four options above.',
+    '',
+    'Respond with ONLY a JSON object of exactly this shape, keys in this order:',
+    '{"computedAnswer": "<your answer, stated plainly>", "correctOption": <1, 2, 3, 4 or null>}',
+    '',
+    'Set "correctOption" to the number of the option matching your computed answer.',
+    'Match on value and meaning, not on exact wording, units formatting or rounding style.',
+    'Set "correctOption" to null only when none of the four options expresses your answer.',
+    'Do not pick the nearest option when none matches: null is the correct response there.',
+    '',
+    'No explanation, no markdown, no code fences.',
+  ].join('\n');
+}
+
+/**
+ * Reads a verifier reply.
+ *
+ * Returns null when the reply could not be read at all. A verdict of
+ * { correctOption: null } is a real answer ("none of these fit"), not a
+ * failure, so the two must never collapse into one: the first means "no
+ * signal, keep the question", the second means "drop the question".
+ */
+export function parseVerifierVerdict(
+  text: string | undefined | null,
+): { computedAnswer: string | null; correctOption: number | null } | null {
+  if (!text) return null;
+  const start = text.indexOf('{');
+  const end = text.lastIndexOf('}');
+  if (start === -1 || end <= start) return null;
+
+  let parsed: any;
+  try {
+    parsed = JSON.parse(text.slice(start, end + 1));
+  } catch {
+    return null;
+  }
+  if (!parsed || typeof parsed !== 'object') return null;
+  if (!('correctOption' in parsed)) return null;
+
+  const raw = parsed.correctOption;
+  let correctOption: number | null = null;
+  if (raw !== null && raw !== undefined && raw !== '') {
+    const n = Number(raw);
+    if (!Number.isInteger(n) || n < 1 || n > 4) return null;
+    correctOption = n;
+  }
+
+  const computedAnswer =
+    typeof parsed.computedAnswer === 'string' ? parsed.computedAnswer : null;
+
+  return { computedAnswer, correctOption };
+}

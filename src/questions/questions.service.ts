@@ -4,7 +4,7 @@ import { Queue } from 'bullmq';
 import { Inject } from '@nestjs/common';
 import { DRIZZLE_DB } from 'src/db/constant';
 import { NodePgDatabase } from 'drizzle-orm/node-postgres';
-import { and, eq, inArray } from 'drizzle-orm';
+import { and, desc, eq, inArray } from 'drizzle-orm';
 import { CreateQuestionDto } from './dto/create-question.dto';
 import {
   GenerateQuestionsDto,
@@ -466,6 +466,41 @@ export class QuestionsService {
       .select({ question: zuvyQuestions.question })
       .from(zuvyQuestions)
       .where(and(...conditions))
+      .limit(limit);
+    return rows.map((r) => r.question).filter(Boolean);
+  }
+
+  /**
+   * The topic's most recently created questions, newest first.
+   *
+   * getQuestionTextsByTopic above has no ORDER BY, so Postgres is free to
+   * return rows in physical order and a LIMIT then takes the OLDEST rows. For
+   * duplicate avoidance that is precisely backwards: the rows that matter are
+   * the ones written seconds ago by a sibling batch of the same request, and
+   * on a topic with a few hundred questions they were never in the sample.
+   * That is how six jobs of ten each produced the same stem.
+   *
+   * Ordering by id rather than createdAt on purpose: id is the primary key, so
+   * this is an index scan, and within one generation run the two orders agree.
+   */
+  async getRecentQuestionTextsByTopic(
+    topicName: string,
+    orgId?: number,
+    limit = 60,
+  ): Promise<string[]> {
+    const normalizedTopic = normalizeTopicName(topicName);
+    if (!normalizedTopic) return [];
+
+    const conditions = [topicNameEquals(zuvyQuestions.topicName, normalizedTopic)];
+    if (orgId) {
+      conditions.push(eq(zuvyQuestions.orgId, orgId));
+    }
+
+    const rows = await this.db
+      .select({ question: zuvyQuestions.question })
+      .from(zuvyQuestions)
+      .where(and(...conditions))
+      .orderBy(desc(zuvyQuestions.id))
       .limit(limit);
     return rows.map((r) => r.question).filter(Boolean);
   }

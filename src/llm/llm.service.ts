@@ -39,44 +39,75 @@ export class LlmService {
     return { text: '', usage: null, latencyMs: 0, provider: null, failed: true };
   }
 
-  async generateCompletion(prompt: string) {
-    try {
-      if (!this.primaryBreaker.isOpen()) {
-        try {
-          const result = await this.executeWithRetry(
-            () => this.primary.completion(prompt),
-            'primary'
-          );
-          this.primaryBreaker.recordSuccess();
-          return { ...result, provider: 'openai' };
-        } catch (error) {
-          this.primaryBreaker.recordFailure();
-          this.logger.warn(`Primary provider failed: ${error.message}`);
-        }
-      } else {
-        this.logger.warn('Primary circuit breaker is OPEN, skipping to fallback');
-      }
+  /**
+   * One attempt at one provider, with that provider's breaker and retry policy.
+   * Returns null when it could not serve the request, so the caller can move on
+   * to the next provider in its order.
+   */
+  private async tryProvider(which: 'openai' | 'genai', prompt: string) {
+    const isPrimary = which === 'openai';
+    const breaker = isPrimary ? this.primaryBreaker : this.fallbackBreaker;
+    const provider = isPrimary ? this.primary : this.fallback;
 
-      if (!this.fallbackBreaker.isOpen()) {
-        try {
-          const result = await this.executeWithRetry(
-            () => this.fallback.completion(prompt),
-            'fallback'
-          );
-          this.fallbackBreaker.recordSuccess();
-          return { ...result, provider: 'genai' };
-        } catch (error) {
-          this.fallbackBreaker.recordFailure();
-          this.logger.error(`Fallback provider failed: ${error.message}`);
-          throw new Error('All LLM providers are unavailable');
-        }
-      }
-
-      throw new Error('All providers circuit breakers are open');
-    } catch (error) {
-      this.logger.error('Error generating response from llm: ', error);
-      return this.failedCompletion();
+    if (breaker.isOpen()) {
+      this.logger.warn(`${which} circuit breaker is OPEN, skipping it`);
+      return null;
     }
+
+    try {
+      const result = await this.executeWithRetry(
+        () => provider.completion(prompt),
+        isPrimary ? 'primary' : 'fallback',
+      );
+      breaker.recordSuccess();
+      return { ...result, provider: which };
+    } catch (error) {
+      breaker.recordFailure();
+      this.logger.warn(`${which} provider failed: ${error.message}`);
+      return null;
+    }
+  }
+
+  private async completionInOrder(
+    order: Array<'openai' | 'genai'>,
+    prompt: string,
+  ) {
+    for (const which of order) {
+      const result = await this.tryProvider(which, prompt);
+      if (result) return result;
+    }
+    this.logger.error(
+      `All LLM providers are unavailable (tried: ${order.join(' then ')})`,
+    );
+    return this.failedCompletion();
+  }
+
+  async generateCompletion(prompt: string) {
+    return this.completionInOrder(['openai', 'genai'], prompt);
+  }
+
+  /**
+   * Same providers and same fallback behaviour, but tries the named one first.
+   *
+   * This exists so a check can run on a different model from the one whose
+   * work it is checking. Asking the model that wrote a question to re-check it
+   * shares its blind spots: a permutation question keyed 288 whose answer is
+   * 144 is wrong because of one specific mistake (treating repeated letters as
+   * distinguishable), and the model that made that mistake tends to make it
+   * again. A different model family fails differently, which is the whole
+   * value of a second opinion.
+   *
+   * Still falls back to the other provider, so preferring a model that is
+   * unconfigured or down degrades to single-model checking rather than to no
+   * checking at all.
+   */
+  async generateCompletionPreferring(
+    preferred: 'openai' | 'genai',
+    prompt: string,
+  ) {
+    const order: Array<'openai' | 'genai'> =
+      preferred === 'genai' ? ['genai', 'openai'] : ['openai', 'genai'];
+    return this.completionInOrder(order, prompt);
   }
 
   private async executeWithRetry(

@@ -3,6 +3,9 @@ import {
   cosineSimilarity,
   describeQuestionText,
   findDuplicateQuestions,
+  findTemplateRepeats,
+  questionSkeleton,
+  SAME_TEMPLATE_THRESHOLD,
   isSemanticDuplicate,
   jaccard,
   numericTokens,
@@ -258,5 +261,87 @@ describe('semantic duplicate detection', () => {
     const b = describeQuestionText('gamma delta');
     expect(isSemanticDuplicate(a, b, [1, 0], [0.8, 0.6], 0.9)).toBeNull();
     expect(isSemanticDuplicate(a, b, [1, 0], [0.8, 0.6], 0.7)).not.toBeNull();
+  });
+});
+
+describe('template repeats', () => {
+  /**
+   * A bank can hold no duplicates and still be repetitive. A review of 40
+   * generated statistics questions found no exact repeats, but seven of them
+   * were "remove a value, then take the mean" with the numbers changed, three
+   * were "what is the range", and three were "what is the standard
+   * deviation".
+   *
+   * The numeric guard that keeps "arrange 3 books" separate from "arrange 5
+   * books" is precisely what lets those through, so this check strips the
+   * numbers instead of relying on them.
+   */
+  const range = (...values: number[]) => ({
+    question: `What is the range of ${values.join(', ')}?`,
+    options: { '1': 'a', '2': 'b' },
+  });
+
+  const mode = (...values: number[]) => ({
+    question: `What is the mode of ${values.join(', ')}?`,
+    options: { '1': 'a', '2': 'b' },
+  });
+
+  it('sees past the data to the exercise underneath', () => {
+    const a = questionSkeleton('What is the range of 4, 6, 8, 10?');
+    const b = questionSkeleton('What is the range of 2, 4, 6, 8?');
+    expect(jaccard(a, b)).toBe(1);
+  });
+
+  it('keeps different exercises apart even over identical data', () => {
+    const a = questionSkeleton('What is the mean of 1, 2, 2, 3, 4?');
+    const b = questionSkeleton('What is the mode of 1, 2, 2, 3, 4?');
+    expect(jaccard(a, b)).toBeLessThan(SAME_TEMPLATE_THRESHOLD);
+  });
+
+  it('allows a template twice and flags the surplus', () => {
+    const batch = [
+      range(4, 6, 8, 10),
+      range(2, 4, 6, 8),
+      range(40, 50, 60, 70),
+    ];
+    const surplus = findTemplateRepeats(batch);
+
+    expect(surplus.map((s) => s.index)).toEqual([2]);
+  });
+
+  it('does not flag a batch of genuinely different exercises', () => {
+    const batch = [
+      range(4, 6, 8, 10),
+      mode(5, 8, 8, 12),
+      {
+        question: 'Which measure of centre is least affected by an outlier?',
+        options: { '1': 'a', '2': 'b' },
+      },
+    ];
+    expect(findTemplateRepeats(batch)).toHaveLength(0);
+  });
+
+  it('counts templates already in the bank against the new batch', () => {
+    // Two already exist, so the first new one is already the third.
+    const surplus = findTemplateRepeats(
+      [range(1, 2, 3, 4)],
+      ['What is the range of 4, 6, 8, 10?', 'What is the range of 2, 4, 6, 8?'],
+    );
+    expect(surplus).toHaveLength(1);
+    expect(surplus[0].reason).toContain('same exercise with different numbers');
+  });
+
+  it('honours a caller-supplied cap', () => {
+    const batch = [range(1, 2), range(3, 4), range(5, 6)];
+    expect(findTemplateRepeats(batch, [], 1).map((s) => s.index)).toEqual([
+      1, 2,
+    ]);
+    expect(findTemplateRepeats(batch, [], 3)).toHaveLength(0);
+  });
+
+  it('ignores questions with no words left once numbers are stripped', () => {
+    expect(() =>
+      findTemplateRepeats([{ question: '4 6 8 10', options: {} }]),
+    ).not.toThrow();
   });
 });

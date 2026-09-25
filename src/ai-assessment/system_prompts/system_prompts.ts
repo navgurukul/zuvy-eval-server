@@ -381,6 +381,12 @@ export function generateMcqPromptFromSpec(
   sections.push('12. Avoid "All of the above" or "None of the above".');
   sections.push('13. Avoid vague or ambiguous wording.');
   sections.push(
+    '13a. VARY THE EXERCISE, NOT JUST THE NUMBERS. Two questions asking the same thing over different data are one question, not two: "the range of 4, 6, 8, 10" and "the range of 2, 4, 6, 8" practise a single skill twice. At most 2 questions in this batch may use the same procedure, and that includes the existing questions listed above.',
+  );
+  sections.push(
+    '13b. Reach for a different task rather than a different dataset: interpreting a result, comparing two datasets, working backwards from an answer to a missing value, choosing which measure suits a situation, or spotting why a stated conclusion is wrong. A batch where every question computes something from a list is a batch testing one skill.',
+  );
+  sections.push(
     '14. If you cannot ensure correctness, return: { "error": "GENERATION_FAILED", "reason": "<short reason>" }',
   );
   if (hasRequiredDifficultyCounts) {

@@ -16,11 +16,17 @@ import { QuestionsService } from './questions.service';
  * questions - a test that passed because of what the words meant would be
  * testing the wrong thing.
  *
- * Verifier decision table:
- *   verifier agrees          -> keep
- *   verifier picks another   -> drop
- *   verifier says "none"     -> drop
- *   no readable verdict      -> keep (an outage must not empty a batch)
+ * Verifier decision table. The stored key counts as a vote, so a
+ * disagreement is one-all and a third solve settles it:
+ *   check agrees                     -> keep, no tie-break paid for
+ *   check disagrees, tie-break backs
+ *     the key                        -> keep, the check was the outlier
+ *   check disagrees, tie-break backs
+ *     the check                      -> drop, two solves say the key is wrong
+ *   all three differ                 -> drop, nothing here is trustworthy
+ *   no readable verdict              -> keep (an outage must not empty a batch)
+ *   no readable tie-break            -> drop, an outage must not rescue
+ *                                       everything either
  */
 
 type Mcq = {
@@ -275,8 +281,15 @@ describe('QuestionsProcessor.verifyKeyedAnswers', () => {
   });
 
   it('asks once per question and never shows the verifier the key', async () => {
+    // Agree with both keys, so no tie-break fires and the count is one call
+    // per question.
     const { processor, generateCompletion } = buildProcessor({
-      completion: () => Promise.resolve({ text: reply(2) }),
+      completion: (prompt) =>
+        Promise.resolve({
+          text: prompt.includes(OTHER_ITEM.question)
+            ? reply(OTHER_ITEM.correctOption)
+            : reply(ITEM.correctOption),
+        }),
     });
 
     await verify(processor, [ITEM, OTHER_ITEM]);
@@ -572,5 +585,94 @@ describe('verifier prompt ordering', () => {
       '{"working":"C(9,4)=126, minus C(7,2)=21","computedAnswer":"105","correctOption":2}',
     );
     expect(verdict).toMatchObject({ computedAnswer: '105', correctOption: 2 });
+  });
+});
+
+describe('QuestionsProcessor tie-break on disagreement', () => {
+  /**
+   * A disagreement says one of the two is wrong, not which. Deciding on the
+   * dissent alone was throwing away sound questions, because the dissent was
+   * often the error: on one combination batch the verifier answered 84 where
+   * C(9,4) - C(7,2) = 105, and returned C(12,5) in full for a question that
+   * required a particular book to be included.
+   *
+   * The stored key is the first vote and the first check the second, so a
+   * third independent solve settles it.
+   */
+
+  /** Answers `first` on call one and `second` on every call after. */
+  const thenAnswers = (first: number | null, second: number | null) => {
+    let calls = 0;
+    return () => {
+      calls += 1;
+      return Promise.resolve({ text: reply(calls === 1 ? first : second) });
+    };
+  };
+
+  it('keeps the question when the tie-break agrees with the stored answer', async () => {
+    // ITEM is keyed 2. First check says 1, tie-break says 2: two of three
+    // back the key, so the first check was the outlier.
+    const { processor, generateCompletion } = buildProcessor({
+      completion: thenAnswers(1, 2),
+    });
+
+    await expect(verify(processor, [ITEM])).resolves.toEqual(new Set());
+    expect(generateCompletion).toHaveBeenCalledTimes(2);
+  });
+
+  it('drops the question when the tie-break confirms the disagreement', async () => {
+    // Two independent solves both say 1 against a key of 2.
+    const { processor } = buildProcessor({ completion: thenAnswers(1, 1) });
+
+    await expect(verify(processor, [ITEM])).resolves.toEqual(new Set([0]));
+  });
+
+  it('drops the question when the three answers all differ', async () => {
+    // Key 2, first check 1, tie-break 3: nobody agrees, so nothing about this
+    // question can be trusted.
+    const { processor } = buildProcessor({ completion: thenAnswers(1, 3) });
+
+    await expect(verify(processor, [ITEM])).resolves.toEqual(new Set([0]));
+  });
+
+  it('rescues a question the first check said had no correct option', async () => {
+    const { processor } = buildProcessor({ completion: thenAnswers(null, 2) });
+
+    await expect(verify(processor, [ITEM])).resolves.toEqual(new Set());
+  });
+
+  it('still drops when both solves find no correct option', async () => {
+    const { processor } = buildProcessor({
+      completion: thenAnswers(null, null),
+    });
+
+    await expect(verify(processor, [ITEM])).resolves.toEqual(new Set([0]));
+  });
+
+  it('spends nothing extra on questions that agree', async () => {
+    const { processor, generateCompletion } = buildProcessor({
+      completion: () => Promise.resolve({ text: reply(ITEM.correctOption) }),
+    });
+
+    await verify(processor, [ITEM]);
+
+    // One call, not two: the tie-break is paid for only where it changes an
+    // outcome.
+    expect(generateCompletion).toHaveBeenCalledTimes(1);
+  });
+
+  it('leaves the disagreement standing when the tie-break cannot be read', async () => {
+    let calls = 0;
+    const { processor } = buildProcessor({
+      completion: () => {
+        calls += 1;
+        return calls === 1
+          ? Promise.resolve({ text: reply(1) })
+          : Promise.reject(new Error('provider down'));
+      },
+    });
+
+    // An outage must not quietly rescue every disputed question.
+    await expect(verify(processor, [ITEM])).resolves.toEqual(new Set([0]));
   });
 });

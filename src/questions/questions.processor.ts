@@ -19,6 +19,7 @@ import { shuffleMcqOptionOrder } from './mcq-option-shuffle.util';
 import {
   describeQuestionText,
   findDuplicateQuestions,
+  findTemplateRepeats,
   isSemanticDuplicate,
 } from './question-similarity.util';
 
@@ -95,6 +96,23 @@ const VERIFIER_PROVIDER: 'openai' | 'genai' =
   String(process.env.VERIFIER_PROVIDER ?? 'genai').toLowerCase() === 'openai'
     ? 'openai'
     : 'genai';
+
+/**
+ * Whether a disagreement gets a third opinion before the question is dropped.
+ *
+ * On by default, and it is the difference between losing a question to a
+ * genuine error and losing it to a careless check. A disagreement means one of
+ * the two is wrong, not which, and the dissent has been measured wrong often
+ * enough that acting on it alone is not safe: on one combination batch the
+ * verifier answered 84 where the answer was 105, and gave the unconstrained
+ * total for a question that named a required element.
+ *
+ * Costs one extra call per disagreement and nothing on the questions that
+ * agree, so it is paid only where it changes an outcome.
+ */
+const TIEBREAK_ON_DISAGREEMENT =
+  String(process.env.TIEBREAK_ON_DISAGREEMENT ?? 'true').toLowerCase() !==
+  'false';
 
 /**
  * How many times a job may regenerate to replace questions it dropped.
@@ -372,6 +390,36 @@ export class QuestionsProcessor extends WorkerHost {
    * stored answer on one dissenting opinion would introduce its own errors.
    * Losing a question costs nothing a regeneration cannot replace.
    */
+  /**
+   * One more independent solve of the same question, for breaking a tie.
+   *
+   * Deliberately the same prompt and the same provider order as the first
+   * check. What makes it a second opinion is that it is a separate sample, not
+   * a different instruction: a re-solve lands on the same answer when the
+   * question is clear and diverges when it is not, which is the signal worth
+   * having. Returns null when it could not be read, so an outage leaves the
+   * original verdict standing rather than silently rescuing every question.
+   */
+  private async solveIndependently(
+    prompt: string,
+    index: number,
+    jobId: string | number | undefined,
+  ): Promise<ReturnType<typeof parseVerifierVerdict>> {
+    try {
+      const response = await this.llmService.generateCompletionPreferring(
+        VERIFIER_PROVIDER,
+        prompt,
+      );
+      return parseVerifierVerdict(response?.text);
+    } catch (err) {
+      this.logger.warn(
+        `Job ${jobId}: tie-break call failed for question ${index + 1}: ` +
+          (err instanceof Error ? err.message : String(err)),
+      );
+      return null;
+    }
+  }
+
   private async verifyKeyedAnswers(
     candidates: Array<{ q: Record<string, any>; index: number }>,
     jobId: string | number | undefined,
@@ -419,25 +467,58 @@ export class QuestionsProcessor extends WorkerHost {
 
       const keyed = Number(q.correctOption);
 
-      if (verdict.correctOption === null) {
-        rejected.add(index);
-        this.logger.warn(
-          `[generation-rejected] job=${jobId} question=${index + 1} reason=no-correct-option ` +
-            `keyed=${keyed} verifierAnswer=${JSON.stringify(verdict.computedAnswer)} ` +
-            `question=${JSON.stringify(String(q.question ?? '').slice(0, 120))}`,
-        );
-        return;
-      }
-
       if (verdict.correctOption !== keyed) {
-        rejected.add(index);
-        this.logger.warn(
-          `[generation-rejected] job=${jobId} question=${index + 1} reason=answer-disagreement ` +
-            `keyed=${keyed} verifier=${verdict.correctOption} ` +
-            `verifierAnswer=${JSON.stringify(verdict.computedAnswer)} ` +
-            `question=${JSON.stringify(String(q.question ?? '').slice(0, 120))}`,
-        );
-        return;
+        // Two sources disagree and neither is reliable enough to decide alone,
+        // so ask a third and let the majority settle it.
+        //
+        // Deciding on one dissent was costing good questions. Checked by hand
+        // against a combination batch, the verifier was the one in the wrong
+        // on several: it answered 84 where C(9,4) - C(7,2) = 105, and returned
+        // C(12,5) in full for a question that required a particular book, the
+        // constraint dropped entirely. Every one of those took a sound
+        // question out of the batch.
+        //
+        // The generator's key is the first vote, this verdict the second. A
+        // third solve breaks the tie:
+        //
+        //   third agrees with the key      -> keep, the verifier was the odd
+        //                                     one out
+        //   third agrees with the verifier -> drop, two independent solves
+        //                                     say the key is wrong
+        //   third says something else      -> drop, nobody agrees and the
+        //                                     question cannot be trusted
+        //
+        // Only disagreements pay for the extra call, and dropping still never
+        // re-keys a question: a majority is enough to distrust a stored answer
+        // and not enough to overwrite one.
+        const second = TIEBREAK_ON_DISAGREEMENT
+          ? await this.solveIndependently(prompt, index, jobId)
+          : null;
+
+        const describeVerdict = (v: typeof verdict) =>
+          v?.correctOption === null ? 'none' : String(v?.correctOption ?? '?');
+
+        if (second && second.correctOption === keyed) {
+          this.logger.log(
+            `Job ${jobId}: question ${index + 1} kept on a tie-break; the first check said ` +
+              `${describeVerdict(verdict)} and a second solve agreed with the stored answer ` +
+              `${keyed}.`,
+          );
+        } else {
+          rejected.add(index);
+          const reason =
+            verdict.correctOption === null
+              ? 'no-correct-option'
+              : 'answer-disagreement';
+          this.logger.warn(
+            `[generation-rejected] job=${jobId} question=${index + 1} reason=${reason} ` +
+              `keyed=${keyed} verifier=${describeVerdict(verdict)} ` +
+              `tiebreak=${second ? describeVerdict(second) : 'unavailable'} ` +
+              `verifierAnswer=${JSON.stringify(verdict.computedAnswer)} ` +
+              `question=${JSON.stringify(String(q.question ?? '').slice(0, 120))}`,
+          );
+          return;
+        }
       }
 
       // A question about a different subject than the one requested is a
@@ -762,6 +843,15 @@ export class QuestionsProcessor extends WorkerHost {
     },
     need: number,
     needCounts: DifficultyCounts | null,
+    /**
+     * Last chance to reach the count, so preferences give way to it.
+     *
+     * Variety and the difficulty mix are both things worth having and neither
+     * is worth returning a short batch for. Holding out for them on the final
+     * round spends it and ends with fewer questions than asked for, which is
+     * the outcome both were meant to improve on.
+     */
+    relaxPreferences: boolean,
     avoidTexts: string[],
   ): Promise<Array<Record<string, any>>> {
     const { topicName, topicDescription, orgId } = ctx;
@@ -844,6 +934,27 @@ export class QuestionsProcessor extends WorkerHost {
       this.logger.warn(
         `[generation-rejected] job=${job.id} question=${d.index + 1} reason=duplicate ` +
           `similarity=${d.similarity.toFixed(2)} detail=${JSON.stringify(d.reason)}`,
+      );
+    });
+
+    // Variety, which is a different question from duplication. A batch can
+    // contain no repeats and still practise one exercise seven times with the
+    // numbers changed; the numeric guard that keeps "arrange 3 books" apart
+    // from "arrange 5 books" is exactly what lets that through.
+    //
+    // Skipped on the final round. A narrow topic has genuinely few exercises,
+    // so enforcing variety to the end guarantees a short batch on exactly the
+    // topics where the count is hardest to reach. Every earlier round pushes
+    // for variety; the last one takes what it can get.
+    const templateRepeats = relaxPreferences
+      ? []
+      : findTemplateRepeats(selected, avoidTexts);
+
+    templateRepeats.forEach((t) => {
+      dropped.set(t.index, `template repeat: ${t.reason}`);
+      this.logger.warn(
+        `[generation-rejected] job=${job.id} question=${t.index + 1} reason=template-repeat ` +
+          `similarity=${t.similarity.toFixed(2)} detail=${JSON.stringify(t.reason)}`,
       );
     });
 
@@ -1000,11 +1111,12 @@ export class QuestionsProcessor extends WorkerHost {
               )
             : null;
 
-        if (targetCounts && lastRound && need > 0) {
+        if (lastRound && need > 0) {
           this.logger.warn(
             `Job ${job.id}: final round for topic "${topicName}"; asking for the remaining ` +
-              `${need} question(s) without a difficulty constraint so the batch reaches ` +
-              `${count}. The stored difficulty mix may not match what was requested.`,
+              `${need} question(s) with the difficulty mix and variety checks relaxed so the ` +
+              `batch reaches ${count}. Some may repeat an exercise already covered, or sit at ` +
+              `a different difficulty than requested.`,
           );
         } else if (round > 1) {
           this.logger.log(
@@ -1020,6 +1132,7 @@ export class QuestionsProcessor extends WorkerHost {
           { topicName, topicDescription, orgId },
           need,
           needCounts,
+          lastRound,
           avoidTexts,
         );
 
@@ -1031,16 +1144,39 @@ export class QuestionsProcessor extends WorkerHost {
         });
       }
 
-      if (accepted.length < count) {
-        // Deliberately a failure rather than a short batch. The caller asked for
-        // an exact count, and storing fewer without saying so is the behaviour
-        // this loop exists to remove. The job retries with backoff and a fresh
-        // prompt, and the existing pool is untouched because nothing is written
-        // until the count is met.
+      if (accepted.length === 0) {
+        // Nothing survived, so there is nothing to keep and a retry is the only
+        // way forward. A fresh prompt may do better; storing zero and calling
+        // it done would not.
         throw new Error(
-          `Job ${job.id}: produced only ${accepted.length}/${count} usable questions for topic ` +
-            `"${topicName}" after ${roundsUsed} round(s); the rest were dropped as duplicates or ` +
-            `failed answer verification. Job will retry.`,
+          `Job ${job.id}: produced no usable questions for topic "${topicName}" after ` +
+            `${roundsUsed} round(s); every one was dropped as a duplicate or failed answer ` +
+            `verification. Job will retry.`,
+        );
+      }
+
+      if (accepted.length < count) {
+        // Short, but keep what passed.
+        //
+        // This used to throw, on the reasoning that an exact count was the
+        // promise. In practice it cost far more than it protected: a job one
+        // question short discarded the other nine, then BullMQ retried it five
+        // times with exponential backoff, regenerating and re-verifying work
+        // that was already good. A request for 30 came back as 20 - not
+        // because ten questions were bad, but because one was missing.
+        //
+        // The rule existed to stop a partial write plus a retry from storing
+        // the same questions twice. Succeeding rather than throwing removes
+        // the retry, so that risk goes away instead of being traded off.
+        //
+        // Logged at error level because it is not routine: it means the topic
+        // could not yield the questions asked for, and the shortfall is real
+        // and needs someone to notice.
+        this.logger.error(
+          `Job ${job.id}: storing ${accepted.length} of the ${count} question(s) requested for ` +
+            `topic "${topicName}" after ${roundsUsed} round(s). The rest were dropped as ` +
+            `duplicates or failed answer verification, and regenerating produced no more. ` +
+            `Generate again for this topic if the full count is needed.`,
         );
       }
 

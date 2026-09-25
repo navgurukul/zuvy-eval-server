@@ -34,6 +34,30 @@ function questionInPrompt(prompt: string): string {
   return match ? match[1] : '';
 }
 
+/**
+ * Stand-in for a real embedding: one dimension per distinct word.
+ *
+ * It must give distinct text distinct directions. A mock returning one vector
+ * for everything makes every question a paraphrase of every other, so the
+ * semantic duplicate check drops the whole batch and these tests measure
+ * nothing.
+ */
+function fakeEmbedding(text: string): number[] {
+  const vector = new Array(64).fill(0) as number[];
+  String(text)
+    .toLowerCase()
+    .split(/[^a-z0-9]+/)
+    .filter(Boolean)
+    .forEach((word) => {
+      let hash = 0;
+      for (let i = 0; i < word.length; i++) {
+        hash = (hash * 31 + word.charCodeAt(i)) >>> 0;
+      }
+      vector[hash % 64] += 1;
+    });
+  return vector;
+}
+
 describe('QuestionsProcessor top-up loop', () => {
   let counter = 0;
 
@@ -60,7 +84,7 @@ describe('QuestionsProcessor top-up loop', () => {
       const evaluations = Array.from({ length: n }, () => {
         counter += 1;
         return {
-          question: `wug lorp question number ${counter}`,
+          question: `wug${counter} lorp${counter} blint praxil`,
           solution: 'working',
           options: {
             '1': `${counter}a`,
@@ -110,8 +134,9 @@ describe('QuestionsProcessor top-up loop', () => {
       } as unknown as LlmService,
       questionsService as unknown as QuestionsService,
       {
-        embed: () => Promise.resolve([0.1]),
-        embedMany: (texts: string[]) => Promise.resolve(texts.map(() => [0.1])),
+        embed: () => Promise.resolve(fakeEmbedding('query')),
+        embedMany: (texts: string[]) =>
+          Promise.resolve(texts.map(fakeEmbedding)),
       } as unknown as EmbeddingsService,
       { search: () => Promise.resolve([]) } as unknown as VectorService,
     );
@@ -187,8 +212,8 @@ describe('QuestionsProcessor top-up loop', () => {
   it('regenerates the shortfall so the stored count still matches the request', async () => {
     // The verifier disagrees with the first two questions it ever sees.
     const rejected = new Set([
-      'wug lorp question number 1',
-      'wug lorp question number 2',
+      'wug1 lorp1 blint praxil',
+      'wug2 lorp2 blint praxil',
     ]);
     const { processor, createManyWithOutbox, generationPrompts } =
       buildProcessor((q) => rejected.has(q));
@@ -204,16 +229,53 @@ describe('QuestionsProcessor top-up loop', () => {
     expect(requestedCount(generationPrompts[1])).toBe(2);
   });
 
-  it('never stores the questions it did reach when it cannot reach the count', async () => {
-    // Nothing ever passes, so no round can make progress.
+  it('retries when nothing at all survived', async () => {
+    // Nothing ever passes, so no round makes progress and there is nothing
+    // worth keeping. A fresh prompt on a retry is the only way forward.
     const { processor, createManyWithOutbox } = buildProcessor(() => true);
 
-    await expect(runJob(processor, 10)).rejects.toThrow(/produced only 0\/10/);
-
-    // The point of accumulating before writing: a job that cannot deliver the
-    // full count writes nothing at all, rather than leaving a partial batch
-    // behind for the retry to duplicate.
+    await expect(runJob(processor, 10)).rejects.toThrow(/no usable questions/);
     expect(createManyWithOutbox).not.toHaveBeenCalled();
+  });
+
+  it('keeps what passed when it cannot reach the full count', async () => {
+    // One question is rejected forever, so the job can never reach ten. It
+    // used to throw and discard the nine that were verified and good, then
+    // retry five times regenerating them: a request for 30 came back as 20
+    // because one question was missing, not because ten were bad.
+    let seen = 0;
+    const { processor, createManyWithOutbox } = buildProcessor(() => {
+      // Reject exactly one question per round, whichever comes last.
+      seen += 1;
+      return seen % 10 === 0;
+    });
+
+    await runJob(processor, 10);
+
+    expect(createManyWithOutbox).toHaveBeenCalledTimes(1);
+    const stored = createManyWithOutbox.mock.calls[0][0];
+    expect(stored.length).toBeGreaterThan(0);
+    expect(stored.length).toBeLessThanOrEqual(10);
+  });
+
+  it('succeeds on a short batch so BullMQ does not retry it', async () => {
+    // Succeeding rather than throwing is what removes the retry, and with it
+    // the risk a partial write was guarding against: nothing regenerates, so
+    // nothing can be stored twice.
+    const rejectAll = new Set<string>();
+    const { processor, createManyWithOutbox } = buildProcessor((q) => {
+      // Let the first round through, reject every top-up after it.
+      if (rejectAll.has('started')) return true;
+      if (q.includes('wug10 ')) {
+        rejectAll.add('started');
+        return true;
+      }
+      return false;
+    });
+
+    // Resolves rather than rejects: the job is done, not failed.
+    await expect(runJob(processor, 10)).resolves.toBeUndefined();
+    expect(createManyWithOutbox.mock.calls[0][0]).toHaveLength(9);
   });
 
   it('trims an over-long batch instead of failing the job', async () => {
@@ -258,9 +320,78 @@ describe('QuestionsProcessor top-up loop', () => {
     expect(last).not.toContain('REQUIRED DIFFICULTY COUNTS');
   });
 
+  it('relaxes the variety check on the last round so the count is still met', async () => {
+    // Every question shares one skeleton once the numbers are stripped, so
+    // the variety cap would hold the batch short forever. A narrow topic
+    // genuinely has few exercises, and the count is the promise; variety is a
+    // preference that gives way on the final round.
+    counter = 0;
+    const generationPrompts: string[] = [];
+    const createManyWithOutbox = jest.fn((rows: Row[]) =>
+      Promise.resolve(rows.map((r, i) => ({ ...r, id: i + 1 }))),
+    );
+
+    const generate = (prompt: string) => {
+      generationPrompts.push(prompt);
+      const evaluations = Array.from({ length: requestedCount(prompt) }, () => {
+        counter += 1;
+        // Same wording every time: one template, numbers apart.
+        return {
+          question: `what is the range of ${counter}, ${counter + 1}, ${counter + 2}`,
+          solution: 'working',
+          options: { '1': 'a', '2': 'b', '3': 'c', '4': 'd' },
+          correctOption: 1,
+          difficulty: 'easy',
+          language: 'en',
+          level: 'C',
+        };
+      });
+      return Promise.resolve({ text: JSON.stringify({ evaluations }) });
+    };
+
+    const processor = new QuestionsProcessor(
+      {
+        generateCompletion: jest.fn(generate),
+        generateCompletionPreferring: jest.fn((_p: string, prompt: string) =>
+          isVerifierPrompt(prompt)
+            ? Promise.resolve({
+                text: JSON.stringify({ computedAnswer: 'x', correctOption: 1 }),
+              })
+            : generate(prompt),
+        ),
+      } as unknown as LlmService,
+      {
+        resolveCanonicalTopic: () =>
+          Promise.resolve({
+            topicName: 'Statistics',
+            topicDescription: 'desc',
+          }),
+        getRecentQuestionTextsByTopic: () => Promise.resolve([]),
+        getQuestionTextsByIds: () => Promise.resolve([]),
+        createManyWithOutbox,
+      } as unknown as QuestionsService,
+      {
+        embed: () => Promise.resolve(fakeEmbedding('query')),
+        embedMany: (texts: string[]) =>
+          Promise.resolve(texts.map(fakeEmbedding)),
+      } as unknown as EmbeddingsService,
+      { search: () => Promise.resolve([]) } as unknown as VectorService,
+    );
+    (processor as unknown as { logger: Record<string, jest.Mock> }).logger = {
+      warn: jest.fn(),
+      log: jest.fn(),
+      error: jest.fn(),
+      debug: jest.fn(),
+    };
+
+    await runJob(processor, 10);
+
+    expect(createManyWithOutbox.mock.calls[0][0]).toHaveLength(10);
+  });
+
   it('carries accepted questions into the next round so a top-up cannot repeat them', async () => {
     const { processor, generationPrompts } = buildProcessor(
-      (q) => q === 'wug lorp question number 1',
+      (q) => q === 'wug1 lorp1 blint praxil',
     );
 
     await runJob(processor, 5);
@@ -268,6 +399,6 @@ describe('QuestionsProcessor top-up loop', () => {
     expect(generationPrompts).toHaveLength(2);
     // Question 2 was accepted in round 1, so round 2 must be told not to
     // restate it.
-    expect(generationPrompts[1]).toContain('wug lorp question number 2');
+    expect(generationPrompts[1]).toContain('wug2 lorp2 blint praxil');
   });
 });

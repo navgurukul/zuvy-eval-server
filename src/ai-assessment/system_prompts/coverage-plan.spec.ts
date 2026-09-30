@@ -2,6 +2,7 @@ import {
   generateMcqPromptFromSpec,
   parseExerciseTypes,
   planExerciseTypesPrompt,
+  verifyMcqAnswerPrompt,
 } from './system_prompts';
 
 /**
@@ -175,5 +176,51 @@ describe('the generation prompt is subject-neutral too', () => {
     const prompt = promptFor('General knowledge');
     expect(prompt).toMatch(/recalling something/i);
     expect(prompt).toMatch(/finding the flaw in a stated conclusion/i);
+  });
+});
+
+/**
+ * The fairness checks have to hold outside mathematics too.
+ *
+ * A prompt that teaches with an example from one subject steers every other
+ * subject towards it, and the two defects these fields exist to catch are not
+ * numeric problems. A question can determine nothing in history ("which of
+ * these four years did the treaty hold?" when it held in all of them) and two
+ * options can say the same thing in biology as easily as in algebra.
+ */
+describe('the verifier prompt is subject-neutral', () => {
+  const promptFor = (topic: string) =>
+    verifyMcqAnswerPrompt({
+      question: 'wug lorp blint',
+      options: { '1': 'a', '2': 'b', '3': 'c', '4': 'd' },
+      topic: { name: topic },
+    }).replace(/\s+/g, ' ');
+
+  it('names no subject when explaining what makes a question unfair', () => {
+    ['Arrays', 'General knowledge', 'Indian history', 'Photosynthesis'].forEach(
+      (topic) => {
+        expect(promptFor(topic)).not.toMatch(
+          /equation|logarithm|the unknown|both sides|cancel out|arithmetic/i,
+        );
+      },
+    );
+  });
+
+  it('asks for both fairness judgements whatever the subject', () => {
+    const prompt = promptFor('Indian history');
+    expect(prompt).toMatch(/answerIsForced/);
+    expect(prompt).toMatch(/optionVerdicts/);
+    expect(prompt).toMatch(/judged by itself/i);
+  });
+
+  it('asks for them even when no topic is supplied', () => {
+    // reviewableTopic returns null for a topic too thin to judge by, and the
+    // answer still has to be checked for fairness in that case.
+    const prompt = verifyMcqAnswerPrompt({
+      question: 'wug lorp blint',
+      options: { '1': 'a', '2': 'b', '3': 'c', '4': 'd' },
+    });
+    expect(prompt).toMatch(/answerIsForced/);
+    expect(prompt).toMatch(/optionVerdicts/);
   });
 });

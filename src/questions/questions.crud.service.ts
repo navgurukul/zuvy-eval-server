@@ -8,7 +8,10 @@ import { DRIZZLE_DB } from 'src/db/constant';
 import { NodePgDatabase } from 'drizzle-orm/node-postgres';
 import { and, desc, eq, ne, notInArray, sql } from 'drizzle-orm';
 import { aiAssessmentQuestions } from 'src/ai-assessment/ai-assessment.questions.schema';
-import { zuvyQuestions } from './schema/zuvy-questions.schema';
+import {
+  questionIndexOutbox,
+  zuvyQuestions,
+} from './schema/zuvy-questions.schema';
 import { CreateQuestionDto } from './dto/create-question.dto';
 import { UpdateQuestionDto } from './dto/update-question.dto';
 import { topicNameEquals, normalizeTopicName } from 'src/topic/topic-name.util';
@@ -22,31 +25,46 @@ export class QuestionsCrudService {
       throw new BadRequestException('orgId is required');
     }
 
-    const [row] = await this.db
-      .insert(zuvyQuestions)
-      .values({
-        orgId: orgId,
-        domainName: null,
-        topicName: normalizeTopicName(dto.topicName),
-        topicDescription: dto.topicDescription,
-        subtopics: dto.subtopics ?? null,
-        learningObjectives: dto.learningObjectives ?? null,
-        targetAudience: dto.targetAudience ?? null,
-        focusAreas: dto.focusAreas ?? null,
-        bloomsLevel: dto.bloomsLevel ?? null,
-        questionStyle: dto.questionStyle ?? null,
-        question: dto.question,
-        difficulty: dto.difficulty ?? null,
-        language: dto.language ?? null,
-        options: dto.options,
-        correctOption: dto.correctOption,
-        difficultyDistribution: dto.difficultyDistribution ?? null,
-        questionCounts: dto.questionCounts ?? null,
-        levelId: dto.levelId ?? null,
-      } as any)
-      .returning();
+    // Queued for indexing in the same transaction as the insert, exactly as
+    // generated questions are.
+    //
+    // Without this a hand-written question is stored and never embedded, so it
+    // is invisible to everything that reads the search index: mapping cannot
+    // select it into an assessment, and the duplicate checks cannot see it, so
+    // generation is free to write it again.
+    return this.db.transaction(async (tx) => {
+      const [row] = await tx
+        .insert(zuvyQuestions)
+        .values({
+          orgId: orgId,
+          domainName: null,
+          topicName: normalizeTopicName(dto.topicName),
+          topicDescription: dto.topicDescription,
+          subtopics: dto.subtopics ?? null,
+          learningObjectives: dto.learningObjectives ?? null,
+          targetAudience: dto.targetAudience ?? null,
+          focusAreas: dto.focusAreas ?? null,
+          bloomsLevel: dto.bloomsLevel ?? null,
+          questionStyle: dto.questionStyle ?? null,
+          question: dto.question,
+          difficulty: dto.difficulty ?? null,
+          language: dto.language ?? null,
+          options: dto.options,
+          correctOption: dto.correctOption,
+          difficultyDistribution: dto.difficultyDistribution ?? null,
+          questionCounts: dto.questionCounts ?? null,
+          levelId: dto.levelId ?? null,
+        } as any)
+        .returning();
 
-    return row;
+      await tx.insert(questionIndexOutbox).values({
+        questionId: row.id,
+        requestedByUserId: null,
+        status: 'pending',
+      });
+
+      return row;
+    });
   }
 
   async findAll(params: {
@@ -184,17 +202,44 @@ export class QuestionsCrudService {
 
     patch.updatedAt = sql`now()`;
 
-    const [row] = await this.db
-      .update(zuvyQuestions)
-      .set(patch as any)
-      .where(and(eq(zuvyQuestions.id, id), eq(zuvyQuestions.orgId, orgId)))
-      .returning();
+    // Whether this edit changes what the question means in the search index.
+    //
+    // The index embeds the question, topic name, topic description, subtopics
+    // and difficulty. Editing any of those and leaving the old vector in place
+    // means the stored point no longer describes the row: search ranks it for
+    // wording it no longer has, and the duplicate checks compare new questions
+    // against text that has been rewritten. Options and the correct answer are
+    // not embedded, so fixing a wrong answer needs no re-index.
+    const EMBEDDED_FIELDS = [
+      'question',
+      'topicName',
+      'topicDescription',
+      'subtopics',
+      'difficulty',
+    ] as const;
+    const reindex = EMBEDDED_FIELDS.some((field) => field in patch);
 
-    if (!row) {
-      throw new NotFoundException('Question not found');
-    }
+    return this.db.transaction(async (tx) => {
+      const [row] = await tx
+        .update(zuvyQuestions)
+        .set(patch as any)
+        .where(and(eq(zuvyQuestions.id, id), eq(zuvyQuestions.orgId, orgId)))
+        .returning();
 
-    return row;
+      if (!row) {
+        throw new NotFoundException('Question not found');
+      }
+
+      if (reindex) {
+        await tx.insert(questionIndexOutbox).values({
+          questionId: row.id,
+          requestedByUserId: null,
+          status: 'pending',
+        });
+      }
+
+      return row;
+    });
   }
 
   async remove(orgId: number, id: number) {

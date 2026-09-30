@@ -94,6 +94,36 @@ const CASES = [
     topic: { name: 'Photosynthesis', subtopics: ['chlorophyll', 'light reactions'] },
     expect: 'off-topic',
   },
+
+  /**
+   * The two defects a tester found in a shipped logarithm batch. Both were
+   * keyed with an option a reasonable person would pick, so both passed every
+   * check that only asks whether the key matches the answer.
+   */
+  {
+    name: 'no answer is forced: the two terms cancel for every base',
+    question:
+      'If log_a(100) + log_a(0.01) = 0, what is the value of the base a?',
+    // Every option is a specific base, and none of them is more correct than
+    // the others, because the left side is log_a(1) = 0 whatever a is. An
+    // option saying "any valid base" would make this a fair question with a
+    // right answer, which is the opposite of the case under test.
+    options: { 1: '2', 2: '10', 3: '100', 4: '1000' },
+    keyed: 2,
+    expect: 'no-unique-answer',
+  },
+  {
+    name: 'two options are worth the same',
+    question: 'Which expression is equal to log_4(8)?',
+    options: {
+      1: 'log_10(8) / log_10(4)',
+      2: 'log_10(4) / log_10(8)',
+      3: 'log_4(8) / log_4(4)',
+      4: 'log_8(4) / log_8(8)',
+    },
+    keyed: 1,
+    expect: 'multiple-correct-options',
+  },
 ];
 
 function parseArgs(argv) {
@@ -138,6 +168,13 @@ function buildProvider(which) {
  */
 function classify(verdict, keyed) {
   if (!verdict) return 'unreadable';
+  // Fairness first, exactly as verifyKeyedAnswers asks it: a question that
+  // determines nothing has no key worth checking, and a question with two
+  // correct options can have a key that checks out perfectly.
+  if (verdict.answerIsForced === false) return 'no-unique-answer';
+  if (verdict.correctOptionCount !== null && verdict.correctOptionCount > 1) {
+    return 'multiple-correct-options';
+  }
   if (verdict.correctOption === null) return 'none';
   if (verdict.correctOption !== keyed) return 'disagree';
   if (verdict.onTopic === false) return 'off-topic';
@@ -196,6 +233,7 @@ async function main(confirmed, opts) {
       console.log(
         `        verifier answered option ${verdict.correctOption === null ? 'null (none fit)' : verdict.correctOption}` +
           ` computed=${JSON.stringify(verdict.computedAnswer)}` +
+          ` forced=${verdict.answerIsForced} correctOptions=${verdict.correctOptionCount}` +
           (testCase.topic ? ` onTopic=${verdict.onTopic} difficulty=${verdict.difficulty}` : ''),
       );
     }

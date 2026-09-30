@@ -464,6 +464,7 @@ export function verifyMcqAnswerPrompt(params: {
 
   const lines = [
     'Solve this multiple-choice question.',
+    'Then check that it is a fair question to ask: one answer, and only one option giving it.',
     '',
     'Question:',
     params.question,
@@ -473,12 +474,19 @@ export function verifyMcqAnswerPrompt(params: {
     '',
     'Work in this order:',
     '1. Solve the question yourself and state your answer, before considering the options.',
-    '2. Then check whether your answer appears among the four options above.',
+    '2. Decide whether the question pins that answer down. A question is only fair if the',
+    '   information it gives forces one answer. If the stated conditions hold for every',
+    '   value, or for more than one, the question determines nothing and is unfair however',
+    '   plausible one option looks.',
+    '3. Then test each of the four options ON ITS OWN. For every option, work out whether',
+    '   it is a correct answer to the question. Do not stop at the first option that',
+    '   matches: options can be written differently and still be worth the same, and an',
+    '   option you have not evaluated is one you cannot call wrong.',
   ];
 
   if (params.topic) {
     lines.push(
-      '3. Only then, judge the question against the topic below. Judge it last: deciding',
+      '4. Only then, judge the question against the topic below. Judge it last: deciding',
       '   what a question is about is easier than solving it, and doing it first invites',
       '   you to reason about the answer from the topic instead of working it out.',
       '',
@@ -496,8 +504,8 @@ export function verifyMcqAnswerPrompt(params: {
     '',
     'Respond with ONLY a JSON object of exactly this shape, keys in this order:',
     params.topic
-      ? '{"working": "<your step by step working>", "computedAnswer": "<your answer, stated plainly>", "correctOption": <1, 2, 3, 4 or null>, "onTopic": <true or false>, "difficulty": "<easy, medium or hard>"}'
-      : '{"working": "<your step by step working>", "computedAnswer": "<your answer, stated plainly>", "correctOption": <1, 2, 3, 4 or null>}',
+      ? '{"working": "<your step by step working>", "computedAnswer": "<your answer, stated plainly>", "answerIsForced": <true or false>, "optionVerdicts": {"1": <true or false>, "2": <true or false>, "3": <true or false>, "4": <true or false>}, "correctOption": <1, 2, 3, 4 or null>, "onTopic": <true or false>, "difficulty": "<easy, medium or hard>"}'
+      : '{"working": "<your step by step working>", "computedAnswer": "<your answer, stated plainly>", "answerIsForced": <true or false>, "optionVerdicts": {"1": <true or false>, "2": <true or false>, "3": <true or false>, "4": <true or false>}, "correctOption": <1, 2, 3, 4 or null>}',
     '',
     'Write "working" FIRST and in full. Show every step, name each constraint in the',
     'question and say how you applied it, and restate the question in your own words',
@@ -506,6 +514,22 @@ export function verifyMcqAnswerPrompt(params: {
     'counting questions it is usually wrong.',
     'Re-read the question once the working is complete and confirm you used every',
     'condition it states. Missing one is the most common way to get these wrong.',
+    '',
+    'Set "answerIsForced" to false when the question does not single out one answer: when',
+    'what it states is satisfied by every candidate, or by more than one, or when it leaves',
+    'out something needed to decide. This is about what the question determines, not about',
+    'how hard it is. A question can read as precise and still rule nothing out, because the',
+    'condition it rests on holds whichever answer you try; test that by checking whether a',
+    'different answer would break anything the question actually says.',
+    'Set it to true when the question genuinely forces exactly one answer.',
+    '',
+    'Set each entry of "optionVerdicts" to true when THAT option, judged by itself, is a',
+    'correct answer to the question, and false when it is not. Judge meaning, not',
+    'appearance: two options written differently can say the same thing, and both are then',
+    'true. An option that amounts to a correct answer counts as true, however it is put.',
+    'Give a verdict for all four options. More than one true is a real and expected answer',
+    'here, not a mistake to avoid - a question with two correct options is exactly what this',
+    'field exists to report.',
     '',
     'Set "correctOption" to the number of the option matching your computed answer.',
     'Match on value and meaning, not on exact wording, units formatting or rounding style.',
@@ -539,6 +563,27 @@ export function verifyMcqAnswerPrompt(params: {
 export function parseVerifierVerdict(text: string | undefined | null): {
   computedAnswer: string | null;
   correctOption: number | null;
+  /**
+   * How many of the four options the reviewer judged correct, or null when it
+   * did not say.
+   *
+   * Two correct options is not a wrong answer - the keyed one may be perfectly
+   * right - so it is invisible to correctOption and needs its own count. A
+   * change-of-base question shipped with log10(8)/log10(4) keyed correct and
+   * log4(8)/log4(4) sitting beside it, worth the same thing because log4(4) is
+   * 1. Whichever the student picks, one of them is marked wrong.
+   */
+  correctOptionCount: number | null;
+  /**
+   * Whether the question forces one answer, or null when the reviewer did not
+   * say.
+   *
+   * A question can have a correct-looking key and still determine nothing. One
+   * shipped asking for the base a in log_a(100) + log_a(0.01), keyed 10: by the
+   * product law the left side is log_a(1), which is 0 for every valid base, so
+   * a is never pinned down and 10 is no more correct than any other answer.
+   */
+  answerIsForced: boolean | null;
   /** null when not requested or not answered, never a parse failure. */
   onTopic: boolean | null;
   difficulty: 'easy' | 'medium' | 'hard' | null;
@@ -573,6 +618,22 @@ export function parseVerifierVerdict(text: string | undefined | null): {
   // turn a usable answer check into "unverified".
   const onTopic = typeof parsed.onTopic === 'boolean' ? parsed.onTopic : null;
 
+  const answerIsForced =
+    typeof parsed.answerIsForced === 'boolean' ? parsed.answerIsForced : null;
+
+  // Counted only when the reviewer gave a verdict on every option. A partial
+  // map cannot show that a second option is correct - the unjudged ones might
+  // be - so counting one from it would invent a reason to keep a question
+  // rather than a reason to drop it.
+  let correctOptionCount: number | null = null;
+  const verdicts = parsed.optionVerdicts;
+  if (verdicts && typeof verdicts === 'object' && !Array.isArray(verdicts)) {
+    const values = ['1', '2', '3', '4'].map((k) => verdicts[k]);
+    if (values.every((v) => typeof v === 'boolean')) {
+      correctOptionCount = values.filter(Boolean).length;
+    }
+  }
+
   const rawDifficulty = String(parsed.difficulty ?? '')
     .trim()
     .toLowerCase();
@@ -583,7 +644,14 @@ export function parseVerifierVerdict(text: string | undefined | null): {
       ? rawDifficulty
       : null;
 
-  return { computedAnswer, correctOption, onTopic, difficulty };
+  return {
+    computedAnswer,
+    correctOption,
+    correctOptionCount,
+    answerIsForced,
+    onTopic,
+    difficulty,
+  };
 }
 
 /**

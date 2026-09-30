@@ -24,8 +24,18 @@ function requestedCount(prompt: string): number {
   return match ? Number(match[1]) : 0;
 }
 
+/**
+ * Matched on the shape the verifier asks for rather than on its opening line.
+ *
+ * Keying this to the first sentence made the mock silently misroute every
+ * verifier call the moment that sentence was reworded: the prompts fell
+ * through to the generator, which answered them with a fresh batch of
+ * questions, and six tests failed for reasons that had nothing to do with
+ * what they were testing. The requested JSON shape is what actually
+ * distinguishes the two prompts.
+ */
 function isVerifierPrompt(prompt: string): boolean {
-  return prompt.startsWith('Solve this multiple-choice question.');
+  return prompt.includes('"correctOption": <1, 2, 3, 4 or null>');
 }
 
 /**
@@ -244,11 +254,11 @@ describe('QuestionsProcessor top-up loop', () => {
   });
 
   it('regenerates the shortfall so the stored count still matches the request', async () => {
-    // The verifier disagrees with the first two questions it ever sees.
-    const rejected = new Set([
-      `${word(1)} lorp blint praxil`,
-      `${word(2)} lorp blint praxil`,
-    ]);
+    // A loss bigger than the round's own margin, so a second round is
+    // genuinely needed rather than absorbed.
+    const rejected = new Set(
+      [1, 2, 3, 4, 5].map((n) => `${word(n)} lorp blint praxil`),
+    );
     const { processor, createManyWithOutbox, generationPrompts } =
       buildProcessor((q) => rejected.has(q));
 
@@ -257,10 +267,11 @@ describe('QuestionsProcessor top-up loop', () => {
     expect(createManyWithOutbox).toHaveBeenCalledTimes(1);
     expect(createManyWithOutbox.mock.calls[0][0]).toHaveLength(10);
 
-    // Round 1 asked for 10 and lost 2; round 2 must ask for exactly 2.
+    // Round 1 asked for 12 (ten wanted, two spare) and kept 7 of them, so
+    // round 2 asks for the 3 still missing plus its own margin.
     expect(generationPrompts).toHaveLength(2);
-    expect(requestedCount(generationPrompts[0])).toBe(10);
-    expect(requestedCount(generationPrompts[1])).toBe(2);
+    expect(requestedCount(generationPrompts[0])).toBe(12);
+    expect(requestedCount(generationPrompts[1])).toBe(5);
   });
 
   it('retries when nothing at all survived', async () => {
@@ -326,17 +337,57 @@ describe('QuestionsProcessor top-up loop', () => {
     expect(generationPrompts).toHaveLength(1);
   });
 
-  it('tops up a short batch instead of failing the job', async () => {
+  it('absorbs an ordinary loss without paying for a second round', async () => {
+    // Two questions short of the twelve asked for still leaves the ten
+    // wanted. This is the case the margin exists for: before it, a loss this
+    // size cost a whole extra round, and five rounds of that still finished
+    // a fifty-question request two or three questions short.
     const { processor, createManyWithOutbox, generationPrompts } =
       buildProcessor(() => false, -2);
 
     await runJob(processor, 10);
 
     expect(createManyWithOutbox.mock.calls[0][0]).toHaveLength(10);
-    // Round 1 gave 8, so a second round was needed.
+    expect(generationPrompts).toHaveLength(1);
+  });
+
+  it('tops up a short batch instead of failing the job', async () => {
+    // Short by more than the margin covers, so the top-up still has to work.
+    const { processor, createManyWithOutbox, generationPrompts } =
+      buildProcessor(() => false, -6);
+
+    await runJob(processor, 10);
+
+    expect(createManyWithOutbox.mock.calls[0][0]).toHaveLength(10);
     expect(generationPrompts.length).toBeGreaterThan(1);
   });
 
+  it('spreads the spare questions across the difficulty mix', async () => {
+    // The margin has to be spread the way the batch is. Given entirely to one
+    // difficulty it covers drops there and nowhere else, so a mix weighted
+    // towards easy still finishes a hard question short the moment a hard one
+    // is dropped - and the count is then missed for a reason the margin was
+    // added to remove.
+    const { processor, generationPrompts } = buildProcessor(() => false);
+
+    await runJobWithDifficulty(processor, 10, { easy: 3, medium: 4, hard: 3 });
+
+    const asked =
+      /Generate exactly (\d+) easy, (\d+) medium, and (\d+) hard/.exec(
+        generationPrompts[0],
+      );
+    expect(asked).not.toBeNull();
+    const [easy, medium, hard] = asked!.slice(1).map(Number);
+
+    // Twelve asked for: the ten wanted plus two spare.
+    expect(easy + medium + hard).toBe(12);
+    expect(requestedCount(generationPrompts[0])).toBe(12);
+
+    // No difficulty loses ground to make room for the spares.
+    expect(easy).toBeGreaterThanOrEqual(3);
+    expect(medium).toBeGreaterThanOrEqual(4);
+    expect(hard).toBeGreaterThanOrEqual(3);
+  });
   it('drops the difficulty constraint on the last round rather than losing the batch', async () => {
     // A model that returns the wrong difficulty mix tends to keep doing it.
     // Holding out for an exact mix spent the last round and failed the whole
@@ -424,15 +475,20 @@ describe('QuestionsProcessor top-up loop', () => {
   });
 
   it('carries accepted questions into the next round so a top-up cannot repeat them', async () => {
-    const { processor, generationPrompts } = buildProcessor(
-      (q) => q === `${word(1)} lorp blint praxil`,
+    // Round 1 asks for 7 (five wanted, two spare) and loses all but the last,
+    // so a second round is needed and has something accepted to carry.
+    const rejected = new Set(
+      [1, 2, 3, 4, 5, 6].map((n) => `${word(n)} lorp blint praxil`),
+    );
+    const { processor, generationPrompts } = buildProcessor((q) =>
+      rejected.has(q),
     );
 
     await runJob(processor, 5);
 
     expect(generationPrompts).toHaveLength(2);
-    // Question 2 was accepted in round 1, so round 2 must be told not to
+    // Question 7 was accepted in round 1, so round 2 must be told not to
     // restate it.
-    expect(generationPrompts[1]).toContain(`${word(2)} lorp blint praxil`);
+    expect(generationPrompts[1]).toContain(`${word(7)} lorp blint praxil`);
   });
 });

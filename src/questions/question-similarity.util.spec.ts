@@ -2,6 +2,7 @@ import {
   DUPLICATE_STEM_THRESHOLD,
   cosineSimilarity,
   describeQuestionText,
+  findConceptRepeats,
   findDuplicateQuestions,
   exerciseFingerprint,
   findTemplateRepeats,
@@ -515,5 +516,240 @@ describe('mathematical notation', () => {
     expect(questionTokenSet('5-letter word')).toEqual(
       new Set(['5', 'letter', 'word']),
     );
+  });
+});
+
+/**
+ * The same exercise asked twice, worded differently each time.
+ *
+ * Two questions with the same numbers going in and the same answer coming out
+ * are one question, whatever words surround them. This used to be counted as a
+ * template repeat, which permits two of each and is skipped entirely on the
+ * last generation round - right for a template, where the same shape over
+ * different data is a legitimate second question, and wrong here.
+ *
+ * A batch of fifty shipped with the same exercise at positions nineteen and
+ * forty-seven: worded too differently for the token test to see, identical
+ * once reduced to numbers in and answer out, and both kept because two were
+ * allowed.
+ */
+describe('the same exercise asked twice', () => {
+  const asking = (text: string, answer: string) => ({
+    question: text,
+    options: { '1': answer, '2': 'lorp', '3': 'blint', '4': 'praxil' },
+    correctOption: 1,
+  });
+
+  it('rejects the second on sight, however differently it is worded', () => {
+    const duplicates = findDuplicateQuestions([
+      asking('what is the wug of 5 and 25', 'skarn'),
+      asking('compute the velm for 25 against 5', 'skarn'),
+    ]);
+
+    expect(duplicates).toHaveLength(1);
+    expect(duplicates[0].index).toBe(1);
+    expect(duplicates[0].reason).toMatch(/same numbers and the same answer/);
+  });
+
+  it('rejects it against the bank as well as within the batch', () => {
+    const duplicates = findDuplicateQuestions(
+      [asking('compute the velm for 25 against 5', 'skarn')],
+      [asking('what is the wug of 5 and 25', 'skarn')],
+    );
+
+    expect(duplicates).toHaveLength(1);
+    expect(duplicates[0].index).toBe(0);
+    expect(duplicates[0].reason).toMatch(/already in the bank/);
+  });
+
+  it('still takes plain text for the bank, which carries no answer', () => {
+    // Semantic neighbours arrive as text only, which is all the vector store
+    // can give. Those must go on being compared by wording.
+    const duplicates = findDuplicateQuestions(
+      [asking('the wug lorp blint of praxil doved skarn', 'velm')],
+      ['the wug lorp blint of praxil doved skarn'],
+    );
+    expect(duplicates).toHaveLength(1);
+  });
+
+  it('keeps the same exercise over different numbers', () => {
+    // A second question on the same shape with different data is variety, not
+    // duplication. The template cap governs how many of those a batch may
+    // have; this check must not pre-empt it.
+    expect(
+      findDuplicateQuestions([
+        asking('what is the wug of 5 and 25', 'skarn'),
+        asking('what is the wug of 7 and 49', 'velm'),
+      ]),
+    ).toHaveLength(0);
+  });
+
+  it('keeps two questions that share numbers but not an answer', () => {
+    expect(
+      findDuplicateQuestions([
+        asking('what is the wug of 5 and 25', 'skarn'),
+        asking('what is the tarn of 5 and 25', 'velm'),
+      ]),
+    ).toHaveLength(0);
+  });
+
+  it('says nothing about questions carrying no numbers at all', () => {
+    // An unfingerprintable question must never match another unfingerprintable
+    // one, or every prose question in a batch would collapse into the first.
+    expect(
+      findDuplicateQuestions([
+        { question: 'wug lorp blint', options: { '1': 'skarn' }, correctOption: 1 },
+        { question: 'velm tarn quillow', options: { '1': 'skarn' }, correctOption: 1 },
+      ]),
+    ).toHaveLength(0);
+  });
+});
+
+/**
+ * One concept taking over a batch.
+ *
+ * The wording checks group questions by the words they share, so they see one
+ * exercise restated over different data and nothing else. A concept asked
+ * several different ways escapes them entirely: "write this in exponential
+ * form" and "express this as a logarithm" test the same skill and share almost
+ * no words, so they land in different groups and every one of them is kept.
+ * A reviewer reading a fifty-question batch found six questions converting
+ * between two forms and five solving for the same unknown, with every wording
+ * check passing.
+ *
+ * Grouping by meaning is what separates those, and it is also the reason this
+ * is the one variety check that carries to every subject: it reads no numbers,
+ * no notation and no topic name.
+ *
+ * The vectors here are built by hand rather than embedded, so the angles are
+ * exact and the test measures the clustering rather than an embedding model.
+ */
+describe('findConceptRepeats', () => {
+  const DIMS = 64;
+
+  /**
+   * A vector `concept` degrees away from the other concepts, nudged by `nth`
+   * so that two questions on one concept are close without being identical.
+   *
+   * Same concept, different nth: cosine 0.92, above the 0.88 default.
+   * Different concepts: cosine 0, far below it.
+   */
+  const vec = (concept: number, nth: number): number[] => {
+    const v = new Array(DIMS).fill(0) as number[];
+    v[concept] = 1;
+    v[32 + nth] = 0.3;
+    return v;
+  };
+
+  const q = (concept: number, nth: number) => ({
+    question: `question ${concept}.${nth}`,
+    vector: vec(concept, nth),
+  });
+
+  it('keeps the cap and flags only the surplus', () => {
+    const repeats = findConceptRepeats(
+      [q(1, 0), q(1, 1), q(1, 2), q(1, 3), q(2, 0), q(3, 0), q(4, 0), q(5, 0)],
+      3,
+    );
+
+    // The fourth question on concept 1, and nothing else.
+    expect(repeats.map((r) => r.index)).toEqual([3]);
+    expect(repeats[0].reason).toMatch(/4th question in this batch/);
+  });
+
+  it('leaves a batch of distinct concepts alone', () => {
+    expect(
+      findConceptRepeats([q(1, 0), q(2, 0), q(3, 0), q(4, 0), q(5, 0)], 3),
+    ).toHaveLength(0);
+  });
+
+  it('works on questions with no numbers, notation or subject in them', () => {
+    // The point of grouping by meaning: this is the same check, on prose. A
+    // wording group, an exercise fingerprint and a numeric guard all have
+    // nothing to work with here, and this still bounds the concept.
+    const prose = (concept: number, nth: number, text: string) => ({
+      question: text,
+      vector: vec(concept, nth),
+    });
+
+    const repeats = findConceptRepeats(
+      [
+        prose(1, 0, 'why did the wug leave the lorp'),
+        prose(1, 1, 'what caused the blint to abandon its praxil'),
+        prose(1, 2, 'explain the reason the doved departed'),
+        prose(1, 3, 'give the cause of the skarn moving away'),
+        prose(2, 0, 'who governed the velm'),
+        prose(3, 0, 'name the quillow of the frennet'),
+        prose(4, 0, 'when was the tarn founded'),
+        prose(5, 0, 'describe the shape of the marn'),
+      ],
+      3,
+    );
+
+    expect(repeats.map((r) => r.index)).toEqual([3]);
+  });
+
+  it('refuses to act when it would flag most of the batch', () => {
+    // A threshold that groups nearly everything is miscalibrated, not right.
+    // Acting on it would empty batches on narrow topics, where questions
+    // genuinely do sit close together, so refusing costs nothing and guessing
+    // wrong costs the batch.
+    const allOneConcept = Array.from({ length: 10 }, (_, i) => q(1, i));
+    expect(findConceptRepeats(allOneConcept, 3)).toHaveLength(0);
+  });
+
+  it('says nothing about a batch no larger than the cap', () => {
+    expect(findConceptRepeats([q(1, 0), q(1, 1), q(1, 2)], 3)).toHaveLength(0);
+  });
+
+  it('ignores a question it has no vector for', () => {
+    // Embedding is allowed to fail for one item without taking the check with
+    // it, and a missing vector must never read as "close to everything".
+    const repeats = findConceptRepeats(
+      [
+        q(1, 0),
+        q(1, 1),
+        q(1, 2),
+        { question: 'no vector', vector: [] },
+        q(1, 3),
+        q(2, 0),
+        q(3, 0),
+        q(4, 0),
+      ],
+      3,
+    );
+    expect(repeats.map((r) => r.index)).toEqual([4]);
+  });
+
+  it('is the threshold that decides what counts as one concept', () => {
+    // Two neighbouring concepts, 0.64 apart, and four unrelated ones. At the
+    // default they are two concepts of two, comfortably inside the cap; at a
+    // looser threshold they become one concept of four and the fourth is
+    // surplus. Same questions, same cap, different answer - which is what
+    // makes the threshold the thing worth measuring rather than guessing.
+    const near = (base: number[], nth: number): number[] => {
+      const v = [...base];
+      v[32 + nth] = 0.3;
+      return v;
+    };
+    const a = new Array(DIMS).fill(0) as number[];
+    a[1] = 1;
+    const b = new Array(DIMS).fill(0) as number[];
+    b[1] = 0.7;
+    b[2] = Math.sqrt(1 - 0.49);
+
+    const batch = [
+      { question: 'a one', vector: near(a, 0) },
+      { question: 'a two', vector: near(a, 1) },
+      { question: 'b one', vector: near(b, 2) },
+      { question: 'b two', vector: near(b, 3) },
+      q(10, 4),
+      q(11, 5),
+      q(12, 6),
+      q(13, 7),
+    ];
+
+    expect(findConceptRepeats(batch, 3, 0.88)).toHaveLength(0);
+    expect(findConceptRepeats(batch, 3, 0.6).map((r) => r.index)).toEqual([3]);
   });
 });

@@ -167,6 +167,8 @@ describe('parseVerifierVerdict', () => {
     expect(parseVerifierVerdict(reply(null, '7'))).toEqual({
       computedAnswer: '7',
       correctOption: null,
+      correctOptionCount: null,
+      answerIsForced: null,
       onTopic: null,
       difficulty: null,
     });
@@ -180,6 +182,8 @@ describe('parseVerifierVerdict', () => {
     expect(parseVerifierVerdict(fenced)).toEqual({
       computedAnswer: null,
       correctOption: 1,
+      correctOptionCount: null,
+      answerIsForced: null,
       onTopic: null,
       difficulty: null,
     });
@@ -192,6 +196,8 @@ describe('parseVerifierVerdict', () => {
     expect(verdict).toEqual({
       computedAnswer: '6',
       correctOption: 2,
+      correctOptionCount: null,
+      answerIsForced: null,
       onTopic: false,
       difficulty: 'hard',
     });
@@ -674,5 +680,161 @@ describe('QuestionsProcessor tie-break on disagreement', () => {
 
     // An outage must not quietly rescue every disputed question.
     await expect(verify(processor, [ITEM])).resolves.toEqual(new Set([0]));
+  });
+});
+
+/**
+ * Two ways a question can be broken that a right answer does not rule out.
+ *
+ * Both reached students in a fifty-question batch that passed every check
+ * then in place, because both are invisible to the one question the verifier
+ * used to ask ("does the key match your answer?"):
+ *
+ *   - One asked for a value that the question never pinned down. The stated
+ *     condition held for every candidate, so the keyed option was no more
+ *     correct than the other three - and no less, which is why the answer
+ *     check waved it through.
+ *
+ *   - One had two options worth the same. The keyed option really was
+ *     correct, so the answer check agreed, and a student picking the other
+ *     correct option was still marked wrong.
+ *
+ * Both are confirmed by a second solve before the question is dropped. One
+ * reviewer calling a question unfair is a claim, not a finding, and acting on
+ * it alone would cost sound questions in a batch that already struggles to
+ * reach its requested count.
+ */
+describe('QuestionsProcessor.verifyKeyedAnswers, on questions that are not fair to ask', () => {
+  const unfair = (extra: Record<string, unknown>): string =>
+    JSON.stringify({
+      computedAnswer: 'x',
+      correctOption: ITEM.correctOption,
+      ...extra,
+    });
+
+  const allFour = (...correct: number[]) =>
+    Object.fromEntries(
+      [1, 2, 3, 4].map((n) => [String(n), correct.includes(n)]),
+    );
+
+  it('drops a question whose answer nothing in it forces', async () => {
+    const { processor } = buildProcessor({
+      completion: () =>
+        Promise.resolve({ text: unfair({ answerIsForced: false }) }),
+    });
+    await expect(verify(processor, [ITEM])).resolves.toEqual(new Set([0]));
+  });
+
+  it('drops a question with two correct options, even though the key is right', async () => {
+    const { processor } = buildProcessor({
+      completion: () =>
+        Promise.resolve({
+          // The keyed option is among the correct ones, so the answer check
+          // agrees and would have kept this.
+          text: unfair({ optionVerdicts: allFour(ITEM.correctOption, 3) }),
+        }),
+    });
+    await expect(verify(processor, [ITEM])).resolves.toEqual(new Set([0]));
+  });
+
+  it('keeps a question when a second solve does not agree it is unfair', async () => {
+    let call = 0;
+    const { processor, generateCompletion } = buildProcessor({
+      completion: () => {
+        call += 1;
+        return Promise.resolve({
+          text:
+            call === 1
+              ? unfair({ optionVerdicts: allFour(ITEM.correctOption, 3) })
+              : unfair({ optionVerdicts: allFour(ITEM.correctOption) }),
+        });
+      },
+    });
+    await expect(verify(processor, [ITEM])).resolves.toEqual(new Set());
+    expect(generateCompletion).toHaveBeenCalledTimes(2);
+  });
+
+  it('pays for no second call when the question is fair', async () => {
+    const { processor, generateCompletion } = buildProcessor({
+      completion: () =>
+        Promise.resolve({
+          text: unfair({
+            answerIsForced: true,
+            optionVerdicts: allFour(ITEM.correctOption),
+          }),
+        }),
+    });
+    await expect(verify(processor, [ITEM])).resolves.toEqual(new Set());
+    expect(generateCompletion).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps a question when the reviewer judged only some of the options', async () => {
+    // A partial map cannot show that a second option is correct, because the
+    // options it skipped might be the correct ones. Counting one from it would
+    // invent a reason to keep a question rather than a reason to drop one.
+    const { processor, generateCompletion } = buildProcessor({
+      completion: () =>
+        Promise.resolve({
+          text: unfair({ optionVerdicts: { '1': true, '2': true } }),
+        }),
+    });
+    await expect(verify(processor, [ITEM])).resolves.toEqual(new Set());
+    expect(generateCompletion).toHaveBeenCalledTimes(1);
+  });
+
+  it('leaves a reply that says nothing about fairness alone', async () => {
+    // Every reply looked like this before the fields existed, and a provider
+    // can still answer this way. It must go on being a complete verdict.
+    const { processor } = buildProcessor({
+      completion: () => Promise.resolve({ text: reply(ITEM.correctOption) }),
+    });
+    await expect(verify(processor, [ITEM])).resolves.toEqual(new Set());
+  });
+});
+
+describe('parseVerifierVerdict, on the fairness fields', () => {
+  const parse = (extra: Record<string, unknown>) =>
+    parseVerifierVerdict(JSON.stringify({ correctOption: 1, ...extra }));
+
+  it('counts how many options were judged correct', () => {
+    expect(
+      parse({
+        optionVerdicts: { '1': true, '2': false, '3': true, '4': false },
+      }),
+    ).toMatchObject({ correctOptionCount: 2 });
+  });
+
+  it('counts none as zero, which is not the same as not saying', () => {
+    expect(
+      parse({
+        optionVerdicts: { '1': false, '2': false, '3': false, '4': false },
+      }),
+    ).toMatchObject({ correctOptionCount: 0 });
+  });
+
+  it('refuses to count a partial or unusable map', () => {
+    for (const optionVerdicts of [
+      { '1': true, '2': false, '3': true },
+      { '1': 'yes', '2': false, '3': false, '4': false },
+      [true, false, false, false],
+      'all of them',
+    ]) {
+      expect(parse({ optionVerdicts })).toMatchObject({
+        correctOptionCount: null,
+      });
+    }
+  });
+
+  it('reads whether the answer is forced, and only from a boolean', () => {
+    expect(parse({ answerIsForced: false })).toMatchObject({
+      answerIsForced: false,
+    });
+    expect(parse({ answerIsForced: true })).toMatchObject({
+      answerIsForced: true,
+    });
+    expect(parse({ answerIsForced: 'no' })).toMatchObject({
+      answerIsForced: null,
+    });
+    expect(parse({})).toMatchObject({ answerIsForced: null });
   });
 });

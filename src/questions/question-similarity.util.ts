@@ -280,23 +280,34 @@ export type DuplicateVerdict = {
  */
 export function findDuplicateQuestions(
   evaluations: Array<Record<string, any>>,
-  existingTexts: string[] = [],
+  existingTexts: Array<ExerciseLike | string> = [],
 ): DuplicateVerdict[] {
-  const describe = (text: string) => {
+  const describe = (item: ExerciseLike) => {
+    const text = String(item.question ?? '');
     const tokens = questionTokenSet(text);
-    return { text, tokens, numbers: numericTokens(tokens) };
+    return {
+      text,
+      tokens,
+      numbers: numericTokens(tokens),
+      fingerprint: exerciseFingerprint(item),
+    };
   };
 
   const existing = existingTexts
-    .filter((t) => t && String(t).trim())
-    .map((t) => describe(String(t)));
+    .map((e) => (typeof e === 'string' ? { question: e } : e))
+    .filter((e) => e?.question && String(e.question).trim())
+    .map((e) => describe(e));
 
   const kept: Array<ReturnType<typeof describe> & { optionKey: string }> = [];
   const duplicates: DuplicateVerdict[] = [];
 
   evaluations.forEach((q, index) => {
     const text = String(q?.question ?? '');
-    const self = describe(text);
+    const self = describe({
+      question: text,
+      options: q?.options as Record<string, string> | undefined,
+      correctOption: q?.correctOption as number | string | undefined,
+    });
     const optionKey = optionSetKey(
       q?.options as Record<string, string> | undefined,
     );
@@ -316,6 +327,27 @@ export function findDuplicateQuestions(
     };
 
     for (const prior of kept) {
+      // The same numbers going in and the same answer coming out is the same
+      // question, whatever words surround it, so it is rejected on sight
+      // rather than counted towards a quota.
+      //
+      // This used to be handled as a template repeat, which allowed two of
+      // each and was skipped altogether on the last generation round. That is
+      // right for a template - the same shape over different data is a
+      // legitimate second question - and wrong here. A batch of fifty shipped
+      // with "What is the value of log5(25)?" at position nineteen and
+      // "Evaluate log5(25)." at position forty-seven: too differently worded
+      // for the token test, identical exercise, both allowed because two were
+      // permitted.
+      if (self.fingerprint && self.fingerprint === prior.fingerprint) {
+        consider(
+          1,
+          `asks the same exercise as an earlier question in this batch, with the same ` +
+            `numbers and the same answer: "${truncate(prior.text)}"`,
+        );
+        continue;
+      }
+
       // Different quantities mean a different question, however close the
       // wording. Checked before the score so no amount of shared phrasing
       // can outvote it.
@@ -341,6 +373,15 @@ export function findDuplicateQuestions(
     }
 
     for (const prior of existing) {
+      if (self.fingerprint && self.fingerprint === prior.fingerprint) {
+        consider(
+          1,
+          `asks the same exercise as a question already in the bank, with the same ` +
+            `numbers and the same answer: "${truncate(prior.text)}"`,
+        );
+        continue;
+      }
+
       if (!sameNumbers(self.numbers, prior.numbers)) continue;
 
       const similarity = jaccard(self.tokens, prior.tokens);
@@ -556,6 +597,108 @@ export function findTemplateRepeats(
       });
     }
   });
+
+  return surplus;
+}
+
+/**
+ * How close two questions must sit before they count as the same concept.
+ *
+ * Deliberately below the duplicate threshold and well above the similarity any
+ * two questions on one topic share. Questions on a single subject all use the
+ * same vocabulary, so a threshold set too low collapses the whole batch into
+ * one concept; set too high it only finds the near-copies the duplicate check
+ * already has.
+ *
+ * This is a starting value, not a measured one. scripts/measure-concept-
+ * clusters.js prints what any threshold would group, given a batch of real
+ * questions, so it can be set from the corpus rather than from a guess.
+ */
+export const CONCEPT_SIMILARITY_THRESHOLD = Number(
+  process.env.CONCEPT_SIMILARITY_THRESHOLD ?? 0.88,
+);
+
+/**
+ * How many questions in one batch may test the same concept.
+ *
+ * Three of ten is loose on purpose. A narrow topic has genuinely few concepts,
+ * and the point is to stop one of them taking over a batch, not to insist on
+ * ten different ones.
+ */
+export const MAX_PER_CONCEPT = Math.max(
+  1,
+  Number(process.env.MAX_PER_CONCEPT ?? 3) || 3,
+);
+
+export type ConceptItem = { question: string; vector: number[] };
+
+/**
+ * Questions beyond the cap for the concept they belong to.
+ *
+ * The variety check next to this one groups by wording with the numbers taken
+ * out, which catches one exercise restated over different data and nothing
+ * else. It cannot see a concept asked six different ways: "write this in
+ * exponential form" and "express this as a logarithm" are the same skill and
+ * share almost no words, so they land in different groups and both are kept.
+ * A reviewer reading a fifty-question batch found exactly that - six questions
+ * converting between two forms, five solving for the same unknown - with every
+ * wording check passing.
+ *
+ * Meaning is what separates those, so this groups by embedding distance
+ * instead of by words. That also makes it the only variety check that carries
+ * to every subject: it knows nothing about numbers, notation or what the topic
+ * is, so it behaves the same on history, biology or arrays as on logarithms.
+ *
+ * Greedy single-link clustering against each group's first member. Order
+ * matters and that is intended: the first question of a concept is always the
+ * one kept, so the check removes the surplus rather than choosing between
+ * equals.
+ *
+ * Returns nothing when more than half the batch would be flagged. A threshold
+ * that groups most of a batch into one concept is miscalibrated rather than
+ * right, and acting on it would empty batches on narrow topics; refusing to
+ * act is the failure that costs nothing.
+ */
+export function findConceptRepeats(
+  items: ConceptItem[],
+  maxPerConcept: number = MAX_PER_CONCEPT,
+  threshold: number = CONCEPT_SIMILARITY_THRESHOLD,
+): TemplateVerdict[] {
+  if (items.length <= maxPerConcept) return [];
+
+  type Group = { vector: number[]; text: string; count: number };
+  const groups: Group[] = [];
+  const surplus: TemplateVerdict[] = [];
+
+  items.forEach((item, index) => {
+    if (!item?.vector?.length) return;
+
+    let joined: { group: Group; similarity: number } | null = null;
+    for (const group of groups) {
+      const similarity = cosineSimilarity(item.vector, group.vector);
+      if (similarity >= threshold && (!joined || similarity > joined.similarity)) {
+        joined = { group, similarity };
+      }
+    }
+
+    if (!joined) {
+      groups.push({ vector: item.vector, text: item.question, count: 1 });
+      return;
+    }
+
+    joined.group.count += 1;
+    if (joined.group.count > maxPerConcept) {
+      surplus.push({
+        index,
+        similarity: joined.similarity,
+        reason:
+          `is the ${joined.group.count}th question in this batch testing the same ` +
+          `concept; first seen as "${truncate(joined.group.text)}"`,
+      });
+    }
+  });
+
+  if (surplus.length * 2 > items.length) return [];
 
   return surplus;
 }

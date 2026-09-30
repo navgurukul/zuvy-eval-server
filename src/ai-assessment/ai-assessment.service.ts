@@ -16,6 +16,7 @@ import { questionStudentAnswerRelation } from 'src/db/schema/questionStdAns';
 import { studentAnswers } from 'src/db/schema/studentAnswer';
 import { studentLevelRelation } from 'src/db/schema/studentLevel';
 import { levels } from 'src/db/schema/level';
+import { resolveLevelBand } from 'src/level/level-band.util';
 import { aiAssessment } from 'src/db/schema/ai-assessment';
 import { correctAnswers } from 'src/db/schema/correctAns';
 import { studentAssessment } from 'src/db/schema/stdAssessment';
@@ -586,31 +587,34 @@ export class AiAssessmentService {
     }
   }
 
+  /**
+   * The grade a percentage earns, and with it the question set the student
+   * gets next.
+   *
+   * This used to test each band independently, in whatever order the rows came
+   * back, and got two things wrong. D carries a scoreMax of 59 and no
+   * scoreMin, so it matched every score at or below 59 and answered before E
+   * was ever reached; E was unreachable. And because the bands stop at whole
+   * numbers while the score is rounded to two decimals, a percentage such as
+   * 89.47 - seventeen right out of nineteen - fell between A and A+, matched
+   * nothing, and hit the fallback, recording a near-A+ result as "requires
+   * intervention".
+   *
+   * resolveLevelBand walks the bands as a continuous ladder instead, so every
+   * score lands somewhere and the answer does not depend on row order.
+   */
   private async calculateStudentLevel(score: number) {
-    const allLevels = await this.db.select().from(levels); // Renamed to avoid conflict
+    const allLevels = await this.db.select().from(levels);
 
-    const level = allLevels.find((level) => {
-      const min = level.scoreMin ?? -Infinity;
-      const max = level.scoreMax ?? Infinity;
+    const level = resolveLevelBand(allLevels, score);
+    if (level) return level;
 
-      if (level.grade === 'A+') {
-        return score >= min;
-      } else if (level.grade === 'E') {
-        return score <= max;
-      } else {
-        return score >= min && score <= max;
-      }
-    });
-
-    if (!level) {
-      // Default to E level if no match found
-      return (
-        allLevels.find((l) => l.grade === 'E') ||
-        allLevels[allLevels.length - 1]
-      );
-    }
-
-    return level;
+    // No bands seeded at all. POST /level/seed has not been run in this
+    // schema, and there is nothing to grade against.
+    this.logger?.warn?.(
+      'No level bands found; run POST /level/seed for this schema.',
+    );
+    return allLevels[allLevels.length - 1];
   }
 
   async findAllAssessmentOfAStudent(

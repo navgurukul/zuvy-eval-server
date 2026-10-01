@@ -68,6 +68,21 @@ export class QuestionsController {
     );
   }
 
+  @Get('generate/status')
+  @UseGuards(JwtAuthGuard)
+  @ApiOperation({ summary: 'Get per-job progress and generated question counts' })
+  @ApiQuery({
+    name: 'jobIds',
+    required: true,
+    type: String,
+    description: 'Comma-separated job IDs returned by POST /questions/generate',
+  })
+  getGenerationStatus(@Query('jobIds') jobIds: string) {
+    const ids = [...new Set(String(jobIds ?? '').split(',').map((id) => id.trim()).filter(Boolean))];
+    if (!ids.length) throw new BadRequestException('jobIds is required');
+    return this.questionsService.getGenerationJobStatuses(ids);
+  }
+
   @Post()
   @UseGuards(JwtAuthGuard)
   create(

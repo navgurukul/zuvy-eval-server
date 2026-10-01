@@ -282,9 +282,10 @@ export class QuestionsService {
     message: string;
     totalJobs: number;
     jobIds: string[];
+    jobs: Array<{ jobId: string; requestedCount: number }>;
   }> {
     const jobs = this.expandPayloadToJobs(payload, orgId);
-    const jobIds: string[] = [];
+    const enqueuedJobs: Array<{ jobId: string; requestedCount: number }> = [];
 
     for (let i = 0; i < jobs.length; i++) {
       const resolved = await this.resolveCanonicalTopic(
@@ -304,13 +305,81 @@ export class QuestionsService {
         jobId: `gen-${Date.now()}-${i}-${jobs[i].topic}-${jobs[i].count}`,
         ...JOB_OPTS,
       });
-      jobIds.push(job.id ?? String(i));
+      enqueuedJobs.push({
+        jobId: job.id ?? String(i),
+        requestedCount: jobs[i].count,
+      });
     }
 
     return {
       message: 'Question generation jobs enqueued. You are not blocked.',
       totalJobs: jobs.length,
-      jobIds,
+      jobIds: enqueuedJobs.map(({ jobId }) => jobId),
+      jobs: enqueuedJobs,
+    };
+  }
+
+  async getGenerationJobStatuses(jobIds: string[]) {
+    const jobs = await Promise.all(
+      jobIds.map(async (jobId) => {
+        const job = await this.queue.getJob(jobId);
+        if (!job) {
+          return {
+            jobId,
+            status: 'not-found' as const,
+            requestedCount: 0,
+            generatedCount: null,
+            progressCount: 0,
+          };
+        }
+        const status = await job.getState();
+        const requestedCount = Number(job.data?.count ?? 0);
+        const generatedCount =
+          status === 'completed' ? Number(job.returnvalue ?? 0) : null;
+        const reportedProgress = Number(job.progress ?? 0);
+        return {
+          jobId,
+          status,
+          requestedCount,
+          generatedCount,
+          progressCount:
+            status === 'completed'
+              ? requestedCount
+              : Math.min(requestedCount, Math.max(0, reportedProgress)),
+          failedReason: status === 'failed' ? job.failedReason : undefined,
+        };
+      }),
+    );
+
+    const totalRequested = jobs.reduce(
+      (sum, job) => sum + ('requestedCount' in job ? job.requestedCount : 0),
+      0,
+    );
+    const totalGenerated = jobs.reduce(
+      (sum, job) => sum + (job.generatedCount ?? 0),
+      0,
+    );
+    const totalProgressCount = jobs.reduce(
+      (sum, job) => sum + (job.progressCount ?? 0),
+      0,
+    );
+
+    return {
+      status:
+        jobs.every((job) => job.status === 'completed')
+          ? 'completed'
+          : jobs.some((job) => job.status === 'failed')
+            ? 'failed'
+            : jobs.some((job) => job.status === 'active')
+              ? 'active'
+              : 'waiting',
+      progressPercent:
+        totalRequested > 0
+          ? Math.min(100, Math.floor((totalProgressCount / totalRequested) * 100))
+          : 0,
+      totalRequested,
+      totalGenerated,
+      jobs: jobs.map(({ progressCount: _progressCount, ...job }) => job),
     };
   }
 

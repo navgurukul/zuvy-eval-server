@@ -337,9 +337,9 @@ export class QuestionsProcessor extends WorkerHost {
   }
 
   override async process(
-    job: Job<GenerateTopicBatchJobPayload, void, string>,
+    job: Job<GenerateTopicBatchJobPayload, number, string>,
     token?: string,
-  ): Promise<void> {
+  ): Promise<number> {
     if (job.name === JOB_NAME) {
       return this.handleGenerateTopicBatch(job);
     }
@@ -484,7 +484,7 @@ export class QuestionsProcessor extends WorkerHost {
    * improvement on generating blind, not a precondition for it.
    */
   private async planExerciseTypes(
-    job: Job<GenerateTopicBatchJobPayload, void, string>,
+    job: Job<GenerateTopicBatchJobPayload, number, string>,
     topicName: string,
     topicDescription: string,
     existingTexts: string[],
@@ -962,7 +962,7 @@ export class QuestionsProcessor extends WorkerHost {
    * generation job because the vector store is unavailable.
    */
   private async findSimilarQuestionTexts(
-    job: Job<GenerateTopicBatchJobPayload, void, string>,
+    job: Job<GenerateTopicBatchJobPayload, number, string>,
     topicName: string,
     topicDescription: string,
     orgId: number | undefined,
@@ -1016,7 +1016,7 @@ export class QuestionsProcessor extends WorkerHost {
    *     return the rest. The caller regenerates the difference.
    */
   private async generateFilteredRound(
-    job: Job<GenerateTopicBatchJobPayload, void, string>,
+    job: Job<GenerateTopicBatchJobPayload, number, string>,
     ctx: {
       topicName: string;
       topicDescription: string;
@@ -1261,8 +1261,8 @@ export class QuestionsProcessor extends WorkerHost {
   }
 
   private async handleGenerateTopicBatch(
-    job: Job<GenerateTopicBatchJobPayload, void, string>,
-  ) {
+    job: Job<GenerateTopicBatchJobPayload, number, string>,
+  ): Promise<number> {
     try {
       const { topic, count, levelId, orgId } = job.data;
       const attempt = (job.attemptsMade ?? 0) + 1;
@@ -1439,6 +1439,7 @@ export class QuestionsProcessor extends WorkerHost {
             correctOption: q.correctOption as number | undefined,
           });
         });
+        await job.updateProgress(accepted.length);
       }
 
       if (accepted.length === 0) {
@@ -1538,6 +1539,11 @@ export class QuestionsProcessor extends WorkerHost {
       this.logger.log(
         `Job ${job.id} completed: appended ${inserted.length} questions for topic ${topicName} (existing pool preserved)`,
       );
+      // Progress tracks finished batches of requested work. The actual saved
+      // count is returned separately, so a short batch can finish at 100% and
+      // still report (for example) 9 generated out of 10 requested.
+      await job.updateProgress(count);
+      return inserted.length;
     } catch (error) {
       this.logger.error('Error processing job:', error);
       throw error;

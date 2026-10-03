@@ -1,4 +1,5 @@
 import { sliceCoverage } from './questions.processor';
+import { generateMcqPromptFromSpec } from 'src/ai-assessment/system_prompts/system_prompts';
 
 /**
  * Giving each batch of a request its own part of the topic.
@@ -85,5 +86,38 @@ describe('sliceCoverage', () => {
   it('asks for nothing when there is nothing to ask for', () => {
     expect(sliceCoverage([], 0, 1, 5)).toEqual([]);
     expect(sliceCoverage(plan(5), 0, 1, 0)).toEqual([]);
+  });
+});
+
+/**
+ * The plan must never disagree with the count.
+ *
+ * The generation prompt states a number to generate and then lists the cells
+ * to generate them from. A list shorter or longer than that number is a
+ * prompt contradicting itself, and the count is the one thing about
+ * generation a reviewer confirmed was already right - so it is worth a guard
+ * rather than an assumption.
+ *
+ * The sizes here are the ones that actually occur: a round asks for its count
+ * plus a margin, a top-up asks for very few, and a narrow topic yields fewer
+ * cells than the round needs.
+ */
+describe('a planned batch asks for exactly as many questions as it plans', () => {
+  it.each([1, 3, 7, 10, 25, 60])('with a plan of %i cells', (planSize) => {
+    for (const ask of [1, 3, 5, 12, 22, 62]) {
+      const coverage = sliceCoverage(plan(planSize), 0, 1, ask);
+      expect(coverage).toHaveLength(ask);
+
+      const prompt = generateMcqPromptFromSpec({
+        topic: 'Permutation',
+        count: ask,
+        coverage,
+      });
+
+      const asked = Number(/Generate EXACTLY (\d+)/.exec(prompt)?.[1]);
+      const lines = (prompt.match(/^ {2}\d+\. Sub-concept:/gm) ?? []).length;
+      expect(lines).toBe(ask);
+      expect(asked).toBe(ask);
+    }
   });
 });

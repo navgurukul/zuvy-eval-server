@@ -119,6 +119,11 @@ export class QuestionsService {
           topic,
           count: countForThisJob,
           batchQuestionCounts: perBatchCounts?.[i],
+          // So each job can plan the whole request and take its own slice,
+          // rather than planning its ten questions as if no other job existed.
+          batchIndex: i,
+          batchCount: numBatches,
+          totalCount: count,
           ...perTopicCtx,
         });
       }

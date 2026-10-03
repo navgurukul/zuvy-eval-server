@@ -3,11 +3,12 @@ import { Logger } from '@nestjs/common';
 import { Job } from 'bullmq';
 import {
   generateMcqPromptFromSpec,
-  parseExerciseTypes,
+  parseCoveragePlan,
   parseVerifierVerdict,
-  planExerciseTypesPrompt,
+  planCoveragePrompt,
   verifyMcqAnswerPrompt,
 } from 'src/ai-assessment/system_prompts/system_prompts';
+import type { CoverageCell } from 'src/ai-assessment/system_prompts/system_prompts';
 import {
   GenerationRefusedError,
   parseLlmMcq,
@@ -157,6 +158,45 @@ const GENERATION_MARGIN_MIN = Math.max(
   0,
   Number(process.env.GENERATION_MARGIN_MIN ?? 2) || 2,
 );
+
+/**
+ * Longest coverage plan to ask for in one call.
+ *
+ * A plan covers the whole request, so a 200-question request would otherwise
+ * ask for 200 cells in a single reply. Past this the list stops being a plan
+ * and starts being padding, and the slices wrap instead.
+ */
+const PLAN_CELLS_MAX = 60;
+
+/**
+ * This batch's share of a plan covering the whole request.
+ *
+ * Contiguous rather than interleaved: a model asked to enumerate a subject
+ * works outward from its fundamentals, so neighbouring cells are related and
+ * distant ones are not. Giving each batch a contiguous run therefore puts the
+ * batches in genuinely different parts of the topic, which is the point.
+ *
+ * Wraps when the plan is shorter than the request. A narrow topic honestly
+ * has fewer cells than a large request has questions, and repeating a cell
+ * with everything else still in force beats dropping the plan entirely.
+ */
+export function sliceCoverage(
+  cells: CoverageCell[],
+  batchIndex: number,
+  batchCount: number,
+  size: number,
+): CoverageCell[] {
+  if (!cells.length || size <= 0) return [];
+
+  const per = Math.max(1, Math.ceil(cells.length / Math.max(1, batchCount)));
+  const start = batchIndex * per;
+
+  const out: CoverageCell[] = [];
+  for (let i = 0; i < size; i++) {
+    out.push(cells[(start + i) % cells.length]);
+  }
+  return out;
+}
 
 type DifficultyCounts = { easy: number; medium: number; hard: number };
 
@@ -483,40 +523,63 @@ export class QuestionsProcessor extends WorkerHost {
    * already said what to cover, and skipped when planning fails: a plan is an
    * improvement on generating blind, not a precondition for it.
    */
-  private async planExerciseTypes(
+  /**
+   * Plans what each question in this batch will cover, before any is written.
+   *
+   * Two things changed here, both from the same finding. A reviewer reported
+   * that duplication fell sharply when the context fields were filled in by
+   * hand - the fields were doing the planning - and that it returned as soon
+   * as a topic name was all the service had. An instructor cannot be asked to
+   * write a long brief every time, so the service plans for itself.
+   *
+   * Each planned cell is a pair: the sub-concept the question tests and the
+   * exercise it asks for. Planning only the exercise, which is what this used
+   * to do, leaves the subject matter free to repeat, and a batch then covers
+   * one corner of a topic in seven different ways with every check passing.
+   *
+   * Sub-concepts named in the request are used as the first column. Naming
+   * them used to switch planning off altogether, so the richest input produced
+   * the least structure.
+   *
+   * The plan covers the whole request and this job takes its own slice, so the
+   * five jobs of a fifty-question request work on different parts of the topic
+   * instead of each planning the same ten cells.
+   */
+  private async planCoverage(
     job: Job<GenerateTopicBatchJobPayload, void, string>,
     topicName: string,
     topicDescription: string,
     existingTexts: string[],
     count: number,
-  ): Promise<string[]> {
-    if (Array.isArray(job.data.subtopics) && job.data.subtopics.length) {
-      return [];
-    }
+  ): Promise<CoverageCell[]> {
+    const batchCount = Math.max(1, Number(job.data.batchCount ?? 1) || 1);
+    const batchIndex = Math.min(
+      batchCount - 1,
+      Math.max(0, Number(job.data.batchIndex ?? 0) || 0),
+    );
+    const totalCount = Math.max(
+      count,
+      Number(job.data.totalCount ?? 0) || count,
+    );
 
-    const prompt = planExerciseTypesPrompt({
+    // Capped so a very large request does not ask for a plan longer than the
+    // model will hold together; the slice wraps when the plan runs short.
+    const planSize = Math.min(totalCount, PLAN_CELLS_MAX);
+
+    const prompt = planCoveragePrompt({
       topic: topicName,
       topicDescription,
-      count,
+      subtopics: job.data.subtopics,
+      learningObjectives: job.data.learningObjectives,
       targetAudience: job.data.targetAudience,
+      count: planSize,
       existingQuestions: existingTexts,
     });
 
+    let cells: CoverageCell[] = [];
     try {
       const response = await this.llmService.generateCompletion(prompt);
-      const types = parseExerciseTypes(response?.text);
-      if (types.length) {
-        this.logger.log(
-          `Job ${job.id}: planned ${types.length} kind(s) of exercise for topic ` +
-            `"${topicName}": ${types.join('; ')}`,
-        );
-      } else {
-        this.logger.warn(
-          `Job ${job.id}: could not read a coverage plan for topic "${topicName}"; ` +
-            `generating without one.`,
-        );
-      }
-      return types;
+      cells = parseCoveragePlan(response?.text);
     } catch (err) {
       this.logger.warn(
         `Job ${job.id}: coverage planning failed for topic "${topicName}", ` +
@@ -525,6 +588,22 @@ export class QuestionsProcessor extends WorkerHost {
       );
       return [];
     }
+
+    if (!cells.length) {
+      this.logger.warn(
+        `Job ${job.id}: could not read a coverage plan for topic "${topicName}"; ` +
+          `generating without one.`,
+      );
+      return [];
+    }
+
+    const slice = sliceCoverage(cells, batchIndex, batchCount, count);
+    this.logger.log(
+      `Job ${job.id}: planned ${cells.length} cell(s) for topic "${topicName}" ` +
+        `across ${batchCount} batch(es); batch ${batchIndex + 1} takes ` +
+        `${slice.length}: ${slice.map((c) => `${c.subtopic}/${c.exercise}`).join('; ')}`,
+    );
+    return slice;
   }
 
   private async solveIndependently(
@@ -1034,8 +1113,11 @@ export class QuestionsProcessor extends WorkerHost {
      */
     relaxPreferences: boolean,
     avoidExercises: ExerciseLike[],
-    /** Kinds of exercise planned for this batch; empty when planning was skipped. */
-    exerciseTypes: string[],
+    /**
+     * One planned cell per question in this batch - the sub-concept it tests
+     * and the exercise it asks for. Empty when planning failed.
+     */
+    coverage: CoverageCell[],
   ): Promise<Array<Record<string, any>>> {
     const { topicName, topicDescription, orgId } = ctx;
     const avoidTexts = avoidExercises.map((e) => e.question);
@@ -1069,7 +1151,11 @@ export class QuestionsProcessor extends WorkerHost {
         topicDescription,
         count: ask,
         batchQuestionCounts: askCounts ?? undefined,
-        exerciseTypes: exerciseTypes.length ? exerciseTypes : undefined,
+        // Wrapped to the number this round asks for, which is larger than
+        // the count because of the margin, and smaller on a top-up.
+        coverage: coverage.length
+          ? sliceCoverage(coverage, 0, 1, ask)
+          : undefined,
       },
       avoidTexts.slice(0, MAX_EXISTING_TEXTS),
     );
@@ -1366,7 +1452,7 @@ export class QuestionsProcessor extends WorkerHost {
       // Planned once for the job, not per round: the point is a batch that
       // covers different ground, and a fresh plan each round would keep
       // proposing the same first few kinds.
-      const exerciseTypes = await this.planExerciseTypes(
+      const coverage = await this.planCoverage(
         job,
         topicName,
         topicDescription,
@@ -1426,7 +1512,7 @@ export class QuestionsProcessor extends WorkerHost {
           needCounts,
           lastRound,
           avoidExercises,
-          exerciseTypes,
+          coverage,
         );
 
         roundAccepted.forEach((q) => {

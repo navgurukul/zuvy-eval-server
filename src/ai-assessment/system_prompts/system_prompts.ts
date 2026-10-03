@@ -193,11 +193,10 @@ export interface McqGenerationSpec {
   questionCounts?: { easy?: number; medium?: number; hard?: number };
   batchQuestionCounts?: { easy?: number; medium?: number; hard?: number };
   /**
-   * Distinct kinds of exercise this batch should cover, planned before any
-   * question was written. Separate from subtopics, which name areas of the
-   * subject; these name what the student has to DO.
+   * One planned cell per question in this batch: the sub-concept it tests
+   * and the exercise it asks for.
    */
-  exerciseTypes?: string[];
+  coverage?: CoverageCell[];
 }
 
 export function generateMcqPromptFromSpec(
@@ -255,20 +254,36 @@ export function generateMcqPromptFromSpec(
       '- Generate questions only from the selected subtopics/concepts.',
     );
   }
-  if (spec.exerciseTypes?.length) {
+  if (spec.coverage?.length) {
+    // One line per question, naming both the idea and the task.
+    //
+    // A list of exercise kinds alone leaves the subject matter free to repeat,
+    // and a list of sub-concepts alone leaves the task free to repeat. Pairing
+    // them and handing each question its own pair is what stops a batch
+    // covering one corner of a topic in seven different ways.
     sections.push('');
-    sections.push('KINDS OF EXERCISE TO COVER (planned for this batch):');
-    spec.exerciseTypes.forEach((t, i) => {
-      sections.push(`  ${i + 1}. ${t}`);
+    sections.push(
+      'COVERAGE PLAN FOR THIS BATCH - one question per line, in this order:',
+    );
+    spec.coverage.forEach((cell, i) => {
+      sections.push(
+        `  ${i + 1}. Sub-concept: ${cell.subtopic} | Exercise: ${cell.exercise}`,
+      );
     });
     sections.push(
-      '- Work down this list, spending one question on each before returning to any of them.',
+      '- Write exactly one question for each line. Do not write two for one line, and do not skip a line.',
     );
     sections.push(
-      '- These are things the student DOES, not areas of the subject. Two questions applying the same one over different numbers count as one of them, not two.',
+      '- The sub-concept fixes what the question is ABOUT. The exercise fixes what the student DOES with it.',
     );
     sections.push(
-      '- If the list is shorter than the number of questions asked for, come back to the earliest kinds rather than inventing near-copies of the last one.',
+      '- No two questions may share both. Two questions on one sub-concept must ask for different work, and two questions asking the same work must sit on different sub-concepts.',
+    );
+    sections.push(
+      '- Vary the surface as well as the plan: different quantities, different settings, different phrasing. Two questions built from one line of this plan with the numbers swapped are one question, not two.',
+    );
+    sections.push(
+      '- A line you cannot write honestly is better replaced by a question that differs from every other line than by a near-copy of a line above it.',
     );
   }
   if (learningObjectives)
@@ -655,31 +670,45 @@ export function parseVerifierVerdict(text: string | undefined | null): {
 }
 
 /**
- * Asks the model to plan what a batch should cover, before it writes anything.
+ * One planned question: the idea it tests, and what the student does with it.
  *
- * A topic name on its own is not a plan, and a model given one pads. Asked for
- * fifty questions on "logarithm" with no subtopics and no description, it
- * produced nine direct evaluations, seven solve-for-the-argument, six simplify
- * a sum - the same handful of exercises with the numbers changed. Every answer
- * was right; the batch still tested six skills fifty times.
- *
- * Naming the exercises first fixes what rejecting repeats afterwards cannot.
- * A filter can only remove a repeat once it has been paid for, and on a narrow
- * topic removal just empties the batch. A plan gives the model somewhere else
- * to go.
- *
- * Existing questions are shown so the plan reaches for ground not already
- * covered, which is the same reason they are shown to the generator.
- *
- * Asking for fewer types than questions is deliberate. A topic genuinely has a
- * limited number of distinct exercises, and a model told to invent thirty will
- * split hairs to reach the number rather than admit the topic is narrow.
+ * Variety needs both. A batch can ask seven different kinds of exercise and
+ * still test one idea seven times, and it can cover seven ideas while asking
+ * the student to do the same thing each time. Planning only one of the two
+ * leaves the other free to repeat, which is what a reviewer reading fifty
+ * questions on one topic actually sees.
  */
-export function planExerciseTypesPrompt(params: {
+export type CoverageCell = { subtopic: string; exercise: string };
+
+/**
+ * Asks the model to plan what each question in a batch will cover, as pairs.
+ *
+ * This replaces planning a flat list of exercise kinds. A topic name alone is
+ * not a plan, and a model given one pads: asked for fifty questions on a
+ * single topic with nothing else filled in, it returns the same handful of
+ * exercises with the numbers changed. Testers confirmed the other direction
+ * too - when the context fields were filled in by hand, duplication dropped
+ * sharply. The fields were doing the planning, and the service has to do it
+ * itself, because an instructor cannot be asked to write a long brief every
+ * time.
+ *
+ * Sub-concepts supplied by an instructor are used as the first column rather
+ * than replacing the plan. Supplying them used to switch planning off
+ * entirely, which meant the richest input produced the least structure.
+ *
+ * Asking for the whole request rather than one batch is what keeps the jobs
+ * of one request apart. A request for fifty questions is five jobs of ten, and
+ * five jobs that each plan ten cells on a narrow topic plan the same ten.
+ */
+export function planCoveragePrompt(params: {
   topic: string;
   topicDescription?: string;
-  count: number;
+  /** Sub-concepts from the request, when the instructor named any. */
+  subtopics?: string[];
+  learningObjectives?: string;
   targetAudience?: string;
+  /** Cells to plan: the whole request, not this batch. */
+  count: number;
   existingQuestions?: string[];
 }): string {
   const lines = [`You are planning an assessment on: ${params.topic}`];
@@ -690,6 +719,22 @@ export function planExerciseTypesPrompt(params: {
   if (params.targetAudience?.trim()) {
     lines.push(`Audience: ${params.targetAudience.trim()}`);
   }
+  if (params.learningObjectives?.trim()) {
+    lines.push(`Learning objectives: ${params.learningObjectives.trim()}`);
+  }
+
+  const given = (params.subtopics ?? [])
+    .map((s) => String(s ?? '').trim())
+    .filter(Boolean);
+
+  if (given.length) {
+    lines.push('');
+    lines.push(`Sub-concepts to cover: ${given.join(', ')}`);
+    lines.push(
+      'Use these as the sub-concepts. Split one into narrower parts if that is',
+      'needed to fill the plan, and add another only if these cannot carry it.',
+    );
+  }
 
   if (params.existingQuestions?.length) {
     lines.push('');
@@ -698,36 +743,45 @@ export function planExerciseTypesPrompt(params: {
       lines.push(`${i + 1}. ${String(q).trim()}`);
     });
     lines.push('');
-    lines.push(
-      'Those already cover their own exercises. Reach for ones they do not.',
-    );
+    lines.push('Those already cover their own ground. Reach for ground they do not.');
   }
 
   lines.push(
     '',
-    `Name up to ${params.count} DISTINCT kinds of exercise for this topic.`,
+    `Plan ${params.count} questions. Each is a PAIR: the sub-concept it tests,`,
+    'and the kind of exercise it asks for.',
     '',
-    'A kind of exercise is a different thing the student has to DO, not the same',
-    'thing with the details changed. Changing the numbers, the names, the objects,',
-    'the symbols or the wording gives you the same kind again, not a new one.',
+    'A SUB-CONCEPT is a distinct idea inside the topic - a part of it a student',
+    'could understand while misunderstanding another part. Name the real',
+    'divisions of this topic. Restating the topic in other words is not a',
+    'sub-concept, and neither is a difficulty level.',
     '',
-    'These are separate kinds in any subject, and most topics support several:',
+    'A KIND OF EXERCISE is a different thing the student has to DO. Changing the',
+    'numbers, the names, the objects, the symbols or the wording gives you the',
+    'same kind again, not a new one. These are separate kinds in any subject:',
     '  - recalling or recognising something',
     '  - applying it to a case the student has not seen',
-    '  - interpreting a result or a statement that is given to them',
+    '  - interpreting a result or a statement given to them',
     '  - comparing two cases and saying how they differ',
     '  - working backwards from an answer to what must have produced it',
     '  - choosing which idea, rule or method fits a situation',
     '  - finding the flaw in a stated conclusion',
     '',
-    'Name them in the language of THIS topic rather than repeating that list.',
+    'Name both in the language of THIS topic rather than repeating those words.',
     '',
-    `Give FEWER than ${params.count} if the topic honestly has fewer. A short,`,
-    'true list is more useful than a padded one, and naming the same exercise',
-    'twice in different words defeats the purpose of the list.',
+    'VARY BOTH COLUMNS. Two lines sharing a sub-concept must not share an',
+    'exercise, and two lines sharing an exercise must not share a sub-concept.',
+    'A plan that repeats a pair is a plan for duplicate questions.',
+    '',
+    'Spread across the sub-concepts before returning to any of them, so the',
+    'early lines do not all sit in one corner of the topic.',
+    '',
+    'If the topic genuinely has fewer sub-concepts than lines, reuse them with',
+    'a different exercise each time rather than inventing ones that are the',
+    'same idea renamed.',
     '',
     'Respond with ONLY a JSON object of exactly this shape:',
-    '{"exerciseTypes": ["<one short phrase per kind>", "..."]}',
+    '{"plan": [{"subtopic": "<short phrase>", "exercise": "<short phrase>"}]}',
     '',
     'No explanation, no markdown, no code fences.',
   );
@@ -738,11 +792,16 @@ export function planExerciseTypesPrompt(params: {
 /**
  * Reads a coverage plan.
  *
- * Returns an empty array rather than throwing: a plan is an improvement on
- * generating blind, not a precondition for it, so an unreadable one leaves
- * generation exactly as it was.
+ * Returns an empty array rather than throwing: a plan improves generation and
+ * is not a precondition for it, so an unreadable one leaves generation exactly
+ * as it was.
+ *
+ * Repeated pairs are dropped. A plan listing one pair twice asks for the same
+ * question twice, which is the thing the plan exists to prevent.
  */
-export function parseExerciseTypes(text: string | undefined | null): string[] {
+export function parseCoveragePlan(
+  text: string | undefined | null,
+): CoverageCell[] {
   if (!text) return [];
   const start = text.indexOf('{');
   const end = text.lastIndexOf('}');
@@ -755,17 +814,19 @@ export function parseExerciseTypes(text: string | undefined | null): string[] {
     return [];
   }
 
-  const types = parsed?.exerciseTypes;
-  if (!Array.isArray(types)) return [];
+  const plan = parsed?.plan;
+  if (!Array.isArray(plan)) return [];
 
   const seen = new Set<string>();
-  const out: string[] = [];
-  types.forEach((t) => {
-    const value = String(t ?? '').trim();
-    const key = value.toLowerCase();
-    if (!value || seen.has(key)) return;
+  const out: CoverageCell[] = [];
+  plan.forEach((cell) => {
+    const subtopic = String(cell?.subtopic ?? '').trim();
+    const exercise = String(cell?.exercise ?? '').trim();
+    if (!subtopic || !exercise) return;
+    const key = `${subtopic.toLowerCase()}|${exercise.toLowerCase()}`;
+    if (seen.has(key)) return;
     seen.add(key);
-    out.push(value);
+    out.push({ subtopic, exercise });
   });
   return out;
 }

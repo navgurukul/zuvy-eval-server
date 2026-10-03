@@ -48,7 +48,11 @@ function isPlanningPrompt(prompt: string): boolean {
 }
 
 const PLAN_REPLY = JSON.stringify({
-  exerciseTypes: ['first kind', 'second kind', 'third kind'],
+  plan: [
+    { subtopic: 'first area', exercise: 'first kind' },
+    { subtopic: 'second area', exercise: 'second kind' },
+    { subtopic: 'third area', exercise: 'third kind' },
+  ],
 });
 
 /** The question text a verifier prompt is asking about. */
@@ -490,5 +494,152 @@ describe('QuestionsProcessor top-up loop', () => {
     // Question 7 was accepted in round 1, so round 2 must be told not to
     // restate it.
     expect(generationPrompts[1]).toContain(`${word(7)} lorp blint praxil`);
+  });
+});
+
+/**
+ * Planning runs on the input that used to switch it off.
+ *
+ * Naming sub-concepts in the request made planExerciseTypes return an empty
+ * list and generate with no plan at all, so the richest input produced the
+ * least structure. A reviewer then found that filling the context fields in
+ * by hand was the only thing that reduced duplication - which was true, and
+ * true in spite of the planner rather than because of it.
+ */
+describe('QuestionsProcessor coverage planning', () => {
+  function build(data: Record<string, unknown>, planReply = PLAN_REPLY) {
+    const prompts: string[] = [];
+    let counter = 0;
+
+    const generate = (prompt: string) => {
+      prompts.push(prompt);
+      if (prompt.startsWith('You are planning an assessment on')) {
+        return Promise.resolve({ text: planReply });
+      }
+      const n = requestedCount(prompt);
+      const evaluations = Array.from({ length: n }, () => {
+        counter += 1;
+        return {
+          question: `${word(counter)} lorp blint praxil`,
+          solution: 'working',
+          options: {
+            '1': `${counter}a`,
+            '2': `${counter}b`,
+            '3': `${counter}c`,
+            '4': `${counter}d`,
+          },
+          correctOption: 1,
+          difficulty: 'easy',
+          language: 'en',
+          level: 'C',
+        };
+      });
+      return Promise.resolve({ text: JSON.stringify({ evaluations }) });
+    };
+
+    const processor = new QuestionsProcessor(
+      {
+        generateCompletion: jest.fn(generate),
+        generateCompletionPreferring: jest.fn((_p: string, prompt: string) =>
+          isVerifierPrompt(prompt)
+            ? Promise.resolve({
+                text: JSON.stringify({ computedAnswer: 'x', correctOption: 1 }),
+              })
+            : generate(prompt),
+        ),
+      } as unknown as LlmService,
+      {
+        resolveCanonicalTopic: () =>
+          Promise.resolve({ topicName: 'Permutation', topicDescription: '' }),
+        getRecentQuestionsByTopic: () => Promise.resolve([]),
+        getQuestionTextsByIds: () => Promise.resolve([]),
+        createManyWithOutbox: jest.fn((rows: Row[]) =>
+          Promise.resolve(rows.map((r, i) => ({ ...r, id: i + 1 }))),
+        ),
+      } as unknown as QuestionsService,
+      {
+        embed: () => Promise.resolve(fakeEmbedding('query')),
+        embedMany: (texts: string[]) =>
+          Promise.resolve(texts.map(fakeEmbedding)),
+      } as unknown as EmbeddingsService,
+      { search: () => Promise.resolve([]) } as unknown as VectorService,
+    );
+    (processor as unknown as { logger: Record<string, jest.Mock> }).logger = {
+      warn: jest.fn(),
+      log: jest.fn(),
+      error: jest.fn(),
+      debug: jest.fn(),
+    };
+
+    const run = () =>
+      (
+        processor as unknown as {
+          handleGenerateTopicBatch(job: unknown): Promise<void>;
+        }
+      ).handleGenerateTopicBatch({
+        id: 'job-1',
+        attemptsMade: 0,
+        data: { topic: 'Permutation', orgId: 1, levelId: null, ...data },
+      });
+
+    const planPrompt = () =>
+      prompts.find((p) => p.startsWith('You are planning an assessment on'));
+    const genPrompt = () =>
+      prompts.find((p) => p.includes('COVERAGE PLAN FOR THIS BATCH'));
+
+    return { run, planPrompt, genPrompt, prompts };
+  }
+
+  it('still plans when the request names sub-concepts, and uses them', async () => {
+    const { run, planPrompt } = build({
+      count: 4,
+      subtopics: ['alpha area', 'beta area'],
+    });
+
+    await run();
+
+    expect(planPrompt()).toBeDefined();
+    expect(planPrompt()).toContain('alpha area, beta area');
+  });
+
+  it('plans for the whole request, not just this batch', async () => {
+    // Batch three of five planning ten cells plans the same ten as batch one.
+    const { run, planPrompt } = build({
+      count: 10,
+      batchIndex: 2,
+      batchCount: 5,
+      totalCount: 50,
+    });
+
+    await run();
+
+    expect(planPrompt()).toMatch(/Plan 50 questions/);
+  });
+
+  it('hands the generation prompt one planned line per question', async () => {
+    const { run, genPrompt } = build({ count: 3 });
+
+    await run();
+
+    const prompt = genPrompt();
+    expect(prompt).toBeDefined();
+    expect(prompt).toContain('Sub-concept: first area | Exercise: first kind');
+    expect(prompt).toContain(
+      'Sub-concept: second area | Exercise: second kind',
+    );
+  });
+
+  it('generates without a plan rather than failing when one cannot be read', async () => {
+    // A plan improves generation and is not a precondition for it, so an
+    // unreadable one must leave generation exactly as it was.
+    const { run, genPrompt, prompts } = build({ count: 3 }, 'the model rambled');
+
+    await expect(run()).resolves.toBeUndefined();
+
+    // No plan reached the generation prompt, and questions were still written.
+    expect(genPrompt()).toBeUndefined();
+    expect(
+      prompts.some((text) => text.includes('Generate EXACTLY')),
+    ).toBe(true);
   });
 });

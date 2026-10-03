@@ -1,7 +1,7 @@
 import {
   generateMcqPromptFromSpec,
-  parseExerciseTypes,
-  planExerciseTypesPrompt,
+  parseCoveragePlan,
+  planCoveragePrompt,
   verifyMcqAnswerPrompt,
 } from './system_prompts';
 
@@ -15,136 +15,6 @@ import {
  * removal only empties the batch. The model has to be told where else to go
  * before it writes.
  */
-
-describe('planExerciseTypesPrompt', () => {
-  const base = { topic: 'Logarithm', count: 10 };
-
-  it('asks for kinds of exercise, not areas of the subject', () => {
-    const prompt = planExerciseTypesPrompt(base).replace(/\s+/g, ' ');
-    expect(prompt).toMatch(/DISTINCT kinds of exercise/i);
-    expect(prompt).toMatch(/thing the student has to DO/i);
-  });
-
-  it('names every disguise a repeat has actually used', () => {
-    // Each of these defeated a check that had been added for the one before
-    // it: wording, then numbers, then nouns, then notation.
-    const prompt = planExerciseTypesPrompt(base).replace(/\s+/g, ' ');
-    expect(prompt).toMatch(
-      /Changing the numbers, the names, the objects, the symbols or the wording/i,
-    );
-  });
-
-  it('carries no example from any particular subject', () => {
-    // A worked example in one subject steers the plan toward that subject.
-    // Asked about arrays or general knowledge, a model shown a logarithm
-    // example reaches for calculation.
-    const prompt = planExerciseTypesPrompt({ topic: 'Arrays', count: 8 });
-    expect(prompt).not.toMatch(
-      /logarithm|log\d|permutation|combination|mean|median|equation/i,
-    );
-  });
-
-  it('offers kinds of exercise that hold outside mathematics', () => {
-    const prompt = planExerciseTypesPrompt({
-      topic: 'General knowledge',
-      count: 8,
-    }).replace(/\s+/g, ' ');
-
-    expect(prompt).toMatch(/recalling or recognising/i);
-    expect(prompt).toMatch(/finding the flaw in a stated conclusion/i);
-    // And asks for them in the topic's own words, not echoed back.
-    expect(prompt).toMatch(/in the language of THIS topic/i);
-  });
-
-  it('allows a short list when the topic is genuinely narrow', () => {
-    // A model told to reach a number will split hairs to get there.
-    expect(planExerciseTypesPrompt(base).replace(/\s+/g, ' ')).toMatch(
-      /Give FEWER than 10 if the topic honestly has fewer/i,
-    );
-  });
-
-  it('shows what already exists so the plan reaches elsewhere', () => {
-    const prompt = planExerciseTypesPrompt({
-      ...base,
-      existingQuestions: ['Evaluate log2(8).', 'Evaluate log3(27).'],
-    });
-    expect(prompt).toContain('Evaluate log2(8).');
-    expect(prompt).toMatch(/Reach for ones they do not/i);
-  });
-
-  it('caps how many existing questions it pastes in', () => {
-    const many = Array.from({ length: 100 }, (_, i) => `question ${i}`);
-    const prompt = planExerciseTypesPrompt({
-      ...base,
-      existingQuestions: many,
-    });
-    expect(prompt).toContain('question 39');
-    expect(prompt).not.toContain('question 40');
-  });
-});
-
-describe('parseExerciseTypes', () => {
-  it('reads a plan', () => {
-    expect(
-      parseExerciseTypes(
-        '{"exerciseTypes":["evaluate a logarithm","solve for the base"]}',
-      ),
-    ).toEqual(['evaluate a logarithm', 'solve for the base']);
-  });
-
-  it('tolerates code fences', () => {
-    const fenced = ['```json', '{"exerciseTypes":["a"]}', '```'].join('\n');
-    expect(parseExerciseTypes(fenced)).toEqual(['a']);
-  });
-
-  it('drops repeats, which defeat the purpose of the list', () => {
-    expect(
-      parseExerciseTypes(
-        '{"exerciseTypes":["Evaluate","evaluate","  Evaluate  ","solve"]}',
-      ),
-    ).toEqual(['Evaluate', 'solve']);
-  });
-
-  it('returns nothing rather than throwing on an unreadable reply', () => {
-    // A plan is an improvement on generating blind, not a precondition.
-    expect(parseExerciseTypes('not json')).toEqual([]);
-    expect(parseExerciseTypes('{"somethingElse":[1]}')).toEqual([]);
-    expect(parseExerciseTypes(undefined)).toEqual([]);
-    expect(parseExerciseTypes('{"exerciseTypes":"not an array"}')).toEqual([]);
-  });
-});
-
-describe('generateMcqPromptFromSpec with a plan', () => {
-  it('lists the planned kinds and asks for one question each', () => {
-    const prompt = generateMcqPromptFromSpec({
-      topic: 'Logarithm',
-      count: 3,
-      exerciseTypes: ['evaluate a logarithm', 'solve for the base'],
-    });
-
-    expect(prompt).toContain('KINDS OF EXERCISE TO COVER');
-    expect(prompt).toContain('1. evaluate a logarithm');
-    expect(prompt).toContain('2. solve for the base');
-    expect(prompt.replace(/\s+/g, ' ')).toMatch(
-      /one question on each before returning to any of them/i,
-    );
-  });
-
-  it('says what to do when the plan is shorter than the count', () => {
-    const prompt = generateMcqPromptFromSpec({
-      topic: 'Logarithm',
-      count: 10,
-      exerciseTypes: ['evaluate a logarithm'],
-    }).replace(/\s+/g, ' ');
-
-    expect(prompt).toMatch(/rather than inventing near-copies/i);
-  });
-
-  it('leaves the prompt untouched when there is no plan', () => {
-    const prompt = generateMcqPromptFromSpec({ topic: 'Logarithm', count: 3 });
-    expect(prompt).not.toContain('KINDS OF EXERCISE TO COVER');
-  });
-});
 
 describe('the generation prompt is subject-neutral too', () => {
   /**
@@ -222,5 +92,178 @@ describe('the verifier prompt is subject-neutral', () => {
     });
     expect(prompt).toMatch(/answerIsForced/);
     expect(prompt).toMatch(/optionVerdicts/);
+  });
+});
+
+/**
+ * Planning both axes, not one.
+ *
+ * A reviewer reading fifty generated questions reported that duplication fell
+ * sharply once the context fields were filled in by hand, and returned as soon
+ * as a topic name was all the service had. The fields were doing the planning.
+ *
+ * The planner that existed then named kinds of exercise only, which leaves the
+ * subject matter free to repeat: a batch can ask seven different kinds of
+ * exercise and still test one idea seven times. Pairing each question with the
+ * sub-concept it tests is what closes that, and it is what an instructor was
+ * otherwise supplying by hand.
+ */
+describe('planCoveragePrompt', () => {
+  const base = { topic: 'Logarithm', count: 10 };
+
+  it('asks for a pair per question, not a list of one kind of thing', () => {
+    const prompt = planCoveragePrompt(base).replace(/\s+/g, ' ');
+    expect(prompt).toMatch(/Each is a PAIR/i);
+    expect(prompt).toMatch(/SUB-CONCEPT is a distinct idea inside the topic/i);
+    expect(prompt).toMatch(/KIND OF EXERCISE is a different thing/i);
+  });
+
+  it('requires both columns to vary, not just one', () => {
+    const prompt = planCoveragePrompt(base).replace(/\s+/g, ' ');
+    expect(prompt).toMatch(/VARY BOTH COLUMNS/i);
+    expect(prompt).toMatch(/sharing a sub-concept must not share an exercise/i);
+  });
+
+  it('uses sub-concepts the instructor named instead of ignoring them', () => {
+    const prompt = planCoveragePrompt({
+      ...base,
+      subtopics: ['change of base', 'product law'],
+    });
+    expect(prompt).toContain('change of base, product law');
+    expect(prompt.replace(/\s+/g, ' ')).toMatch(/Use these as the sub-concepts/i);
+  });
+
+  it('carries the other context fields the planner can use', () => {
+    const prompt = planCoveragePrompt({
+      ...base,
+      topicDescription: 'wug lorp',
+      targetAudience: 'blint praxil',
+      learningObjectives: 'doved skarn',
+    });
+    expect(prompt).toContain('wug lorp');
+    expect(prompt).toContain('blint praxil');
+    expect(prompt).toContain('doved skarn');
+  });
+
+  it('shows what already exists so the plan reaches elsewhere', () => {
+    const prompt = planCoveragePrompt({
+      ...base,
+      existingQuestions: ['Evaluate log2(8).'],
+    });
+    expect(prompt).toContain('Evaluate log2(8).');
+    expect(prompt.replace(/\s+/g, ' ')).toMatch(/Reach for ground they do not/i);
+  });
+
+  it('carries no example from any particular subject', () => {
+    const prompt = planCoveragePrompt({ topic: 'Indian history', count: 8 });
+    expect(prompt).not.toMatch(
+      /logarithm|log\d|permutation|median|equation|arithmetic/i,
+    );
+    expect(prompt.replace(/\s+/g, ' ')).toMatch(/recalling or recognising/i);
+    expect(prompt.replace(/\s+/g, ' ')).toMatch(
+      /finding the flaw in a stated conclusion/i,
+    );
+  });
+
+  it('says what to do when the topic has fewer sub-concepts than lines', () => {
+    expect(planCoveragePrompt(base).replace(/\s+/g, ' ')).toMatch(
+      /reuse them with a different exercise each time/i,
+    );
+  });
+});
+
+describe('parseCoveragePlan', () => {
+  it('reads the pairs', () => {
+    expect(
+      parseCoveragePlan(
+        '{"plan":[{"subtopic":"wug","exercise":"lorp"},{"subtopic":"blint","exercise":"praxil"}]}',
+      ),
+    ).toEqual([
+      { subtopic: 'wug', exercise: 'lorp' },
+      { subtopic: 'blint', exercise: 'praxil' },
+    ]);
+  });
+
+  it('tolerates code fences', () => {
+    const fenced = [
+      '```json',
+      '{"plan":[{"subtopic":"wug","exercise":"lorp"}]}',
+      '```',
+    ].join('\n');
+    expect(parseCoveragePlan(fenced)).toHaveLength(1);
+  });
+
+  it('drops a repeated pair, which asks for the same question twice', () => {
+    expect(
+      parseCoveragePlan(
+        '{"plan":[{"subtopic":"wug","exercise":"lorp"},{"subtopic":"WUG","exercise":"Lorp"},{"subtopic":"wug","exercise":"blint"}]}',
+      ),
+    ).toEqual([
+      { subtopic: 'wug', exercise: 'lorp' },
+      { subtopic: 'wug', exercise: 'blint' },
+    ]);
+  });
+
+  it('keeps one axis repeated as long as the pair differs', () => {
+    expect(
+      parseCoveragePlan(
+        '{"plan":[{"subtopic":"wug","exercise":"lorp"},{"subtopic":"wug","exercise":"praxil"}]}',
+      ),
+    ).toHaveLength(2);
+  });
+
+  it('skips a half-filled cell rather than inventing the other half', () => {
+    expect(
+      parseCoveragePlan(
+        '{"plan":[{"subtopic":"wug"},{"exercise":"lorp"},{"subtopic":"","exercise":"x"},{"subtopic":"a","exercise":"b"}]}',
+      ),
+    ).toEqual([{ subtopic: 'a', exercise: 'b' }]);
+  });
+
+  it('returns nothing rather than throwing on an unreadable reply', () => {
+    expect(parseCoveragePlan('not json')).toEqual([]);
+    expect(parseCoveragePlan('{"somethingElse":[1]}')).toEqual([]);
+    expect(parseCoveragePlan('{"plan":"not an array"}')).toEqual([]);
+    expect(parseCoveragePlan(undefined)).toEqual([]);
+  });
+});
+
+describe('generateMcqPromptFromSpec with a coverage plan', () => {
+  const coverage = [
+    { subtopic: 'wug', exercise: 'lorp' },
+    { subtopic: 'blint', exercise: 'praxil' },
+  ];
+
+  it('hands each question its own line, naming both axes', () => {
+    const prompt = generateMcqPromptFromSpec({
+      topic: 'Logarithm',
+      count: 2,
+      coverage,
+    });
+
+    expect(prompt).toContain('COVERAGE PLAN FOR THIS BATCH');
+    expect(prompt).toContain('1. Sub-concept: wug | Exercise: lorp');
+    expect(prompt).toContain('2. Sub-concept: blint | Exercise: praxil');
+    expect(prompt.replace(/\s+/g, ' ')).toMatch(
+      /Write exactly one question for each line/i,
+    );
+  });
+
+  it('forbids sharing both axes, and asks the surface to vary too', () => {
+    const prompt = generateMcqPromptFromSpec({
+      topic: 'Logarithm',
+      count: 2,
+      coverage,
+    }).replace(/\s+/g, ' ');
+
+    expect(prompt).toMatch(/No two questions may share both/i);
+    expect(prompt).toMatch(/Vary the surface as well as the plan/i);
+    expect(prompt).toMatch(/with the numbers swapped are one question/i);
+  });
+
+
+  it('leaves the prompt untouched when there is no plan', () => {
+    const prompt = generateMcqPromptFromSpec({ topic: 'Logarithm', count: 3 });
+    expect(prompt).not.toContain('COVERAGE PLAN FOR THIS BATCH');
   });
 });

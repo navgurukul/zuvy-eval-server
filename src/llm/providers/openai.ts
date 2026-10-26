@@ -32,12 +32,11 @@ export class OpenAIProvider implements LLMProvider {
         latencyMs: Date.now() - start,
       };
     } catch (error) {
-      this.logger.error("Error generating openai response.", error);
-      return {
-        text: "",
-        usage: "",
-        latencyMs: Date.now()
-      }
+      // Propagate. Returning an empty-text "success" here used to hide every
+      // OpenAI failure from LlmService: the circuit breaker recorded a success,
+      // never opened, and the Gemini fallback was therefore unreachable code.
+      this.logger.error('Error generating openai response.', error);
+      throw error;
     }
   }
 

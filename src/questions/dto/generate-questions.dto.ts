@@ -149,4 +149,19 @@ export interface GenerateTopicBatchJobPayload {
     medium: number;
     hard: number;
   };
+  /**
+   * Which batch of the request this job is, and how many there are.
+   *
+   * A request for 50 questions on one topic fans out to five jobs of ten, and
+   * a job that does not know this plans as though it were the only one. Five
+   * jobs each planning ten cells on a narrow topic plan the same ten, which is
+   * how one request ends up asking the same handful of things five times over.
+   *
+   * With these, a job plans the whole request and takes its own slice.
+   * Optional, so a job enqueued before this existed still runs.
+   */
+  batchIndex?: number;
+  batchCount?: number;
+  /** Questions the whole request asked for, across all its batches. */
+  totalCount?: number;
 }

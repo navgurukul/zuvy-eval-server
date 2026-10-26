@@ -25,7 +25,10 @@ const EvaluationItemSchema = z.object({
   options: z.array(OptionSchema),
   selectedAnswerByStudent: OptionSchema.nullable(),
   language: z.string().optional(),
-  status: z.enum(['correct', 'incorrect']),
+  // The model is no longer asked to decide correctness; the service overwrites
+  // this from the stored-answer comparison that produced the score. Optional so
+  // a response that omits it still parses.
+  status: z.enum(['correct', 'incorrect']).optional(),
   explanation: z.string().min(1),
 });
 

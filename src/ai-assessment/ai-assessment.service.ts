@@ -16,10 +16,14 @@ import { questionStudentAnswerRelation } from 'src/db/schema/questionStdAns';
 import { studentAnswers } from 'src/db/schema/studentAnswer';
 import { studentLevelRelation } from 'src/db/schema/studentLevel';
 import { levels } from 'src/db/schema/level';
+import { resolveLevelBand } from 'src/level/level-band.util';
 import { aiAssessment } from 'src/db/schema/ai-assessment';
 import { correctAnswers } from 'src/db/schema/correctAns';
 import { studentAssessment } from 'src/db/schema/stdAssessment';
-import { SubmitAssessmentDto, ScoreSubmitDto } from './dto/create-ai-assessment.dto';
+import {
+  SubmitAssessmentDto,
+  ScoreSubmitDto,
+} from './dto/create-ai-assessment.dto';
 import { LlmService } from 'src/llm/llm.service';
 import {
   answerEvaluationPrompt,
@@ -47,29 +51,40 @@ export class AiAssessmentService {
     private readonly questionByLlmService: QuestionsByLlmService,
     private readonly storageService: StorageService,
     private readonly llmUsageService: LLMUsageService,
-    @Inject(DRIZZLE_DB) private readonly db: NodePgDatabase
+    @Inject(DRIZZLE_DB) private readonly db: NodePgDatabase,
   ) {}
 
-   async saveTokenUsage(aiAssessmentId: number, response: any) {
+  async saveTokenUsage(aiAssessmentId: number, response: any) {
     const usageData = {
       aiAssessmentId,
-      provider: response?.provider ?? "openai",
-      prompt: response?.request?.messages?.map(m => m.content).join("\n") ?? "",
-      responseText: response?.message?.content ?? "",
+      provider: response?.provider ?? 'openai',
+      prompt:
+        response?.request?.messages?.map((m) => m.content).join('\n') ?? '',
+      responseText: response?.message?.content ?? '',
       latencyMs: response?.latencyMs ?? 0,
       usage: response?.usage ?? null,
-      createdAt: new Date()
+      createdAt: new Date(),
     };
 
     await this.llmUsageService.save(usageData);
   }
 
+  /**
+   * Returns the score plus the per-question verdicts behind it, so LLM-written
+   * feedback can be labelled with the same result that produced the score
+   * rather than with the model's own opinion of correctness.
+   */
   async countScore(submitAssessmentDto: SubmitAssessmentDto) {
     const { answers } = submitAssessmentDto;
     let score = 0;
+    const correctByQuestionId = new Map<string, boolean>();
 
     for (const q of answers) {
-      if (!q.selectedAnswerByStudent) continue;
+      if (!q.selectedAnswerByStudent) {
+        // Unattempted counts as incorrect, matching the score.
+        correctByQuestionId.set(String(q.id), false);
+        continue;
+      }
       const correct = await this.db
         .select()
         .from(correctAnswers)
@@ -81,11 +96,13 @@ export class AiAssessmentService {
         )
         .limit(1);
 
-      if (correct.length > 0) {
+      const isCorrect = correct.length > 0;
+      correctByQuestionId.set(String(q.id), isCorrect);
+      if (isCorrect) {
         score++;
       }
     }
-    return { score, totalQuestions: answers.length };
+    return { score, totalQuestions: answers.length, correctByQuestionId };
   }
 
   async submitAndScore(studentId: number, dto: ScoreSubmitDto) {
@@ -104,7 +121,10 @@ export class AiAssessmentService {
 
       if (
         !assessmentRow ||
-        !this.isAssessmentAvailable(assessmentRow.status, assessmentRow.startDatetime)
+        !this.isAssessmentAvailable(
+          assessmentRow.status,
+          assessmentRow.startDatetime,
+        )
       ) {
         throw new BadRequestException('Assessment is not yet available');
       }
@@ -258,7 +278,7 @@ export class AiAssessmentService {
       correctMap.set(row.id, row.correctOption);
     }
 
-    let ordered = [...answerRows];
+    const ordered = [...answerRows];
     if (assignment.questionSetId) {
       const positions = await this.db
         .select({
@@ -268,10 +288,7 @@ export class AiAssessmentService {
         .from(aiAssessmentQuestions)
         .where(
           and(
-            eq(
-              aiAssessmentQuestions.questionSetId,
-              assignment.questionSetId,
-            ),
+            eq(aiAssessmentQuestions.questionSetId, assignment.questionSetId),
             inArray(aiAssessmentQuestions.questionId, questionIds),
           ),
         );
@@ -332,7 +349,11 @@ export class AiAssessmentService {
       .orderBy(desc(studentLevelRelation.id))
       .limit(1);
 
-    let levelPayload: { grade: string; meaning: string | null; hardship: string | null };
+    let levelPayload: {
+      grade: string;
+      meaning: string | null;
+      hardship: string | null;
+    };
     if (levelFromDb) {
       levelPayload = levelFromDb;
     } else {
@@ -429,12 +450,15 @@ export class AiAssessmentService {
 
         if (
           !assessmentRow ||
-          !this.isAssessmentAvailable(assessmentRow.status, assessmentRow.startDatetime)
+          !this.isAssessmentAvailable(
+            assessmentRow.status,
+            assessmentRow.startDatetime,
+          )
         ) {
           throw new BadRequestException('Assessment is not yet available');
         }
 
-        const { score, totalQuestions } =
+        const { score, totalQuestions, correctByQuestionId } =
           await this.countScore(submitAssessmentDto);
         const totalScore = (score / totalQuestions) * 100;
 
@@ -491,7 +515,8 @@ export class AiAssessmentService {
           );
 
         const evaluationPrompt = answerEvaluationPrompt(answers);
-        const llmResponse = await this.llmService.generateCompletion(evaluationPrompt);
+        const llmResponse =
+          await this.llmService.generateCompletion(evaluationPrompt);
         const responseText = llmResponse.text;
         const aiUsage = await this.saveTokenUsage(aiAssessmentId, llmResponse);
 
@@ -501,10 +526,10 @@ export class AiAssessmentService {
           rawEvaluationText = responseText;
         else if (typeof llmResponse === 'object') {
           rawEvaluationText =
-            (llmResponse as any).text ??
-            (llmResponse as any).content ??
-            (llmResponse as any).response ??
-            (llmResponse as any).output ??
+            llmResponse.text ??
+            llmResponse.content ??
+            llmResponse.response ??
+            llmResponse.output ??
             JSON.stringify(llmResponse);
         } else {
           rawEvaluationText = String(responseText);
@@ -522,6 +547,16 @@ export class AiAssessmentService {
           }
         } else {
           parseError = 'Empty LLM response.';
+        }
+
+        // Correctness belongs to the server. Overwrite whatever the model
+        // implied so the results screen cannot contradict the score above.
+        if (Array.isArray(parsedEvaluation?.evaluations)) {
+          for (const item of parsedEvaluation.evaluations) {
+            item.status = correctByQuestionId.get(String(item.id))
+              ? 'correct'
+              : 'incorrect';
+          }
         }
 
         // Optionally: persist parsedEvaluation to DB here if successful
@@ -552,31 +587,34 @@ export class AiAssessmentService {
     }
   }
 
+  /**
+   * The grade a percentage earns, and with it the question set the student
+   * gets next.
+   *
+   * This used to test each band independently, in whatever order the rows came
+   * back, and got two things wrong. D carries a scoreMax of 59 and no
+   * scoreMin, so it matched every score at or below 59 and answered before E
+   * was ever reached; E was unreachable. And because the bands stop at whole
+   * numbers while the score is rounded to two decimals, a percentage such as
+   * 89.47 - seventeen right out of nineteen - fell between A and A+, matched
+   * nothing, and hit the fallback, recording a near-A+ result as "requires
+   * intervention".
+   *
+   * resolveLevelBand walks the bands as a continuous ladder instead, so every
+   * score lands somewhere and the answer does not depend on row order.
+   */
   private async calculateStudentLevel(score: number) {
-    const allLevels = await this.db.select().from(levels); // Renamed to avoid conflict
+    const allLevels = await this.db.select().from(levels);
 
-    const level = allLevels.find((level) => {
-      const min = level.scoreMin ?? -Infinity;
-      const max = level.scoreMax ?? Infinity;
+    const level = resolveLevelBand(allLevels, score);
+    if (level) return level;
 
-      if (level.grade === 'A+') {
-        return score >= min;
-      } else if (level.grade === 'E') {
-        return score <= max;
-      } else {
-        return score >= min && score <= max;
-      }
-    });
-
-    if (!level) {
-      // Default to E level if no match found
-      return (
-        allLevels.find((l) => l.grade === 'E') ||
-        allLevels[allLevels.length - 1]
-      );
-    }
-
-    return level;
+    // No bands seeded at all. POST /level/seed has not been run in this
+    // schema, and there is nothing to grade against.
+    this.logger?.warn?.(
+      'No level bands found; run POST /level/seed for this schema.',
+    );
+    return allLevels[allLevels.length - 1];
   }
 
   async findAllAssessmentOfAStudent(
@@ -683,9 +721,7 @@ export class AiAssessmentService {
 
     const row = rows[0];
 
-    if (
-      !this.isAssessmentAvailable(row.assessmentStatus, row.startDatetime)
-    ) {
+    if (!this.isAssessmentAvailable(row.assessmentStatus, row.startDatetime)) {
       throw new BadRequestException('Assessment is not yet available');
     }
 
@@ -743,27 +779,33 @@ export class AiAssessmentService {
     }
   }
 
-    async generateAudioSummary(
+  async generateAudioSummary(
     text: string,
     language: string,
     studentId: string,
     assessmentId: string,
-    ) {
-      try {
-        const audioBuffer = await this.llmService.generateAudioSummary(text, language);
-        const {audioUrl} = await this.storageService.uploadAudioToS3(audioBuffer, studentId, assessmentId);
+  ) {
+    try {
+      const audioBuffer = await this.llmService.generateAudioSummary(
+        text,
+        language,
+      );
+      const { audioUrl } = await this.storageService.uploadAudioToS3(
+        audioBuffer,
+        studentId,
+        assessmentId,
+      );
 
-        return { audioUrl };
-      } catch (error) {
-        this.logger.error(
-          `Audio generation failed for student=${studentId}, assessment=${assessmentId}`,
-          error.stack,
-        );
+      return { audioUrl };
+    } catch (error) {
+      this.logger.error(
+        `Audio generation failed for student=${studentId}, assessment=${assessmentId}`,
+        error.stack,
+      );
 
-        throw new InternalServerErrorException(
-          'Failed to generate audio. Please try again later.',
-        );
+      throw new InternalServerErrorException(
+        'Failed to generate audio. Please try again later.',
+      );
     }
   }
-
 }

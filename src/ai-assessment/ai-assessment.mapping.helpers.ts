@@ -16,7 +16,11 @@ import { EmbeddingsService } from 'src/llm/embeddings.service';
 import { VectorService } from 'src/vector/vector.service';
 import { TopicService } from 'src/topic/topic.service';
 import { topic } from 'src/topic/db/topic.schema';
-import { normalizeTopicName, topicNameEquals, topicNameKey } from 'src/topic/topic-name.util';
+import {
+  normalizeTopicName,
+  topicNameEquals,
+  topicNameKey,
+} from 'src/topic/topic-name.util';
 
 export type Tx = Parameters<Parameters<NodePgDatabase['transaction']>[0]>[0];
 
@@ -59,10 +63,17 @@ export class AiAssessmentMappingHelpers {
       .limit(1);
 
     if (!assessment) {
-      throw new NotFoundException(`AI assessment with id=${aiAssessmentId} not found`);
+      throw new NotFoundException(
+        `AI assessment with id=${aiAssessmentId} not found`,
+      );
     }
-    if (!assessment.totalNumberOfQuestions || assessment.totalNumberOfQuestions <= 0) {
-      throw new BadRequestException('totalNumberOfQuestions must be > 0 to map questions');
+    if (
+      !assessment.totalNumberOfQuestions ||
+      assessment.totalNumberOfQuestions <= 0
+    ) {
+      throw new BadRequestException(
+        'totalNumberOfQuestions must be > 0 to map questions',
+      );
     }
     return assessment;
   }
@@ -77,8 +88,12 @@ export class AiAssessmentMappingHelpers {
 
     if (existingSets.length > 0) {
       const setIds = existingSets.map((s) => s.id);
-      await tx.delete(aiAssessmentQuestions).where(inArray(aiAssessmentQuestions.questionSetId, setIds as number[]));
-      await tx.delete(aiAssessmentQuestionSets).where(eq(aiAssessmentQuestionSets.aiAssessmentId, aiAssessmentId));
+      await tx
+        .delete(aiAssessmentQuestions)
+        .where(inArray(aiAssessmentQuestions.questionSetId, setIds));
+      await tx
+        .delete(aiAssessmentQuestionSets)
+        .where(eq(aiAssessmentQuestionSets.aiAssessmentId, aiAssessmentId));
     }
 
     await tx
@@ -159,7 +174,11 @@ export class AiAssessmentMappingHelpers {
 
   async buildQueryVector(assessment: any): Promise<number[]> {
     return this.embeddingsService.embed(
-      [assessment.title ?? '', assessment.description ?? '', this.audienceToText(assessment.audience)]
+      [
+        assessment.title ?? '',
+        assessment.description ?? '',
+        this.audienceToText(assessment.audience),
+      ]
         .filter(Boolean)
         .join(' '),
     );
@@ -178,7 +197,12 @@ export class AiAssessmentMappingHelpers {
         ? `Topics in scope: ${topicNames.slice(0, 80).join(', ')}`
         : '';
 
-    const queryText = [assessment.title ?? '', assessment.description ?? '', audienceText, topicContext]
+    const queryText = [
+      assessment.title ?? '',
+      assessment.description ?? '',
+      audienceText,
+      topicContext,
+    ]
       .filter(Boolean)
       .join(' ');
 
@@ -191,7 +215,9 @@ export class AiAssessmentMappingHelpers {
     const commonPerSet = Math.round(totalQuestions * 0.4);
     const uniquePerSet = totalQuestions - commonPerSet;
     const distinctNeeded = commonPerSet + uniquePerSet * 6;
-    const neededTotal = isBaseline ? totalQuestions : distinctNeeded * SAFETY_FACTOR;
+    const neededTotal = isBaseline
+      ? totalQuestions
+      : distinctNeeded * SAFETY_FACTOR;
     return { commonPerSet, uniquePerSet, neededTotal };
   }
 
@@ -221,7 +247,13 @@ export class AiAssessmentMappingHelpers {
     neededTotal: number,
     orgId?: number,
   ): Promise<number[]> {
-    return this.searchEvenlyByTopics(queryVector, topicNames, neededTotal, {}, orgId);
+    return this.searchEvenlyByTopics(
+      queryVector,
+      topicNames,
+      neededTotal,
+      {},
+      orgId,
+    );
   }
 
   private async getTopicNameVariants(
@@ -252,7 +284,9 @@ export class AiAssessmentMappingHelpers {
     const [ownedTopic] = await this.db
       .select({ name: topic.name })
       .from(topic)
-      .where(and(eq(topic.orgId, scopedOrgId), topicNameEquals(topic.name, trimmed)))
+      .where(
+        and(eq(topic.orgId, scopedOrgId), topicNameEquals(topic.name, trimmed)),
+      )
       .limit(1);
     if (ownedTopic?.name) variants.add(ownedTopic.name);
 
@@ -339,7 +373,10 @@ export class AiAssessmentMappingHelpers {
     if (buckets <= 0) return [];
     const base = Math.floor(total / buckets);
     const remainder = total % buckets;
-    return Array.from({ length: buckets }, (_, i) => base + (i < remainder ? 1 : 0));
+    return Array.from(
+      { length: buckets },
+      (_, i) => base + (i < remainder ? 1 : 0),
+    );
   }
 
   private normalizeNames(values: Array<string | null | undefined>): string[] {
@@ -357,7 +394,9 @@ export class AiAssessmentMappingHelpers {
   }
 
   private audienceToText(audience: unknown): string {
-    return typeof audience === 'string' ? audience : JSON.stringify(audience ?? '');
+    return typeof audience === 'string'
+      ? audience
+      : JSON.stringify(audience ?? '');
   }
 
   // ─── Baseline set creation ─────────────────────────────────────────
@@ -400,7 +439,12 @@ export class AiAssessmentMappingHelpers {
       );
     }
 
-    return { aiAssessmentId, isBaseline: true, setsCreated: 1, totalQuestionsPerSet: totalQuestions };
+    return {
+      aiAssessmentId,
+      isBaseline: true,
+      setsCreated: 1,
+      totalQuestionsPerSet: totalQuestions,
+    };
   }
 
   // ─── Non-baseline (6 leveled sets) ─────────────────────────────────
@@ -424,7 +468,10 @@ export class AiAssessmentMappingHelpers {
           status: 'generated',
         })) as any,
       )
-      .returning({ id: aiAssessmentQuestionSets.id, setIndex: aiAssessmentQuestionSets.setIndex });
+      .returning({
+        id: aiAssessmentQuestionSets.id,
+        setIndex: aiAssessmentQuestionSets.setIndex,
+      });
 
     const setIdByIndex = new Map<number, number>();
     insertedSets.forEach((s) => setIdByIndex.set(s.setIndex, s.id));
@@ -472,7 +519,12 @@ export class AiAssessmentMappingHelpers {
     for (const def of SET_DEFINITIONS) {
       const setId = setIdByIndex.get(def.setIndex)!;
       for (let i = 0; i < commonIds.length; i++) {
-        commonRows.push({ questionSetId: setId, questionId: commonIds[i], isCommon: true, position: i + 1 });
+        commonRows.push({
+          questionSetId: setId,
+          questionId: commonIds[i],
+          isCommon: true,
+          position: i + 1,
+        });
       }
     }
     if (commonRows.length > 0) {
@@ -527,11 +579,12 @@ export class AiAssessmentMappingHelpers {
     uniquePerSet: number,
   ) {
     const quotas = this.getDifficultyQuotasForSet(setLevelCode, uniquePerSet);
-    const byDifficulty: Record<'easy' | 'medium' | 'hard', typeof candidates> = {
-      easy: [],
-      medium: [],
-      hard: [],
-    };
+    const byDifficulty: Record<'easy' | 'medium' | 'hard', typeof candidates> =
+      {
+        easy: [],
+        medium: [],
+        hard: [],
+      };
 
     for (const candidate of candidates) {
       const d = this.normalizeDifficulty(candidate.difficulty);
@@ -548,9 +601,11 @@ export class AiAssessmentMappingHelpers {
       return a.index - b.index;
     };
 
-    (Object.keys(byDifficulty) as Array<'easy' | 'medium' | 'hard'>).forEach((key) => {
-      byDifficulty[key].sort(sortByLevelThenIndex);
-    });
+    (Object.keys(byDifficulty) as Array<'easy' | 'medium' | 'hard'>).forEach(
+      (key) => {
+        byDifficulty[key].sort(sortByLevelThenIndex);
+      },
+    );
 
     const chosenIds: number[] = [];
     const chosenSet = new Set<number>();
@@ -573,9 +628,14 @@ export class AiAssessmentMappingHelpers {
       const fallbackRanked = [...candidates].sort((a, b) => {
         const aDifficulty = this.normalizeDifficulty(a.difficulty);
         const bDifficulty = this.normalizeDifficulty(b.difficulty);
-        const aDifficultyScore = aDifficulty ? quotas.preference[aDifficulty] : 0;
-        const bDifficultyScore = bDifficulty ? quotas.preference[bDifficulty] : 0;
-        if (aDifficultyScore !== bDifficultyScore) return bDifficultyScore - aDifficultyScore;
+        const aDifficultyScore = aDifficulty
+          ? quotas.preference[aDifficulty]
+          : 0;
+        const bDifficultyScore = bDifficulty
+          ? quotas.preference[bDifficulty]
+          : 0;
+        if (aDifficultyScore !== bDifficultyScore)
+          return bDifficultyScore - aDifficultyScore;
         return sortByLevelThenIndex(a, b);
       });
       for (const c of fallbackRanked) {
@@ -589,16 +649,49 @@ export class AiAssessmentMappingHelpers {
     return chosenIds;
   }
 
-  private getDifficultyQuotasForSet(setLevelCode: string, uniquePerSet: number) {
+  private getDifficultyQuotasForSet(
+    setLevelCode: string,
+    uniquePerSet: number,
+  ) {
     const profiles: Record<
       string,
-      { hard: number; medium: number; easy: number; order: Array<'easy' | 'medium' | 'hard'> }
+      {
+        hard: number;
+        medium: number;
+        easy: number;
+        order: Array<'easy' | 'medium' | 'hard'>;
+      }
     > = {
-      'A+': { hard: 0.75, medium: 0.2, easy: 0.05, order: ['hard', 'medium', 'easy'] },
-      A: { hard: 0.55, medium: 0.3, easy: 0.15, order: ['hard', 'medium', 'easy'] },
-      B: { hard: 0.3, medium: 0.5, easy: 0.2, order: ['medium', 'hard', 'easy'] },
-      C: { hard: 0.15, medium: 0.45, easy: 0.4, order: ['medium', 'easy', 'hard'] },
-      D: { hard: 0.05, medium: 0.3, easy: 0.65, order: ['easy', 'medium', 'hard'] },
+      'A+': {
+        hard: 0.75,
+        medium: 0.2,
+        easy: 0.05,
+        order: ['hard', 'medium', 'easy'],
+      },
+      A: {
+        hard: 0.55,
+        medium: 0.3,
+        easy: 0.15,
+        order: ['hard', 'medium', 'easy'],
+      },
+      B: {
+        hard: 0.3,
+        medium: 0.5,
+        easy: 0.2,
+        order: ['medium', 'hard', 'easy'],
+      },
+      C: {
+        hard: 0.15,
+        medium: 0.45,
+        easy: 0.4,
+        order: ['medium', 'easy', 'hard'],
+      },
+      D: {
+        hard: 0.05,
+        medium: 0.3,
+        easy: 0.65,
+        order: ['easy', 'medium', 'hard'],
+      },
       E: { hard: 0, medium: 0.2, easy: 0.8, order: ['easy', 'medium', 'hard'] },
     };
     const profile = profiles[setLevelCode] ?? profiles.D;
@@ -626,15 +719,24 @@ export class AiAssessmentMappingHelpers {
     }
 
     const preference = {
-      hard: profile.order[0] === 'hard' ? 3 : profile.order[1] === 'hard' ? 2 : 1,
-      medium: profile.order[0] === 'medium' ? 3 : profile.order[1] === 'medium' ? 2 : 1,
-      easy: profile.order[0] === 'easy' ? 3 : profile.order[1] === 'easy' ? 2 : 1,
+      hard:
+        profile.order[0] === 'hard' ? 3 : profile.order[1] === 'hard' ? 2 : 1,
+      medium:
+        profile.order[0] === 'medium'
+          ? 3
+          : profile.order[1] === 'medium'
+            ? 2
+            : 1,
+      easy:
+        profile.order[0] === 'easy' ? 3 : profile.order[1] === 'easy' ? 2 : 1,
     } as Record<'easy' | 'medium' | 'hard', number>;
 
     return { counts, order: profile.order, preference };
   }
 
-  private normalizeDifficulty(value: string | null): 'easy' | 'medium' | 'hard' | null {
+  private normalizeDifficulty(
+    value: string | null,
+  ): 'easy' | 'medium' | 'hard' | null {
     const v = (value ?? '').trim().toLowerCase();
     if (v === 'easy' || v === 'medium' || v === 'hard') return v;
     return null;

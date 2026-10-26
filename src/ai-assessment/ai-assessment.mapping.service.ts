@@ -33,8 +33,14 @@ export class AiAssessmentMappingService {
     ctx: MapQuestionsContext = { orgId: 0 },
   ) {
     // Resolve topics outside the DB transaction (may call legacy HTTP APIs).
-    const assessment = await this.helpers.loadAssessment(this.db as any, aiAssessmentId);
-    const topicNames = await this.helpers.resolveAssessmentTopicNames(assessment, ctx);
+    const assessment = await this.helpers.loadAssessment(
+      this.db as any,
+      aiAssessmentId,
+    );
+    const topicNames = await this.helpers.resolveAssessmentTopicNames(
+      assessment,
+      ctx,
+    );
 
     if (topicNames.length === 0) {
       this.logger.warn(
@@ -51,7 +57,10 @@ export class AiAssessmentMappingService {
       };
     }
 
-    const queryVector = await this.helpers.buildScopedQueryVector(assessment, topicNames);
+    const queryVector = await this.helpers.buildScopedQueryVector(
+      assessment,
+      topicNames,
+    );
 
     return this.db.transaction(async (tx) => {
       const totalQuestions = assessment.totalNumberOfQuestions;
@@ -93,11 +102,21 @@ export class AiAssessmentMappingService {
         .where(eq(aiAssessment.id, aiAssessmentId));
 
       if (isBaseline) {
-        return this.helpers.createBaselineSet(tx, aiAssessmentId, scopedIds, totalQuestions);
+        return this.helpers.createBaselineSet(
+          tx,
+          aiAssessmentId,
+          scopedIds,
+          totalQuestions,
+        );
       }
 
       return this.helpers.createLeveledSets(
-        tx, aiAssessmentId, scopedIds, totalQuestions, commonPerSet, uniquePerSet,
+        tx,
+        aiAssessmentId,
+        scopedIds,
+        totalQuestions,
+        commonPerSet,
+        uniquePerSet,
       );
     });
   }
@@ -131,7 +150,9 @@ export class AiAssessmentMappingService {
       .limit(1);
 
     if (!assessmentRow) {
-      throw new NotFoundException(`AI assessment with id=${aiAssessmentId} not found`);
+      throw new NotFoundException(
+        `AI assessment with id=${aiAssessmentId} not found`,
+      );
     }
 
     for (const [name, value] of Object.entries({
@@ -144,13 +165,25 @@ export class AiAssessmentMappingService {
       }
     }
 
-    const conditions: any[] = [eq(aiAssessmentQuestionSets.aiAssessmentId, aiAssessmentId)];
-    if (filters.setId !== undefined) conditions.push(eq(aiAssessmentQuestionSets.id, filters.setId));
-    if (filters.setIndex !== undefined) conditions.push(eq(aiAssessmentQuestionSets.setIndex, filters.setIndex));
-    if (filters.levelCode?.trim()) conditions.push(ilike(aiAssessmentQuestionSets.levelCode, filters.levelCode.trim()));
-    if (filters.topicName?.trim()) conditions.push(ilike(zuvyQuestions.topicName, filters.topicName.trim()));
-    if (filters.difficulty?.trim()) conditions.push(ilike(zuvyQuestions.difficulty, filters.difficulty.trim()));
-    if (filters.questionId !== undefined) conditions.push(eq(zuvyQuestions.id, filters.questionId));
+    const conditions: any[] = [
+      eq(aiAssessmentQuestionSets.aiAssessmentId, aiAssessmentId),
+    ];
+    if (filters.setId !== undefined)
+      conditions.push(eq(aiAssessmentQuestionSets.id, filters.setId));
+    if (filters.setIndex !== undefined)
+      conditions.push(eq(aiAssessmentQuestionSets.setIndex, filters.setIndex));
+    if (filters.levelCode?.trim())
+      conditions.push(
+        ilike(aiAssessmentQuestionSets.levelCode, filters.levelCode.trim()),
+      );
+    if (filters.topicName?.trim())
+      conditions.push(ilike(zuvyQuestions.topicName, filters.topicName.trim()));
+    if (filters.difficulty?.trim())
+      conditions.push(
+        ilike(zuvyQuestions.difficulty, filters.difficulty.trim()),
+      );
+    if (filters.questionId !== undefined)
+      conditions.push(eq(zuvyQuestions.id, filters.questionId));
 
     const rows = await this.db
       .select({
@@ -172,10 +205,19 @@ export class AiAssessmentMappingService {
         topicDescription: zuvyQuestions.topicDescription,
       })
       .from(aiAssessmentQuestionSets)
-      .innerJoin(aiAssessmentQuestions, eq(aiAssessmentQuestions.questionSetId, aiAssessmentQuestionSets.id))
-      .innerJoin(zuvyQuestions, eq(zuvyQuestions.id, aiAssessmentQuestions.questionId))
+      .innerJoin(
+        aiAssessmentQuestions,
+        eq(aiAssessmentQuestions.questionSetId, aiAssessmentQuestionSets.id),
+      )
+      .innerJoin(
+        zuvyQuestions,
+        eq(zuvyQuestions.id, aiAssessmentQuestions.questionId),
+      )
       .where(and(...conditions))
-      .orderBy(asc(aiAssessmentQuestionSets.setIndex), asc(aiAssessmentQuestions.position));
+      .orderBy(
+        asc(aiAssessmentQuestionSets.setIndex),
+        asc(aiAssessmentQuestions.position),
+      );
 
     type SetAgg = {
       id: number;

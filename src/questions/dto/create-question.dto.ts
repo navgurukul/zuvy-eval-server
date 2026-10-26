@@ -1,4 +1,12 @@
-import { IsIn, IsInt, IsObject, IsOptional, IsString, Min , IsArray} from 'class-validator';
+import {
+  IsIn,
+  IsInt,
+  IsObject,
+  IsOptional,
+  IsString,
+  Min,
+  IsArray,
+} from 'class-validator';
 
 export class CreateQuestionDto {
   @IsOptional()

@@ -1,0 +1,40 @@
+import { Module } from '@nestjs/common';
+import { ConfigModule } from '@nestjs/config';
+import { VectorService } from './vector.service';
+import { VectorController } from './vector.controller';
+import { VECTOR_STORE } from './constants';
+import { QdrantVectorStore } from './strategies/qdrant.vector-store';
+import { PineconeVectorStore } from './strategies/pinecone.vector-store';
+import { OpenSearchVectorStore } from './strategies/opensearch.vector-store';
+import { DualWriteVectorStore } from './strategies/dual-write.vector-store';
+import { ConfigService } from '@nestjs/config';
+
+const vectorDb = process.env.VECTOR_DB ?? 'qdrant';
+
+function selectStore() {
+  switch (vectorDb) {
+    case 'opensearch':
+      return OpenSearchVectorStore;
+    case 'pinecone':
+      return PineconeVectorStore;
+    default:
+      return QdrantVectorStore;
+  }
+}
+
+@Module({
+  imports: [ConfigModule],
+  controllers: [VectorController],
+  providers: [
+    QdrantVectorStore,
+    PineconeVectorStore,
+    OpenSearchVectorStore,
+    {
+      provide: VECTOR_STORE,
+      useClass: selectStore(),
+    },
+    VectorService,
+  ],
+  exports: [VectorService, VECTOR_STORE],
+})
+export class VectorModule {}

@@ -9,9 +9,7 @@ const POLL_JOB_NAME = 'poll-outbox';
 export class QuestionIndexOutboxScheduler implements OnModuleInit {
   private readonly logger = new Logger(QuestionIndexOutboxScheduler.name);
 
-  constructor(
-    @InjectQueue(OUTBOX_QUEUE) private readonly outboxQueue: Queue,
-  ) {}
+  constructor(@InjectQueue(OUTBOX_QUEUE) private readonly outboxQueue: Queue) {}
 
   async onModuleInit(): Promise<void> {
     // Ensure a repeatable poll-outbox job exists (idempotent via jobId)

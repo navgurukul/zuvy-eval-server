@@ -43,8 +43,8 @@ export class AiAssessmentCrudService {
     @Inject(DRIZZLE_DB) private readonly db: NodePgDatabase,
     private readonly questionByLlmService: QuestionsByLlmService,
     private readonly llmService: LlmService,
-    private readonly aiAssessmentService: AiAssessmentService
-  ){}
+    private readonly aiAssessmentService: AiAssessmentService,
+  ) {}
 
   //  async getTopicsOfAssessments(assessmentIds: number[]) {
   //   try {
@@ -101,13 +101,20 @@ export class AiAssessmentCrudService {
     const validStatuses = ['draft', 'scheduled', 'published'] as const;
     const normalizedStatus = status?.trim().toLowerCase();
     const hasStatusFilter =
-      !!normalizedStatus && (validStatuses as readonly string[]).includes(normalizedStatus);
+      !!normalizedStatus &&
+      (validStatuses as readonly string[]).includes(normalizedStatus);
 
     const conditions = [
-      hasBootcampFilter ? eq(aiAssessment.bootcampId, parsedBootcampId) : undefined,
-      hasChapterFilter ? eq(aiAssessment.chapterId, parsedChapterId) : undefined,
+      hasBootcampFilter
+        ? eq(aiAssessment.bootcampId, parsedBootcampId)
+        : undefined,
+      hasChapterFilter
+        ? eq(aiAssessment.chapterId, parsedChapterId)
+        : undefined,
       hasModuleFilter ? eq(aiAssessment.moduleId, parsedModuleId) : undefined,
-      hasStatusFilter ? eq(aiAssessment.status, normalizedStatus as any) : undefined,
+      hasStatusFilter
+        ? eq(aiAssessment.status, normalizedStatus as any)
+        : undefined,
     ].filter(Boolean);
 
     if (conditions.length > 0) {
@@ -117,7 +124,10 @@ export class AiAssessmentCrudService {
     return query;
   }
 
-  async getDistinctLevelsByAssessment(aiAssessmentId: number, bootcampId: number) {
+  async getDistinctLevelsByAssessment(
+    aiAssessmentId: number,
+    bootcampId: number,
+  ) {
     const results = await this.db
       .select({
         id: levels.id,
@@ -170,7 +180,7 @@ export class AiAssessmentCrudService {
       const levelDescription = 'Base Level.';
       // const audience = 'student';
       let previous_mcqs_str;
-      let baseLinePrompt = '';
+      const baseLinePrompt = '';
       if (allQuestions.length == 0) {
         previous_mcqs_str =
           'There is no previous assessment for your reference. This is a base line assessment. Hence produce average level questions on the selected topics.';
@@ -188,7 +198,10 @@ export class AiAssessmentCrudService {
       );
 
       const aiResponse = await this.llmService.generateCompletion(prompt);
-      const aiUsage = await this.aiAssessmentService.saveTokenUsage(aiAssessmentId, aiResponse);
+      const aiUsage = await this.aiAssessmentService.saveTokenUsage(
+        aiAssessmentId,
+        aiResponse,
+      );
       const parsedAiResponse = await parseLlmMcq(aiResponse.text);
       await this.questionByLlmService.create(
         { questions: parsedAiResponse.evaluations, levelId: null },
@@ -201,7 +214,7 @@ export class AiAssessmentCrudService {
         level.meaning || `${levelName} — ${level.scoreRange}`;
       // const audience = 'student';
       let previous_mcqs_str;
-      let baseLinePrompt = '';
+      const baseLinePrompt = '';
       if (allQuestions.length == 0) {
         previous_mcqs_str =
           'There is no previous assessment for your reference. This is a base line assessment. Hence produce average level questions on the selected topics.';
@@ -219,7 +232,10 @@ export class AiAssessmentCrudService {
       );
 
       const aiResponse = await this.llmService.generateCompletion(prompt);
-      const aiUsage = await this.aiAssessmentService.saveTokenUsage(aiAssessmentId, aiResponse);
+      const aiUsage = await this.aiAssessmentService.saveTokenUsage(
+        aiAssessmentId,
+        aiResponse,
+      );
       const parsedAiResponse = await parseLlmMcq(aiResponse.text);
       await this.questionByLlmService.create(
         { questions: parsedAiResponse.evaluations, levelId: level.id },
@@ -341,8 +357,8 @@ export class AiAssessmentCrudService {
   // }
 
   async create(userId: number, dto: CreateAiAssessmentDto) {
-    const { inserted, enrolledStudentsCount, wasUpdated } = await this.db.transaction(
-      async (tx) => {
+    const { inserted, enrolledStudentsCount, wasUpdated } =
+      await this.db.transaction(async (tx) => {
         // A chapter has one assessment. Reusing POST for an existing chapter
         // updates that assessment instead of creating another row (and another
         // set of student-assessment assignments).
@@ -371,7 +387,9 @@ export class AiAssessmentCrudService {
         };
 
         if (existingAssessment) {
-          if (this.hasSameAssessmentValues(existingAssessment, assessmentValues)) {
+          if (
+            this.hasSameAssessmentValues(existingAssessment, assessmentValues)
+          ) {
             throw new ConflictException(
               'An identical AI assessment already exists for this chapter',
             );
@@ -419,8 +437,7 @@ export class AiAssessmentCrudService {
           enrolledStudentsCount: enrolledStudents.length,
           wasUpdated: false,
         };
-      },
-    );
+      });
 
     return {
       message: wasUpdated
@@ -557,24 +574,36 @@ export class AiAssessmentCrudService {
       const setId = sets[0].id;
       await this.db
         .update(studentAssessment)
-        .set({ questionSetId: setId, updatedAt: new Date().toISOString() } as any)
+        .set({
+          questionSetId: setId,
+          updatedAt: new Date().toISOString(),
+        } as any)
         .where(eq(studentAssessment.aiAssessmentId, aiAssessmentId));
       return;
     }
 
     const setByLevel = new Map(
-      sets.filter((s) => s.levelCode).map((s) => [s.levelCode!.toUpperCase(), s.id]),
+      sets
+        .filter((s) => s.levelCode)
+        .map((s) => [s.levelCode!.toUpperCase(), s.id]),
     );
     const fallbackSetId = setByLevel.get('C') ?? sets[0].id;
 
     for (const student of students) {
-      const grade = await this.resolveStudentLevel(student.studentId, bootcampId);
+      const grade = await this.resolveStudentLevel(
+        student.studentId,
+        bootcampId,
+      );
       const normalizedGrade = grade?.toUpperCase() ?? null;
-      const assignedSetId = (normalizedGrade && setByLevel.get(normalizedGrade)) || fallbackSetId;
+      const assignedSetId =
+        (normalizedGrade && setByLevel.get(normalizedGrade)) || fallbackSetId;
 
       await this.db
         .update(studentAssessment)
-        .set({ questionSetId: assignedSetId, updatedAt: new Date().toISOString() } as any)
+        .set({
+          questionSetId: assignedSetId,
+          updatedAt: new Date().toISOString(),
+        } as any)
         .where(eq(studentAssessment.id, student.id));
     }
   }
@@ -616,7 +645,10 @@ export class AiAssessmentCrudService {
       } as any)
       .where(eq(aiAssessment.id, aiAssessmentId));
 
-    await this.assignQuestionSetsToStudents(aiAssessmentId, assessment.bootcampId);
+    await this.assignQuestionSetsToStudents(
+      aiAssessmentId,
+      assessment.bootcampId,
+    );
 
     return {
       aiAssessmentId,
@@ -650,7 +682,10 @@ export class AiAssessmentCrudService {
         .where(eq(aiAssessmentQuestionSets.aiAssessmentId, aiAssessmentId));
     });
 
-    await this.assignQuestionSetsToStudents(aiAssessmentId, assessment.bootcampId);
+    await this.assignQuestionSetsToStudents(
+      aiAssessmentId,
+      assessment.bootcampId,
+    );
 
     return {
       aiAssessmentId,

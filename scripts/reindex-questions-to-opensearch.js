@@ -269,7 +269,10 @@ async function main(opts) {
   try {
     const questions = `${quote(schema)}.${quote(QUESTIONS_TABLE)}`;
     const outbox = `${quote(schema)}.${quote(OUTBOX_TABLE)}`;
-    const where = opts.orgId ? 'WHERE org_id = $1' : '';
+    // The column is "orgId", camel case and quoted - see the zuvyQuestions
+    // schema. topic uses org_id, which is easy to carry over by mistake, and
+    // an unquoted orgId would be folded to orgid and not found either way.
+    const where = opts.orgId ? 'WHERE "orgId" = $1' : '';
     const params = opts.orgId ? [opts.orgId] : [];
 
     const { rows: countRows } = await db.query(

@@ -1,9 +1,11 @@
 import {
   BadRequestException,
+  HttpException,
   Inject,
   Injectable,
   Logger,
   NotFoundException,
+  ServiceUnavailableException,
 } from '@nestjs/common';
 import { NodePgDatabase } from 'drizzle-orm/node-postgres';
 import { and, asc, eq, ilike } from 'drizzle-orm';
@@ -16,6 +18,25 @@ import {
   AiAssessmentMappingHelpers,
   MapQuestionsContext,
 } from './ai-assessment.mapping.helpers';
+
+/**
+ * An error's message, with its cause when it has one.
+ *
+ * Node's fetch reports every network failure as the same "fetch failed" and
+ * puts the reason that matters on `cause`: ENOTFOUND for a host that does not
+ * resolve, ECONNREFUSED for nothing listening, a connect timeout for a port
+ * that is blocked. The stack trace does not include it, so a log line without
+ * it says that the request failed and nothing about why. The cause is a
+ * network detail - a host and port - and is only ever logged, never returned.
+ */
+function describeError(err: unknown): string {
+  const message = err instanceof Error ? err.message : String(err);
+  const cause = (err as { cause?: { code?: string; message?: string } })
+    ?.cause;
+  if (!cause || typeof cause !== 'object') return message;
+  const detail = [cause.code, cause.message].filter(Boolean).join(' ');
+  return detail ? `${message} (cause: ${detail})` : message;
+}
 
 @Injectable()
 export class AiAssessmentMappingService {
@@ -33,8 +54,14 @@ export class AiAssessmentMappingService {
     ctx: MapQuestionsContext = { orgId: 0 },
   ) {
     // Resolve topics outside the DB transaction (may call legacy HTTP APIs).
-    const assessment = await this.helpers.loadAssessment(this.db as any, aiAssessmentId);
-    const topicNames = await this.helpers.resolveAssessmentTopicNames(assessment, ctx);
+    const assessment = await this.helpers.loadAssessment(
+      this.db as any,
+      aiAssessmentId,
+    );
+    const topicNames = await this.helpers.resolveAssessmentTopicNames(
+      assessment,
+      ctx,
+    );
 
     if (topicNames.length === 0) {
       this.logger.warn(
@@ -51,7 +78,9 @@ export class AiAssessmentMappingService {
       };
     }
 
-    const queryVector = await this.helpers.buildScopedQueryVector(assessment, topicNames);
+    const queryVector = await this.atStage(aiAssessmentId, 'embedding', () =>
+      this.helpers.buildScopedQueryVector(assessment, topicNames),
+    );
 
     return this.db.transaction(async (tx) => {
       const totalQuestions = assessment.totalNumberOfQuestions;
@@ -62,11 +91,16 @@ export class AiAssessmentMappingService {
       const { commonPerSet, uniquePerSet, neededTotal } =
         this.helpers.calculateSetSizes(totalQuestions, isBaseline);
 
-      const scopedIds = await this.helpers.searchTopicScoped(
-        queryVector,
-        topicNames,
-        neededTotal,
-        ctx.orgId,
+      // A failure here throws out of the transaction, which rolls back the
+      // clearExistingSets above - so a failed remap leaves the assessment's
+      // existing sets exactly as they were, never deleted and unreplaced.
+      const scopedIds = await this.atStage(aiAssessmentId, 'vector search', () =>
+        this.helpers.searchTopicScoped(
+          queryVector,
+          topicNames,
+          neededTotal,
+          ctx.orgId,
+        ),
       );
 
       if (scopedIds.length === 0) {
@@ -93,13 +127,63 @@ export class AiAssessmentMappingService {
         .where(eq(aiAssessment.id, aiAssessmentId));
 
       if (isBaseline) {
-        return this.helpers.createBaselineSet(tx, aiAssessmentId, scopedIds, totalQuestions);
+        return this.helpers.createBaselineSet(
+          tx,
+          aiAssessmentId,
+          scopedIds,
+          totalQuestions,
+        );
       }
 
       return this.helpers.createLeveledSets(
-        tx, aiAssessmentId, scopedIds, totalQuestions, commonPerSet, uniquePerSet,
+        tx,
+        aiAssessmentId,
+        scopedIds,
+        totalQuestions,
+        commonPerSet,
+        uniquePerSet,
       );
     });
+  }
+
+  /**
+   * Runs one step of mapping that depends on an outside service, and turns a
+   * failure into an error that says which step it was.
+   *
+   * Mapping calls OpenAI to embed the assessment and the vector store to find
+   * its questions. Either can fail for reasons this service cannot fix - a
+   * rejected key, a rate limit, a missing collection or index, a network
+   * blip - and those errors are not HttpExceptions, so they reached the client
+   * as a bare "Internal server error" with nothing to say what had broken.
+   *
+   * The full error goes to the log under [map-questions]. The client gets a
+   * 503 naming the step, but not the raw message: provider errors can echo
+   * part of an API key back. HttpExceptions - a 404 for an assessment with no
+   * matching questions, say - are already meaningful and pass through as is.
+   */
+  private async atStage<T>(
+    aiAssessmentId: number,
+    stage: string,
+    run: () => Promise<T>,
+  ): Promise<T> {
+    try {
+      return await run();
+    } catch (err) {
+      if (err instanceof HttpException) throw err;
+      this.logger.error(
+        `[map-questions] assessment=${aiAssessmentId} stage=${stage} failed: ` +
+          describeError(err),
+        err instanceof Error ? err.stack : undefined,
+      );
+      throw new ServiceUnavailableException({
+        statusCode: 503,
+        aiAssessmentId,
+        stage,
+        message:
+          `Mapping failed at the ${stage} step: a service it depends on returned an ` +
+          `error. Details are in the server log under [map-questions].`,
+      });
+    }
   }
 
   // ─── Instructor preview ────────────────────────────────────────────
@@ -131,7 +215,9 @@ export class AiAssessmentMappingService {
       .limit(1);
 
     if (!assessmentRow) {
-      throw new NotFoundException(`AI assessment with id=${aiAssessmentId} not found`);
+      throw new NotFoundException(
+        `AI assessment with id=${aiAssessmentId} not found`,
+      );
     }
 
     for (const [name, value] of Object.entries({
@@ -144,13 +230,25 @@ export class AiAssessmentMappingService {
       }
     }
 
-    const conditions: any[] = [eq(aiAssessmentQuestionSets.aiAssessmentId, aiAssessmentId)];
-    if (filters.setId !== undefined) conditions.push(eq(aiAssessmentQuestionSets.id, filters.setId));
-    if (filters.setIndex !== undefined) conditions.push(eq(aiAssessmentQuestionSets.setIndex, filters.setIndex));
-    if (filters.levelCode?.trim()) conditions.push(ilike(aiAssessmentQuestionSets.levelCode, filters.levelCode.trim()));
-    if (filters.topicName?.trim()) conditions.push(ilike(zuvyQuestions.topicName, filters.topicName.trim()));
-    if (filters.difficulty?.trim()) conditions.push(ilike(zuvyQuestions.difficulty, filters.difficulty.trim()));
-    if (filters.questionId !== undefined) conditions.push(eq(zuvyQuestions.id, filters.questionId));
+    const conditions: any[] = [
+      eq(aiAssessmentQuestionSets.aiAssessmentId, aiAssessmentId),
+    ];
+    if (filters.setId !== undefined)
+      conditions.push(eq(aiAssessmentQuestionSets.id, filters.setId));
+    if (filters.setIndex !== undefined)
+      conditions.push(eq(aiAssessmentQuestionSets.setIndex, filters.setIndex));
+    if (filters.levelCode?.trim())
+      conditions.push(
+        ilike(aiAssessmentQuestionSets.levelCode, filters.levelCode.trim()),
+      );
+    if (filters.topicName?.trim())
+      conditions.push(ilike(zuvyQuestions.topicName, filters.topicName.trim()));
+    if (filters.difficulty?.trim())
+      conditions.push(
+        ilike(zuvyQuestions.difficulty, filters.difficulty.trim()),
+      );
+    if (filters.questionId !== undefined)
+      conditions.push(eq(zuvyQuestions.id, filters.questionId));
 
     const rows = await this.db
       .select({
@@ -172,10 +270,19 @@ export class AiAssessmentMappingService {
         topicDescription: zuvyQuestions.topicDescription,
       })
       .from(aiAssessmentQuestionSets)
-      .innerJoin(aiAssessmentQuestions, eq(aiAssessmentQuestions.questionSetId, aiAssessmentQuestionSets.id))
-      .innerJoin(zuvyQuestions, eq(zuvyQuestions.id, aiAssessmentQuestions.questionId))
+      .innerJoin(
+        aiAssessmentQuestions,
+        eq(aiAssessmentQuestions.questionSetId, aiAssessmentQuestionSets.id),
+      )
+      .innerJoin(
+        zuvyQuestions,
+        eq(zuvyQuestions.id, aiAssessmentQuestions.questionId),
+      )
       .where(and(...conditions))
-      .orderBy(asc(aiAssessmentQuestionSets.setIndex), asc(aiAssessmentQuestions.position));
+      .orderBy(
+        asc(aiAssessmentQuestionSets.setIndex),
+        asc(aiAssessmentQuestions.position),
+      );
 
     type SetAgg = {
       id: number;

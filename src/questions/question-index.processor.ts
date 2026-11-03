@@ -5,7 +5,10 @@ import { InjectQueue } from '@nestjs/bullmq';
 import { Queue } from 'bullmq';
 import { DRIZZLE_DB } from 'src/db/constant';
 import { NodePgDatabase } from 'drizzle-orm/node-postgres';
-import { zuvyQuestions, questionIndexOutbox } from './schema/zuvy-questions.schema';
+import {
+  zuvyQuestions,
+  questionIndexOutbox,
+} from './schema/zuvy-questions.schema';
 import { inArray, eq } from 'drizzle-orm';
 import { EmbeddingsService } from 'src/llm/embeddings.service';
 import { VectorService } from 'src/vector/vector.service';
@@ -148,8 +151,7 @@ export class QuestionIndexProcessor extends WorkerHost {
         .update(questionIndexOutbox)
         .set({
           status: 'failed',
-          lastError:
-            error instanceof Error ? error.message : String(error),
+          lastError: error instanceof Error ? error.message : String(error),
           updatedAt: now as any,
         })
         .where(inArray(questionIndexOutbox.questionId, job.data.questionIds));

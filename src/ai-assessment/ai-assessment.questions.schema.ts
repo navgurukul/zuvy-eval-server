@@ -41,4 +41,3 @@ export const aiAssessmentQuestions = main.table(
     ),
   }),
 );
-

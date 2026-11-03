@@ -35,4 +35,3 @@ export const aiAssessmentQuestionSets = main.table(
     ),
   }),
 );
-

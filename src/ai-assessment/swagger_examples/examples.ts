@@ -58,8 +58,14 @@ export const scoreSubmitExample = {
     {
       questionId: 750,
       position: 1,
-      question: 'If a point is equidistant from both axes and lies in Quadrant IV, what are its possible coordinates?',
-      options: { '1': '(a, a), a > 0', '2': '(-a, -a), a > 0', '3': '(a, -a), a > 0', '4': '(-a, a), a > 0' },
+      question:
+        'If a point is equidistant from both axes and lies in Quadrant IV, what are its possible coordinates?',
+      options: {
+        '1': '(a, a), a > 0',
+        '2': '(-a, -a), a > 0',
+        '3': '(a, -a), a > 0',
+        '4': '(-a, a), a > 0',
+      },
       difficulty: 'hard',
       topic: 'Quadrants',
       language: 'English',
@@ -68,8 +74,14 @@ export const scoreSubmitExample = {
     {
       questionId: 751,
       position: 2,
-      question: 'If the product of the coordinates of a point (x, y) is negative, in which quadrants can it lie?',
-      options: { '1': 'Only Quadrant I', '2': 'Only Quadrants II and III', '3': 'Only Quadrants I and III', '4': 'Only Quadrants II and IV' },
+      question:
+        'If the product of the coordinates of a point (x, y) is negative, in which quadrants can it lie?',
+      options: {
+        '1': 'Only Quadrant I',
+        '2': 'Only Quadrants II and III',
+        '3': 'Only Quadrants I and III',
+        '4': 'Only Quadrants II and IV',
+      },
       difficulty: 'hard',
       topic: 'Quadrants',
       language: 'English',
@@ -104,10 +116,10 @@ export const createAiAssessmentBootcamp = {
   objective: 'Evaluate understanding of core JavaScript concepts and syntax',
   description: 'Covers core JS concepts including closures, async, and DOM',
   audience: 'Beginners with basic programming knowledge',
-  expectedOutcomes: 'Identify areas of strength and improvement in JavaScript fundamentals',
+  expectedOutcomes:
+    'Identify areas of strength and improvement in JavaScript fundamentals',
   totalNumberOfQuestions: 10,
   chapterIds: [12, 13, 14],
   moduleId: 806,
   poolTopics: [{ id: 1, name: 'JavaScript Basics' }],
 };
-

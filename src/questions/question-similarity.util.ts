@@ -1,0 +1,704 @@
+/**
+ * Cheap, deterministic near-duplicate detection for generated MCQs.
+ *
+ * A 60-question request is six independent jobs of ten, so duplicates arise in
+ * two places and both need catching:
+ *
+ *   - inside one batch, where nothing checked at all;
+ *   - across sibling batches, which cannot see each other's rows until they
+ *     are inserted and indexed.
+ *
+ * The shape being caught is a stem restated with the wording varied and the
+ * same option set shuffled into a new order - what a model produces when asked
+ * twice for a question on the same narrow concept. Option order is therefore
+ * discarded before comparing, or a shuffle alone would hide the repeat.
+ *
+ * Embeddings would also catch it, but they cost a network round trip per
+ * question and fail open when the vector store is down. Token overlap is free,
+ * synchronous and good enough for restatements of one stem, which is the
+ * actual problem. Semantic retrieval still runs over the existing bank; this
+ * is the check that cannot fail open.
+ *
+ * Tuning note: every rule here is a similarity threshold over token sets, with
+ * no knowledge of any particular topic or question. The thresholds are
+ * exported so they can be moved from one place.
+ */
+
+/**
+ * Words carrying no topic signal. Kept deliberately small: every word removed
+ * here raises the similarity of unrelated questions, so this covers question
+ * scaffolding ("in how many ways can ...") and nothing else. Numbers are NOT
+ * stopwords - "3 books" vs "5 books" are different questions and the digits
+ * are the only thing distinguishing them.
+ */
+const STOPWORDS = new Set([
+  'a',
+  'an',
+  'and',
+  'are',
+  'as',
+  'at',
+  'be',
+  'by',
+  'can',
+  'do',
+  'does',
+  'for',
+  'from',
+  'has',
+  'have',
+  'how',
+  'if',
+  'in',
+  'is',
+  'it',
+  'its',
+  'many',
+  'much',
+  'of',
+  'on',
+  'or',
+  'that',
+  'the',
+  'then',
+  'there',
+  'these',
+  'this',
+  'to',
+  'was',
+  'way',
+  'ways',
+  'were',
+  'what',
+  'when',
+  'which',
+  'will',
+  'with',
+]);
+
+/** Similarity at or above which two stems are the same question restated. */
+export const DUPLICATE_STEM_THRESHOLD = 0.82;
+
+/**
+ * Lower bar applied only when two questions also offer the identical set of
+ * options. Four matching distractors plus a half-matching stem is not a
+ * coincidence, and this is the rule that catches a stem reworded more heavily
+ * than the threshold above allows.
+ */
+export const DUPLICATE_WITH_SAME_OPTIONS_THRESHOLD = 0.5;
+
+/** Lowercase, strip punctuation, drop scaffolding words. Order is discarded. */
+export function questionTokenSet(text: string): Set<string> {
+  const words = String(text ?? '')
+    .toLowerCase()
+    // Keep digits and letters; hyphens and slashes become boundaries so
+    // "5-letter" splits into "5" and "letter".
+    .replace(/[^a-z0-9]+/g, ' ')
+    // Then split letters from digits, so mathematical notation comes apart
+    // the way prose already does.
+    //
+    // Without this "log2" is one token and "log3" is another, and every rule
+    // built on stripping the numbers quietly stops working: a batch of
+    // logarithm questions had nine direct evaluations - log2(8), log3(27),
+    // log10(1000) - that no check could group, because the base was welded to
+    // the word. Splitting turns them all into "log" plus digits the skeleton
+    // then drops.
+    .replace(/([a-z])(\d)/g, '$1 $2')
+    .replace(/(\d)([a-z])/g, '$1 $2')
+    .split(' ')
+    .filter((w) => w && !STOPWORDS.has(w));
+  return new Set(words);
+}
+
+/**
+ * The numbers appearing in a question.
+ *
+ * These are the strongest discriminator between two otherwise identical stems
+ * ("...4 runners..." vs "...6 runners...") and, unlike the stopword list
+ * above, digits carry no language. That matters: questions here have a
+ * language field, the stopword list is English, and in any other language
+ * nothing gets stripped, every question keeps its scaffolding words, and
+ * similarity scores inflate across the board. Without this rule a Hindi pair
+ * differing only in a quantity could clear the threshold and one would be
+ * dropped as a duplicate of the other.
+ */
+export function numericTokens(tokens: Set<string>): Set<string> {
+  const numbers = new Set<string>();
+  tokens.forEach((token) => {
+    if (/^\d+$/.test(token)) numbers.add(token);
+  });
+  return numbers;
+}
+
+/**
+ * True when two questions pose the same quantities.
+ *
+ * Two questions with different numbers in them are different questions,
+ * whatever their wording overlap, so this gates every duplicate rule below
+ * rather than feeding into a score that a high enough overlap could outvote.
+ * Questions with no numbers at all compare equal here and fall through to
+ * being judged on wording alone.
+ */
+export function sameNumbers(a: Set<string>, b: Set<string>): boolean {
+  if (a.size !== b.size) return false;
+  // forEach rather than for...of: iterating a Set directly needs
+  // downlevelIteration unless the target is ES2015+, and a spec file excluded
+  // from a tsconfig gets compiled with default options where it is not.
+  let same = true;
+  a.forEach((n) => {
+    if (!b.has(n)) same = false;
+  });
+  return same;
+}
+
+/**
+ * Cosine similarity between two embeddings, in [-1, 1] for normalised vectors.
+ *
+ * Token overlap only catches a restatement that reuses the wording. It misses
+ * a paraphrase that does not: "which data structure uses LIFO" and "which data
+ * structure follows Last In First Out" are the same question and share almost
+ * no content words. That gap falls hardest on conceptual topics - data
+ * structures, general knowledge, loops - where the same idea has many
+ * unrelated phrasings, and hardly at all on arithmetic, where the numbers
+ * carry the meaning.
+ *
+ * Meaning is what embeddings measure, so this is the check that generalises
+ * across topics. Returns 0 for mismatched or empty vectors rather than
+ * throwing, since a failed embedding must not fail a batch.
+ */
+export function cosineSimilarity(a: number[], b: number[]): number {
+  if (
+    !Array.isArray(a) ||
+    !Array.isArray(b) ||
+    a.length !== b.length ||
+    !a.length
+  ) {
+    return 0;
+  }
+  let dot = 0;
+  let normA = 0;
+  let normB = 0;
+  for (let i = 0; i < a.length; i++) {
+    dot += a[i] * b[i];
+    normA += a[i] * a[i];
+    normB += b[i] * b[i];
+  }
+  if (normA === 0 || normB === 0) return 0;
+  return dot / (Math.sqrt(normA) * Math.sqrt(normB));
+}
+
+/**
+ * Cosine at or above which two questions are treated as the same question.
+ *
+ * Deliberately high. Two sound questions on one narrow subtopic sit well above
+ * 0.8 with text-embedding-3-small, so a lower bar would throw away good
+ * questions and churn the top-up loop. This is set to catch restatements, not
+ * neighbours, and the numeric guard below still applies on top of it.
+ */
+export const SEMANTIC_DUPLICATE_THRESHOLD = Number(
+  process.env.SEMANTIC_DUPLICATE_THRESHOLD ?? 0.93,
+);
+
+/** Tokens and numbers for one question text, as the duplicate rules need them. */
+export function describeQuestionText(text: string): {
+  text: string;
+  tokens: Set<string>;
+  numbers: Set<string>;
+} {
+  const tokens = questionTokenSet(text);
+  return { text, tokens, numbers: numericTokens(tokens) };
+}
+
+/**
+ * Whether two questions mean the same thing, judged on embeddings.
+ *
+ * The numeric guard applies here exactly as it does to the token rules, and it
+ * matters more: "arrange 3 books" and "arrange 5 books" are near-identical in
+ * embedding space - far above any workable threshold - and are different
+ * questions. Meaning alone cannot separate them; the digits can.
+ */
+export function isSemanticDuplicate(
+  a: { tokens: Set<string>; numbers: Set<string> },
+  b: { tokens: Set<string>; numbers: Set<string> },
+  vectorA: number[],
+  vectorB: number[],
+  threshold: number = SEMANTIC_DUPLICATE_THRESHOLD,
+): number | null {
+  if (!sameNumbers(a.numbers, b.numbers)) return null;
+  const similarity = cosineSimilarity(vectorA, vectorB);
+  return similarity >= threshold ? similarity : null;
+}
+
+/** |A n B| / |A u B|. Returns 0 when either side is empty. */
+export function jaccard(a: Set<string>, b: Set<string>): number {
+  if (!a.size || !b.size) return 0;
+  let intersection = 0;
+  a.forEach((token) => {
+    if (b.has(token)) intersection += 1;
+  });
+  return intersection / (a.size + b.size - intersection);
+}
+
+/**
+ * Order-independent fingerprint of an option set, so the same four answers
+ * shuffled into a different order produce the same string.
+ */
+export function optionSetKey(
+  options: Record<string, string> | undefined,
+): string {
+  if (!options || typeof options !== 'object') return '';
+  const texts = Object.values(options)
+    .map((t) =>
+      String(t ?? '')
+        .trim()
+        .toLowerCase()
+        .replace(/\s+/g, ' '),
+    )
+    .filter(Boolean)
+    .sort();
+  return texts.length ? texts.join('|') : '';
+}
+
+export type DuplicateVerdict = {
+  /** Index into the batch of the question being dropped. */
+  index: number;
+  similarity: number;
+  /** Human-readable account of what it collided with, for the log line. */
+  reason: string;
+};
+
+/**
+ * Decides which generated questions to drop.
+ *
+ * Compares each question against the questions already accepted from this
+ * batch and against the existing-question texts that were shown to the model
+ * as "do not repeat these". The first occurrence of a duplicated stem is kept
+ * and every later one dropped, so a batch never loses both copies.
+ *
+ * Existing questions carry no options here (the prompt only ever received
+ * their text), so the identical-option-set rule applies within the batch only.
+ */
+export function findDuplicateQuestions(
+  evaluations: Array<Record<string, any>>,
+  existingTexts: Array<ExerciseLike | string> = [],
+): DuplicateVerdict[] {
+  const describe = (item: ExerciseLike) => {
+    const text = String(item.question ?? '');
+    const tokens = questionTokenSet(text);
+    return {
+      text,
+      tokens,
+      numbers: numericTokens(tokens),
+      fingerprint: exerciseFingerprint(item),
+    };
+  };
+
+  const existing = existingTexts
+    .map((e) => (typeof e === 'string' ? { question: e } : e))
+    .filter((e) => e?.question && String(e.question).trim())
+    .map((e) => describe(e));
+
+  const kept: Array<ReturnType<typeof describe> & { optionKey: string }> = [];
+  const duplicates: DuplicateVerdict[] = [];
+
+  evaluations.forEach((q, index) => {
+    const text = String(q?.question ?? '');
+    const self = describe({
+      question: text,
+      options: q?.options as Record<string, string> | undefined,
+      correctOption: q?.correctOption as number | string | undefined,
+    });
+    const optionKey = optionSetKey(
+      q?.options as Record<string, string> | undefined,
+    );
+
+    if (!self.tokens.size) {
+      // Nothing to compare. Structural validation owns empty questions.
+      kept.push({ ...self, optionKey });
+      return;
+    }
+
+    let worst: DuplicateVerdict | null = null;
+
+    const consider = (similarity: number, reason: string) => {
+      if (!worst || similarity > worst.similarity) {
+        worst = { index, similarity, reason };
+      }
+    };
+
+    for (const prior of kept) {
+      // The same numbers going in and the same answer coming out is the same
+      // question, whatever words surround it, so it is rejected on sight
+      // rather than counted towards a quota.
+      //
+      // This used to be handled as a template repeat, which allowed two of
+      // each and was skipped altogether on the last generation round. That is
+      // right for a template - the same shape over different data is a
+      // legitimate second question - and wrong here. A batch of fifty shipped
+      // with "What is the value of log5(25)?" at position nineteen and
+      // "Evaluate log5(25)." at position forty-seven: too differently worded
+      // for the token test, identical exercise, both allowed because two were
+      // permitted.
+      if (self.fingerprint && self.fingerprint === prior.fingerprint) {
+        consider(
+          1,
+          `asks the same exercise as an earlier question in this batch, with the same ` +
+            `numbers and the same answer: "${truncate(prior.text)}"`,
+        );
+        continue;
+      }
+
+      // Different quantities mean a different question, however close the
+      // wording. Checked before the score so no amount of shared phrasing
+      // can outvote it.
+      if (!sameNumbers(self.numbers, prior.numbers)) continue;
+
+      const similarity = jaccard(self.tokens, prior.tokens);
+      const sameOptions = Boolean(optionKey) && optionKey === prior.optionKey;
+
+      if (similarity >= DUPLICATE_STEM_THRESHOLD) {
+        consider(
+          similarity,
+          `restates an earlier question in this batch: "${truncate(prior.text)}"`,
+        );
+      } else if (
+        sameOptions &&
+        similarity >= DUPLICATE_WITH_SAME_OPTIONS_THRESHOLD
+      ) {
+        consider(
+          similarity,
+          `shares an identical option set with an earlier question in this batch: "${truncate(prior.text)}"`,
+        );
+      }
+    }
+
+    for (const prior of existing) {
+      if (self.fingerprint && self.fingerprint === prior.fingerprint) {
+        consider(
+          1,
+          `asks the same exercise as a question already in the bank, with the same ` +
+            `numbers and the same answer: "${truncate(prior.text)}"`,
+        );
+        continue;
+      }
+
+      if (!sameNumbers(self.numbers, prior.numbers)) continue;
+
+      const similarity = jaccard(self.tokens, prior.tokens);
+      if (similarity >= DUPLICATE_STEM_THRESHOLD) {
+        consider(
+          similarity,
+          `restates a question already in the bank: "${truncate(prior.text)}"`,
+        );
+      }
+    }
+
+    if (worst) {
+      duplicates.push(worst);
+    } else {
+      kept.push({ ...self, optionKey });
+    }
+  });
+
+  return duplicates;
+}
+
+function truncate(text: string, max = 80): string {
+  const clean = String(text).replace(/\s+/g, ' ').trim();
+  return clean.length > max ? `${clean.slice(0, max)}...` : clean;
+}
+
+/**
+ * Cosine-style similarity at or above which two questions share a template.
+ *
+ * Lower than the duplicate thresholds on purpose: a template is a coarser
+ * thing than a restatement. "Remove the highest and lowest value, then find
+ * the mean" and "Drop the largest and smallest, then compute the average" are
+ * the same exercise and should count as one.
+ */
+export const SAME_TEMPLATE_THRESHOLD = 0.75;
+
+/**
+ * How many questions may share one template before the rest are surplus.
+ *
+ * Two is a judgement, not a measurement: one leaves no room for a genuinely
+ * different-feeling variant of a common exercise, and three already reads as
+ * padding in a batch of ten.
+ */
+export const MAX_PER_TEMPLATE = Math.max(
+  1,
+  Number(process.env.MAX_PER_TEMPLATE ?? 2) || 2,
+);
+
+/**
+ * The shape of a question with its data removed.
+ *
+ * This is the exact inverse of the numeric guard above, and both are right for
+ * their own question. The guard asks "is this the same question?", where
+ * different numbers mean no - "arrange 3 books" and "arrange 5 books" have
+ * different answers and must both survive. This asks "is this the same
+ * exercise?", where different numbers mean nothing at all: "the range of
+ * 4, 6, 8, 10" and "the range of 2, 4, 6, 8" are one procedure practised
+ * twice.
+ *
+ * A bank can be free of duplicates and still be repetitive, which is what a
+ * review of 40 statistics questions found: no exact repeats, but seven of them
+ * were "remove a value, then take the mean" with the numbers changed.
+ */
+export function questionSkeleton(text: string): Set<string> {
+  const skeleton = new Set<string>();
+  questionTokenSet(text).forEach((token) => {
+    if (!/^\d+$/.test(token)) skeleton.add(token);
+  });
+  return skeleton;
+}
+
+export type TemplateVerdict = {
+  index: number;
+  similarity: number;
+  reason: string;
+};
+
+/** A question as the template check needs to see it. */
+export type ExerciseLike = {
+  question: string;
+  options?: Record<string, string>;
+  correctOption?: number | string;
+};
+
+/**
+ * What a question actually computes: the numbers going in, the answer coming
+ * out.
+ *
+ * This is the check that survives a change of subject. Wording comparison sees
+ * "3 trophies on a shelf", "3 flags on a flagpole" and "3 students in a line"
+ * as three questions, because only the noun moved; the skeleton keeps that
+ * noun and so does the embedding. One real batch of permutation questions had
+ * seven of them, every one 3 -> 6, and four more that were all 4 -> 24.
+ *
+ * Numbers in and answer out ignore the noun entirely. Two questions that take
+ * the same values and produce the same result are one exercise, whatever they
+ * dress it in.
+ *
+ * Returns '' when there is nothing to fingerprint, so a question with no
+ * numbers or no readable answer falls through to the wording rules rather than
+ * grouping with every other unfingerprintable question.
+ */
+export function exerciseFingerprint(item: ExerciseLike): string {
+  const numbers = Array.from(
+    numericTokens(questionTokenSet(item.question ?? '')),
+  )
+    .sort()
+    .join(',');
+  if (!numbers) return '';
+
+  const key = String(item.correctOption ?? '');
+  const answer = item.options?.[key];
+  if (!answer || !String(answer).trim()) return '';
+
+  return `${numbers}=>${String(answer).trim().toLowerCase()}`;
+}
+
+/**
+ * Flags questions beyond the allowed number sharing one template.
+ *
+ * Two questions count as the same exercise when either their wording skeleton
+ * matches or their fingerprint does. The skeleton catches the same sentence
+ * over new data; the fingerprint catches the same computation under a new
+ * noun, which the skeleton cannot see.
+ *
+ * Existing questions seed the counts, so a template already well represented
+ * in the bank does not get topped up further by a new batch. The first
+ * occurrences are kept and only the surplus is returned, so a template never
+ * disappears entirely.
+ *
+ * Narrow topics have genuinely few templates, so on those this will hold a
+ * batch below the count asked for. That is the intended outcome: there are not
+ * forty distinct things to ask about elementary statistics, and forty
+ * questions that pretend otherwise are seven exercises wearing different
+ * numbers.
+ */
+export function findTemplateRepeats(
+  evaluations: Array<Record<string, any>>,
+  existing: Array<ExerciseLike | string> = [],
+  maxPerTemplate: number = MAX_PER_TEMPLATE,
+): TemplateVerdict[] {
+  type Group = {
+    skeleton: Set<string>;
+    fingerprint: string;
+    count: number;
+    text: string;
+  };
+  const seen: Group[] = [];
+
+  const bump = (
+    item: ExerciseLike,
+  ): { count: number; match: string; similarity: number; how: string } => {
+    const text = String(item.question ?? '');
+    const skeleton = questionSkeleton(text);
+    const fingerprint = exerciseFingerprint(item);
+
+    if (!skeleton.size && !fingerprint) {
+      return { count: 0, match: '', similarity: 0, how: '' };
+    }
+
+    for (const group of seen) {
+      // Fingerprint first: it is exact, and it is the only one of the two that
+      // sees through a change of noun.
+      if (fingerprint && fingerprint === group.fingerprint) {
+        group.count += 1;
+        return {
+          count: group.count,
+          match: group.text,
+          similarity: 1,
+          how: 'same numbers and the same answer',
+        };
+      }
+
+      const similarity = jaccard(skeleton, group.skeleton);
+      if (skeleton.size && similarity >= SAME_TEMPLATE_THRESHOLD) {
+        group.count += 1;
+        return {
+          count: group.count,
+          match: group.text,
+          similarity,
+          how: 'the same wording over different data',
+        };
+      }
+    }
+
+    seen.push({ skeleton, fingerprint, count: 1, text });
+    return { count: 1, match: text, similarity: 1, how: '' };
+  };
+
+  existing
+    .map((e) => (typeof e === 'string' ? { question: e } : e))
+    .filter((e) => e?.question && String(e.question).trim())
+    .forEach((e) => bump(e));
+
+  const surplus: TemplateVerdict[] = [];
+  evaluations.forEach((q, index) => {
+    const text = String(q?.question ?? '');
+    if (!text.trim()) return;
+
+    const { count, match, similarity, how } = bump({
+      question: text,
+      options: q?.options as Record<string, string> | undefined,
+      correctOption: q?.correctOption as number | string | undefined,
+    });
+
+    if (count > maxPerTemplate) {
+      surplus.push({
+        index,
+        similarity,
+        reason:
+          `the same exercise appears ${count} times (${how}); ` +
+          `first seen as "${truncate(match)}"`,
+      });
+    }
+  });
+
+  return surplus;
+}
+
+/**
+ * How close two questions must sit before they count as the same concept.
+ *
+ * Deliberately below the duplicate threshold and well above the similarity any
+ * two questions on one topic share. Questions on a single subject all use the
+ * same vocabulary, so a threshold set too low collapses the whole batch into
+ * one concept; set too high it only finds the near-copies the duplicate check
+ * already has.
+ *
+ * This is a starting value, not a measured one. scripts/measure-concept-
+ * clusters.js prints what any threshold would group, given a batch of real
+ * questions, so it can be set from the corpus rather than from a guess.
+ */
+export const CONCEPT_SIMILARITY_THRESHOLD = Number(
+  process.env.CONCEPT_SIMILARITY_THRESHOLD ?? 0.88,
+);
+
+/**
+ * How many questions in one batch may test the same concept.
+ *
+ * Three of ten is loose on purpose. A narrow topic has genuinely few concepts,
+ * and the point is to stop one of them taking over a batch, not to insist on
+ * ten different ones.
+ */
+export const MAX_PER_CONCEPT = Math.max(
+  1,
+  Number(process.env.MAX_PER_CONCEPT ?? 3) || 3,
+);
+
+export type ConceptItem = { question: string; vector: number[] };
+
+/**
+ * Questions beyond the cap for the concept they belong to.
+ *
+ * The variety check next to this one groups by wording with the numbers taken
+ * out, which catches one exercise restated over different data and nothing
+ * else. It cannot see a concept asked six different ways: "write this in
+ * exponential form" and "express this as a logarithm" are the same skill and
+ * share almost no words, so they land in different groups and both are kept.
+ * A reviewer reading a fifty-question batch found exactly that - six questions
+ * converting between two forms, five solving for the same unknown - with every
+ * wording check passing.
+ *
+ * Meaning is what separates those, so this groups by embedding distance
+ * instead of by words. That also makes it the only variety check that carries
+ * to every subject: it knows nothing about numbers, notation or what the topic
+ * is, so it behaves the same on history, biology or arrays as on logarithms.
+ *
+ * Greedy single-link clustering against each group's first member. Order
+ * matters and that is intended: the first question of a concept is always the
+ * one kept, so the check removes the surplus rather than choosing between
+ * equals.
+ *
+ * Returns nothing when more than half the batch would be flagged. A threshold
+ * that groups most of a batch into one concept is miscalibrated rather than
+ * right, and acting on it would empty batches on narrow topics; refusing to
+ * act is the failure that costs nothing.
+ */
+export function findConceptRepeats(
+  items: ConceptItem[],
+  maxPerConcept: number = MAX_PER_CONCEPT,
+  threshold: number = CONCEPT_SIMILARITY_THRESHOLD,
+): TemplateVerdict[] {
+  if (items.length <= maxPerConcept) return [];
+
+  type Group = { vector: number[]; text: string; count: number };
+  const groups: Group[] = [];
+  const surplus: TemplateVerdict[] = [];
+
+  items.forEach((item, index) => {
+    if (!item?.vector?.length) return;
+
+    let joined: { group: Group; similarity: number } | null = null;
+    for (const group of groups) {
+      const similarity = cosineSimilarity(item.vector, group.vector);
+      if (similarity >= threshold && (!joined || similarity > joined.similarity)) {
+        joined = { group, similarity };
+      }
+    }
+
+    if (!joined) {
+      groups.push({ vector: item.vector, text: item.question, count: 1 });
+      return;
+    }
+
+    joined.group.count += 1;
+    if (joined.group.count > maxPerConcept) {
+      surplus.push({
+        index,
+        similarity: joined.similarity,
+        reason:
+          `is the ${joined.group.count}th question in this batch testing the same ` +
+          `concept; first seen as "${truncate(joined.group.text)}"`,
+      });
+    }
+  });
+
+  if (surplus.length * 2 > items.length) return [];
+
+  return surplus;
+}

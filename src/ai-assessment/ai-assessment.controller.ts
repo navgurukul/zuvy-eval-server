@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   Controller,
   Get,
   Post,
@@ -51,6 +52,30 @@ import { AiAssessmentMappingService } from './ai-assessment.mapping.service';
 import { VectorService } from 'src/vector/vector.service';
 import { ExplainQuestionDto } from './dto/explain-question.dto';
 import { QuestionExplanationService } from './question-explanation.service';
+
+/**
+ * An assessment id from a request, or a 400.
+ *
+ * This app registers no global ValidationPipe, so the @IsInt() on the DTO
+ * never runs and whatever the client sent reaches the query untouched. A value
+ * Postgres cannot read as an integer - "abc", 1.5, an object - then fails
+ * inside the database and comes back as a 500, when it is a bad request.
+ *
+ * Numeric strings are accepted. With no pipe they have always worked, so a
+ * client may well be sending them, and rejecting them now would break it.
+ */
+export function parseAssessmentId(value: unknown): number {
+  const id =
+    typeof value === 'number'
+      ? value
+      : typeof value === 'string' && value.trim() !== ''
+        ? Number(value)
+        : NaN;
+  if (!Number.isInteger(id) || id <= 0) {
+    throw new BadRequestException('aiAssessmentId must be a positive integer');
+  }
+  return id;
+}
 
 @ApiTags('AI Assessment')
 @ApiBearerAuth('JWT-auth')
@@ -153,7 +178,10 @@ export class AiAssessmentController {
     status: 200,
     description: 'Score calculated successfully.',
   })
-  @ApiResponse({ status: 400, description: 'Invalid payload or assessment not available.' })
+  @ApiResponse({
+    status: 400,
+    description: 'Invalid payload or assessment not available.',
+  })
   submitScore(@Body() scoreSubmitDto: ScoreSubmitDto, @Req() req) {
     const userId = req.user?.sub;
     return this.aiAssessmentService.submitAndScore(userId, scoreSubmitDto);
@@ -167,7 +195,11 @@ export class AiAssessmentController {
   @ApiQuery({ name: 'bootcampId', required: false, type: Number })
   @ApiQuery({ name: 'chapterId', required: false, type: Number })
   @ApiQuery({ name: 'moduleId', required: false, type: Number })
-  @ApiQuery({ name: 'status', required: false, enum: ['draft', 'scheduled', 'published'] })
+  @ApiQuery({
+    name: 'status',
+    required: false,
+    enum: ['draft', 'scheduled', 'published'],
+  })
   @ApiResponse({ status: 200, description: 'List of AI assessments.' })
   findAll(
     @Req() req,
@@ -224,7 +256,10 @@ export class AiAssessmentController {
     description:
       'score, totalQuestions, percentage, level, questions — matches submit-score response.',
   })
-  @ApiResponse({ status: 404, description: 'Not found or assessment not completed.' })
+  @ApiResponse({
+    status: 404,
+    description: 'Not found or assessment not completed.',
+  })
   @ApiResponse({ status: 400, description: 'Invalid assessmentId.' })
   getSubmitScoreResult(
     @Query('assessmentId') assessmentId: string,
@@ -267,10 +302,17 @@ export class AiAssessmentController {
   @ApiBody({ type: ExplainQuestionDto })
   @ApiResponse({
     status: 200,
-    description: '{ questionId, explanation, cached } — cached true when loaded from DB.',
+    description:
+      '{ questionId, explanation, cached } — cached true when loaded from DB.',
   })
-  @ApiResponse({ status: 403, description: 'Question not part of this student assessment.' })
-  @ApiResponse({ status: 404, description: 'No assignment or question not found.' })
+  @ApiResponse({
+    status: 403,
+    description: 'Question not part of this student assessment.',
+  })
+  @ApiResponse({
+    status: 404,
+    description: 'No assignment or question not found.',
+  })
   explainQuestion(@Body() dto: ExplainQuestionDto, @Req() req) {
     const userId = req.user?.sub;
     return this.questionExplanationService.getOrCreateQuestionExplanation(
@@ -287,8 +329,7 @@ export class AiAssessmentController {
   })
   @ApiResponse({
     status: 200,
-    description:
-      'Questions assigned to the student for this assessment.',
+    description: 'Questions assigned to the student for this assessment.',
   })
   @ApiParam({ name: 'id', type: Number, description: 'AI Assessment ID' })
   getStudentQuestions(@Param('id') id: number, @Req() req) {
@@ -297,13 +338,18 @@ export class AiAssessmentController {
   }
 
   @Post('audio')
-  @ApiOperation({ summary: 'Generate audio summary using TTS and upload to S3' })
+  @ApiOperation({
+    summary: 'Generate audio summary using TTS and upload to S3',
+  })
   @ApiBody({
     schema: {
       type: 'object',
       properties: {
         text: { type: 'string', example: 'This is the assessment summary...' },
-        language: { type: 'string', example: 'hi for hindi, kn for kannada and mr for marathi' },
+        language: {
+          type: 'string',
+          example: 'hi for hindi, kn for kannada and mr for marathi',
+        },
         studentId: { type: 'string', example: 'S12345' },
         assessmentId: { type: 'string', example: 'A98765' },
       },
@@ -325,7 +371,7 @@ export class AiAssessmentController {
         HttpStatus.BAD_REQUEST,
       );
     }
-  
+
     try {
       return await this.aiAssessmentService.generateAudioSummary(
         text,
@@ -347,13 +393,48 @@ export class AiAssessmentController {
       'Instructor preview: all generated question sets with full MCQs (includes correct answers). Use after map-questions.',
   })
   @ApiParam({ name: 'id', type: Number })
-  @ApiQuery({ name: 'setId', required: false, type: Number, description: 'Filter by question-set ID' })
-  @ApiQuery({ name: 'setIndex', required: false, type: Number, description: 'Filter by set index' })
-  @ApiQuery({ name: 'levelCode', required: false, type: String, example: 'E', description: 'Filter by set level code' })
-  @ApiQuery({ name: 'topicName', required: false, type: String, description: 'Filter questions by topic name' })
-  @ApiQuery({ name: 'difficulty', required: false, type: String, example: 'easy', description: 'Filter questions by difficulty' })
-  @ApiQuery({ name: 'questionId', required: false, type: Number, description: 'Filter by question ID' })
-  @ApiResponse({ status: 200, description: 'Question sets and questions for the assessment.' })
+  @ApiQuery({
+    name: 'setId',
+    required: false,
+    type: Number,
+    description: 'Filter by question-set ID',
+  })
+  @ApiQuery({
+    name: 'setIndex',
+    required: false,
+    type: Number,
+    description: 'Filter by set index',
+  })
+  @ApiQuery({
+    name: 'levelCode',
+    required: false,
+    type: String,
+    example: 'E',
+    description: 'Filter by set level code',
+  })
+  @ApiQuery({
+    name: 'topicName',
+    required: false,
+    type: String,
+    description: 'Filter questions by topic name',
+  })
+  @ApiQuery({
+    name: 'difficulty',
+    required: false,
+    type: String,
+    example: 'easy',
+    description: 'Filter questions by difficulty',
+  })
+  @ApiQuery({
+    name: 'questionId',
+    required: false,
+    type: Number,
+    description: 'Filter by question ID',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Question sets and questions for the assessment.',
+  })
   @ApiResponse({ status: 404, description: 'Assessment not found.' })
   async getQuestionSetsForInstructor(
     @Param('id') id: string,
@@ -418,7 +499,10 @@ export class AiAssessmentController {
     },
   })
   @ApiResponse({ status: 200, description: 'Assessment scheduled.' })
-  @ApiResponse({ status: 400, description: 'No question sets or missing startDatetime.' })
+  @ApiResponse({
+    status: 400,
+    description: 'No question sets or missing startDatetime.',
+  })
   @ApiResponse({ status: 404, description: 'Assessment not found.' })
   async scheduleAssessment(
     @Param('id') id: string,
@@ -495,10 +579,15 @@ export class AiAssessmentController {
     description:
       'Question sets generated and mapped successfully for the given assessment.',
   })
-  @ApiResponse({ status: 400, description: 'Invalid or missing aiAssessmentId, or totalNumberOfQuestions <= 0.' })
+  @ApiResponse({
+    status: 400,
+    description:
+      'Invalid or missing aiAssessmentId, or totalNumberOfQuestions <= 0.',
+  })
   @ApiResponse({
     status: 404,
-    description: 'Assessment not found, or no indexed questions match its topics.',
+    description:
+      'Assessment not found, or no indexed questions match its topics.',
   })
   @ApiQuery({
     name: 'orgId',
@@ -512,7 +601,7 @@ export class AiAssessmentController {
     @Req() req: Request & { user?: { orgId?: number | string } },
   ) {
     return this.aiAssessmentMappingService.mapQuestionsForAssessment(
-      dto.aiAssessmentId,
+      parseAssessmentId(dto?.aiAssessmentId),
       {
         orgId: resolveOrgId(req),
         authorization: req.headers?.authorization,
@@ -543,10 +632,9 @@ export class AiAssessmentController {
     @Param('id') id: string,
     @Req() req: Request & { user?: { orgId?: number | string } },
   ) {
-    const aiAssessmentId = Number(id);
-    if (Number.isNaN(aiAssessmentId)) {
-      throw new HttpException('Invalid assessment id', HttpStatus.BAD_REQUEST);
-    }
+    // Number.isNaN alone let 0, negatives and 1.5 through; 1.5 then failed in
+    // Postgres as a 500.
+    const aiAssessmentId = parseAssessmentId(id);
     return this.aiAssessmentMappingService.mapQuestionsForAssessment(
       aiAssessmentId,
       {
@@ -557,13 +645,24 @@ export class AiAssessmentController {
   }
 
   @Post('admin/create-qdrant-indexes')
-  @ApiOperation({ summary: 'One-time: create payload indexes on QUESTIONS collection in Qdrant' })
+  @ApiOperation({
+    summary:
+      'One-time: create payload indexes on QUESTIONS collection in Qdrant',
+  })
   @ApiResponse({ status: 200, description: 'Indexes created successfully' })
   async createQdrantIndexes() {
     const collection = 'QUESTIONS';
     await this.vectorService.createPayloadIndex(collection, 'topic', 'keyword');
-    await this.vectorService.createPayloadIndex(collection, 'subtopics', 'keyword');
-    await this.vectorService.createPayloadIndex(collection, 'difficulty', 'keyword');
+    await this.vectorService.createPayloadIndex(
+      collection,
+      'subtopics',
+      'keyword',
+    );
+    await this.vectorService.createPayloadIndex(
+      collection,
+      'difficulty',
+      'keyword',
+    );
     return {
       message: 'Qdrant payload indexes created on QUESTIONS collection',
       fields: ['topic', 'subtopics', 'difficulty'],

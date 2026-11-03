@@ -52,7 +52,22 @@ const { Client: PgClient } = require('pg');
  * ENV_NOTE=stage_template, otherwise "main".
  */
 
-const INDEX = 'questions';
+/**
+ * The questions index for this environment: OPENSEARCH_INDEX_PREFIX followed
+ * by "questions". Must match resolveIndexPrefix in opensearch.vector-store.ts,
+ * which the app uses - so run on stage, with OPENSEARCH_INDEX_PREFIX=stage_,
+ * this checks stage_questions and never dev's questions index.
+ */
+function questionsIndexName(prefixSetting) {
+  const prefix = String(prefixSetting ?? '').trim().toLowerCase();
+  if (prefix && !/^[a-z0-9][a-z0-9_-]*$/.test(prefix)) {
+    throw new Error(
+      `OPENSEARCH_INDEX_PREFIX "${prefixSetting}" cannot start an index name: use lowercase ` +
+        `letters, digits, "_" and "-", beginning with a letter or digit.`,
+    );
+  }
+  return `${prefix}questions`;
+}
 const QUESTIONS_TABLE = 'zuvy_questions';
 const OUTBOX_TABLE = 'question_index_outbox';
 const EMBEDDING_DIMENSION = 1536;
@@ -143,6 +158,7 @@ function quote(name) {
 
 async function checkOpenSearch() {
   const result = { ok: false, lines: [], documents: null };
+  const INDEX = questionsIndexName(process.env.OPENSEARCH_INDEX_PREFIX);
   const host = String(process.env.OPENSEARCH_HOST || '')
     .replace(/^https?:\/\//, '')
     .replace(/\/$/, '');
@@ -369,7 +385,13 @@ async function main(opts) {
   }
 }
 
-module.exports = { parseArgs, checkMapping, estimateMinutes, REQUIRED_FIELDS };
+module.exports = {
+  parseArgs,
+  checkMapping,
+  estimateMinutes,
+  questionsIndexName,
+  REQUIRED_FIELDS,
+};
 
 if (require.main === module) {
   let opts;

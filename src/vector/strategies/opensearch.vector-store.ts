@@ -14,6 +14,36 @@ import {
 type OpenSearchError = { statusCode?: number; meta?: { statusCode?: number } };
 
 /**
+ * The index name prefix for this environment, from OPENSEARCH_INDEX_PREFIX.
+ *
+ * Dev and stage run on one OpenSearch collection, and every question is
+ * stored under its own id. Stage's questions live in the stage_template schema
+ * and are numbered from 1 like dev's, so in one shared index a stage question
+ * overwrites the dev question with the same id, and each environment's
+ * searches return the other's questions. A prefix gives each environment its
+ * own index - "stage_" makes the questions index "stage_questions" - while an
+ * unset prefix leaves dev's "questions" exactly as it was.
+ *
+ * Index names must be lowercase, so the prefix is lowercased. Anything that
+ * could not start a valid index name is refused when the app starts: a typo
+ * that silently wrote into the wrong index would be far worse than a stack that
+ * will not boot until the setting is fixed.
+ */
+export function resolveIndexPrefix(value: string | undefined | null): string {
+  const prefix = String(value ?? '')
+    .trim()
+    .toLowerCase();
+  if (!prefix) return '';
+  if (!/^[a-z0-9][a-z0-9_-]*$/.test(prefix)) {
+    throw new Error(
+      `OPENSEARCH_INDEX_PREFIX "${value}" cannot start an index name: use lowercase ` +
+        `letters, digits, "_" and "-", beginning with a letter or digit.`,
+    );
+  }
+  return prefix;
+}
+
+/**
  * Amazon OpenSearch Serverless (NextGen, vector search) implementation.
  *
  * Differences from Qdrant that callers should be aware of:
@@ -33,6 +63,8 @@ export class OpenSearchVectorStore implements IVectorStore {
   private readonly client: Client;
   private readonly region: string;
   private readonly normalizeScores: boolean;
+  /** Put in front of every index name; '' unless this environment sets one. */
+  private readonly indexPrefix: string;
 
   constructor(private readonly config: ConfigService) {
     const host = (
@@ -67,7 +99,15 @@ export class OpenSearchVectorStore implements IVectorStore {
       maxRetries: 3,
     });
 
-    this.logger.log(`OpenSearchVectorStore initialized with host=${host}`);
+    this.indexPrefix = resolveIndexPrefix(
+      this.config.get<string>('OPENSEARCH_INDEX_PREFIX') ||
+        process.env.OPENSEARCH_INDEX_PREFIX,
+    );
+
+    this.logger.log(
+      `OpenSearchVectorStore initialized with host=${host}, index prefix=` +
+        (this.indexPrefix ? `"${this.indexPrefix}"` : 'none'),
+    );
   }
 
   /** OpenSearch client errors carry the HTTP status on the error or its meta. */
@@ -78,7 +118,7 @@ export class OpenSearchVectorStore implements IVectorStore {
 
   /** OpenSearch index names must be lowercase; "QUESTIONS" -> "questions". */
   private indexName(collectionName: string): string {
-    return collectionName.toLowerCase();
+    return `${this.indexPrefix}${collectionName.toLowerCase()}`;
   }
 
   /**

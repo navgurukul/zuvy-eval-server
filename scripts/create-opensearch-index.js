@@ -90,16 +90,75 @@ function planIndexCreation({ prefixSetting, from }) {
 }
 
 /**
- * Only the k-NN settings are copied. The rest of an index's settings are
- * managed by the serverless collection, and sending them back is refused.
+ * The one setting a vector index must be created with: k-NN on.
+ *
+ * Nothing else is copied. OpenSearch Serverless reports settings it manages
+ * itself - remote_index_build among them - and refuses some of them when
+ * they are sent back on create. None of them changes what a search returns,
+ * so leaving them to the collection is both safe and the only thing it
+ * reliably accepts.
  */
 function knnSettingsFrom(flatSettings) {
-  const out = {};
-  for (const [key, value] of Object.entries(flatSettings ?? {})) {
-    if (key === 'index.knn' || key.startsWith('index.knn.')) out[key] = value;
-  }
-  if (!('index.knn' in out)) out['index.knn'] = true;
-  return out;
+  const value = (flatSettings ?? {})['index.knn'];
+  return { 'index.knn': value === undefined ? true : value };
+}
+
+/**
+ * Vector field parameters that are reported when an index is read but
+ * refused when one is created.
+ *
+ * Found the hard way: the first copy of dev's index was rejected with "Field
+ * parameter 'mode' is not supported", because reading a mapping returns
+ * parameters the service fills in for itself. mode and compression_level
+ * arrived together in the same OpenSearch release and are both refused here.
+ */
+const SERVICE_MANAGED_VECTOR_PARAMS = ['mode', 'compression_level'];
+
+/**
+ * A mapping as it can be sent to create an index, and what was left out.
+ *
+ * Only parameters that are service-managed, redundant or at their default are
+ * removed, so the new index behaves like the one copied:
+ *   - mode and compression_level, which create refuses outright
+ *   - data_type when it is "float", the default
+ *   - a field-level space_type that only repeats method.space_type
+ * Everything else - every field, its type, the dimension and the method with
+ * its engine, distance and parameters - is kept exactly. The input is never
+ * changed.
+ *
+ * @returns {{ mappings: object, dropped: string[] }}
+ */
+function mappingForCreate(mappings) {
+  const copy = JSON.parse(JSON.stringify(mappings ?? {}));
+  const dropped = [];
+
+  const walk = (properties, path) => {
+    for (const [name, field] of Object.entries(properties ?? {})) {
+      const where = path ? `${path}.${name}` : name;
+      if (field && field.type === 'knn_vector') {
+        for (const param of SERVICE_MANAGED_VECTOR_PARAMS) {
+          if (param in field) {
+            dropped.push(`${where}.${param}=${JSON.stringify(field[param])}`);
+            delete field[param];
+          }
+        }
+        if (field.data_type === 'float') {
+          dropped.push(`${where}.data_type="float" (the default)`);
+          delete field.data_type;
+        }
+        if ('space_type' in field && field.method && field.method.space_type) {
+          dropped.push(
+            `${where}.space_type=${JSON.stringify(field.space_type)} (repeats method.space_type)`,
+          );
+          delete field.space_type;
+        }
+      }
+      if (field && field.properties) walk(field.properties, where);
+    }
+  };
+  walk(copy.properties, '');
+
+  return { mappings: copy, dropped };
 }
 
 async function main(opts) {
@@ -181,6 +240,20 @@ async function main(opts) {
   }
   console.log(`settings         ${JSON.stringify(settings)}`);
 
+  const { mappings: createMappings, dropped } = mappingForCreate(mappings);
+  console.log(
+    `left out        ${dropped.length ? dropped.join(', ') : 'nothing'}` +
+      (dropped.length ? '  (service-managed, repeated or default)' : ''),
+  );
+  // Printed in full so that if create still refuses something, the field
+  // definition that was sent is right here next to the error.
+  const vectorFields = Object.entries(createMappings.properties ?? {}).filter(
+    ([, field]) => field && field.type === 'knn_vector',
+  );
+  for (const [name, field] of vectorFields) {
+    console.log(`sending ${name.padEnd(9)}${JSON.stringify(field)}`);
+  }
+
   if (await exists(plan.target)) {
     console.log(
       `\n"${plan.target}" already exists, so there is nothing to create. ` +
@@ -200,7 +273,7 @@ async function main(opts) {
   try {
     await client.indices.create({
       index: plan.target,
-      body: { settings, mappings },
+      body: { settings, mappings: createMappings },
     });
   } catch (err) {
     const status = statusOf(err);
@@ -226,7 +299,12 @@ async function main(opts) {
   return { created: true };
 }
 
-module.exports = { parseArgs, planIndexCreation, knnSettingsFrom };
+module.exports = {
+  parseArgs,
+  planIndexCreation,
+  knnSettingsFrom,
+  mappingForCreate,
+};
 
 if (require.main === module) {
   let opts;

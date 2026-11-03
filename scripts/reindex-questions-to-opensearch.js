@@ -295,13 +295,34 @@ async function main(opts) {
       ),
     );
 
+    // Two counts side by side, deliberately not as a coverage figure.
+    //
+    // Deleting a question removes its row and never its document, so the
+    // index keeps a document for every question ever deleted. A count equal
+    // to or above the question total can therefore still be missing real
+    // questions - the first run of this script reported 4433 documents for
+    // 4405 questions while 381 questions sat in the outbox out of retries.
+    // Only indexing everything makes coverage certain.
     if (os.ok && os.documents !== null && Number.isFinite(os.documents) && !opts.orgId) {
-      const gap = total - os.documents;
       console.log(
-        `\nOpenSearch holds ${os.documents} of ${total} questions` +
-          (gap > 0 ? ` - ${gap} missing.` : '.'),
+        `\nOpenSearch has ${os.documents} documents; Postgres has ${total} questions.\n` +
+          `These counts cannot show coverage: deleting a question never removes its ` +
+          `document, so the index also holds deleted questions. --confirm is what ` +
+          `guarantees every current question is in.`,
       );
     }
+
+    // What "finished" looks like after --confirm: nothing still waiting or
+    // retryable. Rows out of retries are left behind by earlier outages and
+    // are cleared as each question is indexed again.
+    const waiting = outboxRows
+      .filter((r) => !r.stuck && ['pending', 'processing', 'failed'].includes(r.status))
+      .reduce((sum, r) => sum + r.n, 0);
+    console.log(
+      waiting
+        ? `${waiting} outbox row(s) still waiting or retrying - indexing is still running.`
+        : 'No outbox rows waiting or retrying.',
+    );
 
     const ready = vectorDbOk && os.ok;
 

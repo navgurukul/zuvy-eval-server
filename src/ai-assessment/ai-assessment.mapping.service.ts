@@ -19,6 +19,25 @@ import {
   MapQuestionsContext,
 } from './ai-assessment.mapping.helpers';
 
+/**
+ * An error's message, with its cause when it has one.
+ *
+ * Node's fetch reports every network failure as the same "fetch failed" and
+ * puts the reason that matters on `cause`: ENOTFOUND for a host that does not
+ * resolve, ECONNREFUSED for nothing listening, a connect timeout for a port
+ * that is blocked. The stack trace does not include it, so a log line without
+ * it says that the request failed and nothing about why. The cause is a
+ * network detail - a host and port - and is only ever logged, never returned.
+ */
+function describeError(err: unknown): string {
+  const message = err instanceof Error ? err.message : String(err);
+  const cause = (err as { cause?: { code?: string; message?: string } })
+    ?.cause;
+  if (!cause || typeof cause !== 'object') return message;
+  const detail = [cause.code, cause.message].filter(Boolean).join(' ');
+  return detail ? `${message} (cause: ${detail})` : message;
+}
+
 @Injectable()
 export class AiAssessmentMappingService {
   private readonly logger = new Logger(AiAssessmentMappingService.name);
@@ -153,7 +172,7 @@ export class AiAssessmentMappingService {
       if (err instanceof HttpException) throw err;
       this.logger.error(
         `[map-questions] assessment=${aiAssessmentId} stage=${stage} failed: ` +
-          (err instanceof Error ? err.message : String(err)),
+          describeError(err),
         err instanceof Error ? err.stack : undefined,
       );
       throw new ServiceUnavailableException({

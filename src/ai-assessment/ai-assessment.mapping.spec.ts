@@ -241,6 +241,47 @@ describe('AiAssessmentMappingService.mapQuestionsForAssessment', () => {
     );
   });
 
+  it('logs why a network call failed, not just that it did', async () => {
+    // The error seen in production. Node's fetch reports every network failure
+    // as "fetch failed" and puts the reason on `cause`, which the stack trace
+    // leaves out - so the first version of this log said only "fetch failed".
+    const fetchFailed = Object.assign(new TypeError('fetch failed'), {
+      cause: {
+        code: 'UND_ERR_CONNECT_TIMEOUT',
+        message: 'Connect Timeout Error (attempted address: wug.lorp:6333)',
+      },
+    });
+    const { service } = buildService({
+      searchTopicScoped: jest.fn(() => Promise.reject(fetchFailed)),
+    });
+    const logger = (service as unknown as { logger: { error: jest.Mock } })
+      .logger;
+
+    await expect(
+      service.mapQuestionsForAssessment(442, { orgId: 1 }),
+    ).rejects.toBeInstanceOf(ServiceUnavailableException);
+
+    const line = String(logger.error.mock.calls[0][0]);
+    expect(line).toContain('assessment=442 stage=vector search');
+    expect(line).toContain('fetch failed');
+    expect(line).toContain('UND_ERR_CONNECT_TIMEOUT');
+    expect(line).toContain('wug.lorp:6333');
+  });
+
+  it('logs an error with no cause exactly as before', async () => {
+    const { service } = buildService({
+      searchTopicScoped: jest.fn(() => Promise.reject(new Error('blint'))),
+    });
+    const logger = (service as unknown as { logger: { error: jest.Mock } })
+      .logger;
+
+    await service
+      .mapQuestionsForAssessment(7, { orgId: 1 })
+      .catch(() => undefined);
+
+    expect(String(logger.error.mock.calls[0][0])).toMatch(/failed: blint$/);
+  });
+
   it('lets a meaningful HTTP error through unchanged', async () => {
     // A 404 for "no questions match these topics" already says what is wrong;
     // relabelling it a 503 would hide that.

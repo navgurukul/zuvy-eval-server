@@ -643,3 +643,295 @@ describe('QuestionsProcessor coverage planning', () => {
     ).toBe(true);
   });
 });
+
+/**
+ * One coverage plan per request, not one per batch.
+ *
+ * Each batch used to draft the whole request's plan itself and take its own
+ * slice. Two drafts of one topic are never the same list, so the slices of
+ * two lists overlapped: a thirty-question request on trees planned "apply a
+ * traversal to a given tree" in its first batch and "apply a traversal to a
+ * tree diagram" in its second. Sharing one stored plan makes the slices
+ * disjoint ranges of a single list.
+ *
+ * The planner here answers with a different plan on every call, so a batch
+ * that drafted its own plan instead of reading the shared one would visibly
+ * get the wrong list.
+ */
+describe('QuestionsProcessor shared coverage plan', () => {
+  const planOf = (tag: string, n: number) =>
+    JSON.stringify({
+      plan: Array.from({ length: n }, (_, i) => ({
+        subtopic: `${tag} area ${i}`,
+        exercise: `${tag} task ${i}`,
+      })),
+    });
+
+  type Store = {
+    get: jest.Mock;
+    set: jest.Mock;
+    data: Map<string, string>;
+  };
+
+  function memoryStore(): Store {
+    const data = new Map<string, string>();
+    return {
+      data,
+      get: jest.fn((key: string) => Promise.resolve(data.get(key) ?? null)),
+      // Honours NX: a key that is already there is not replaced.
+      set: jest.fn((key: string, value: string) => {
+        if (data.has(key)) return Promise.resolve(null);
+        data.set(key, value);
+        return Promise.resolve('OK');
+      }),
+    };
+  }
+
+  function build(planReplies: string[], store: Store | null) {
+    const prompts: string[] = [];
+    let counter = 0;
+    let planCalls = 0;
+
+    const generate = (prompt: string) => {
+      prompts.push(prompt);
+      if (prompt.startsWith('You are planning an assessment on')) {
+        const reply = planReplies[Math.min(planCalls, planReplies.length - 1)];
+        planCalls += 1;
+        return Promise.resolve({ text: reply });
+      }
+      const n = requestedCount(prompt);
+      const evaluations = Array.from({ length: n }, () => {
+        counter += 1;
+        return {
+          question: `${word(counter)} lorp blint praxil`,
+          solution: 'working',
+          options: {
+            '1': `${counter}a`,
+            '2': `${counter}b`,
+            '3': `${counter}c`,
+            '4': `${counter}d`,
+          },
+          correctOption: 1,
+          difficulty: 'easy',
+          language: 'en',
+          level: 'C',
+        };
+      });
+      return Promise.resolve({ text: JSON.stringify({ evaluations }) });
+    };
+
+    const processor = new QuestionsProcessor(
+      {
+        generateCompletion: jest.fn(generate),
+        generateCompletionPreferring: jest.fn((_p: string, prompt: string) =>
+          isVerifierPrompt(prompt)
+            ? Promise.resolve({
+                text: JSON.stringify({ computedAnswer: 'x', correctOption: 1 }),
+              })
+            : generate(prompt),
+        ),
+      } as unknown as LlmService,
+      {
+        resolveCanonicalTopic: () =>
+          Promise.resolve({ topicName: 'Permutation', topicDescription: '' }),
+        getRecentQuestionsByTopic: () => Promise.resolve([]),
+        getQuestionTextsByIds: () => Promise.resolve([]),
+        createManyWithOutbox: jest.fn((rows: Row[]) =>
+          Promise.resolve(rows.map((r, i) => ({ ...r, id: i + 1 }))),
+        ),
+      } as unknown as QuestionsService,
+      {
+        embed: () => Promise.resolve(fakeEmbedding('query')),
+        embedMany: (texts: string[]) =>
+          Promise.resolve(texts.map(fakeEmbedding)),
+      } as unknown as EmbeddingsService,
+      { search: () => Promise.resolve([]) } as unknown as VectorService,
+    );
+    const logger = {
+      warn: jest.fn(),
+      log: jest.fn(),
+      error: jest.fn(),
+      debug: jest.fn(),
+    };
+    (processor as unknown as { logger: typeof logger }).logger = logger;
+    (
+      processor as unknown as { planStore: () => Promise<Store | null> }
+    ).planStore = () => Promise.resolve(store);
+
+    /** Runs one batch and returns the sub-concepts its generation was handed. */
+    const runBatch = async (data: Record<string, unknown>) => {
+      const before = prompts.length;
+      await (
+        processor as unknown as {
+          handleGenerateTopicBatch(job: unknown): Promise<void>;
+        }
+      ).handleGenerateTopicBatch({
+        id: `job-${String(data.batchIndex ?? 0)}`,
+        attemptsMade: 0,
+        data: { topic: 'Permutation', orgId: 1, levelId: null, ...data },
+      });
+      const generation = prompts
+        .slice(before)
+        .find((p) => p.includes('COVERAGE PLAN FOR THIS BATCH'));
+      return [
+        ...(generation ?? '').matchAll(/^ {2}\d+\. Sub-concept: (.+?) \|/gm),
+      ].map((m) => m[1]);
+    };
+
+    return { runBatch, planCalls: () => planCalls, logger };
+  }
+
+  const batch = (batchIndex: number, extra: Record<string, unknown> = {}) => ({
+    count: 10,
+    batchIndex,
+    batchCount: 2,
+    totalCount: 20,
+    planId: 'plan-1',
+    ...extra,
+  });
+
+  it('gives two batches of one request disjoint slices of a single plan', async () => {
+    const store = memoryStore();
+    const { runBatch, planCalls } = build(
+      [planOf('A', 20), planOf('B', 20)],
+      store,
+    );
+
+    const first = await runBatch(batch(0));
+    const second = await runBatch(batch(1));
+
+    // One draft for the whole request; the second batch read it.
+    expect(planCalls()).toBe(1);
+    expect([...first, ...second].every((s) => s.startsWith('A '))).toBe(true);
+
+    const overlap = new Set(first.filter((s) => second.includes(s)));
+    expect(overlap.size).toBe(0);
+  });
+
+  it('says in the log which batches used the shared plan', async () => {
+    // How to confirm this is working on a server: the second batch's line
+    // says it is using the shared plan.
+    const store = memoryStore();
+    const { runBatch, logger } = build([planOf('A', 20)], store);
+
+    await runBatch(batch(0));
+    await runBatch(batch(1));
+
+    const lines = logger.log.mock.calls.map(([line]) => String(line));
+    expect(
+      lines.some((l) => l.includes('and shared them with the request')),
+    ).toBe(true);
+    expect(lines.some((l) => l.includes('shared plan of 20 cell(s)'))).toBe(
+      true,
+    );
+  });
+
+  it('stores the plan once, for a day, and only if none is there yet', async () => {
+    const store = memoryStore();
+    const { runBatch } = build([planOf('A', 20)], store);
+
+    await runBatch(batch(0));
+
+    expect(store.set).toHaveBeenCalledTimes(1);
+    const [key, , expiry, seconds, mode] = store.set.mock.calls[0];
+    expect(String(key)).toMatch(/:coverage-plan:plan-1$/);
+    expect([expiry, seconds, mode]).toEqual(['EX', 86400, 'NX']);
+  });
+
+  it('keeps separate requests on separate plans', async () => {
+    const store = memoryStore();
+    const { runBatch, planCalls } = build(
+      [planOf('A', 20), planOf('B', 20)],
+      store,
+    );
+
+    const one = await runBatch(batch(0, { planId: 'request-one' }));
+    const two = await runBatch(batch(0, { planId: 'request-two' }));
+
+    expect(planCalls()).toBe(2);
+    expect(one.every((s) => s.startsWith('A '))).toBe(true);
+    expect(two.every((s) => s.startsWith('B '))).toBe(true);
+  });
+
+  it('uses the plan another batch stored first, if it loses the race', async () => {
+    // Both batches found no plan and both drafted one. The store accepts only
+    // the first; the other must read that rather than keep its own, or the two
+    // would slice different lists again.
+    const theirs = planOf('THEIRS', 20);
+    let reads = 0;
+    const store: Store = {
+      data: new Map(),
+      get: jest.fn(() => Promise.resolve(reads++ === 0 ? null : theirs)),
+      set: jest.fn(() => Promise.resolve(null)),
+    };
+    const { runBatch } = build([planOf('MINE', 20)], store);
+
+    const cells = await runBatch(batch(1));
+
+    expect(cells.length).toBeGreaterThan(0);
+    expect(cells.every((s) => s.startsWith('THEIRS '))).toBe(true);
+  });
+
+  it('does not store an empty draft, so the next batch can still plan', async () => {
+    const store = memoryStore();
+    const { runBatch, planCalls } = build(
+      ['the model rambled', planOf('A', 20)],
+      store,
+    );
+
+    const first = await runBatch(batch(0));
+    expect(first).toEqual([]);
+    expect(store.set).not.toHaveBeenCalled();
+
+    const second = await runBatch(batch(1));
+    expect(planCalls()).toBe(2);
+    expect(second.every((s) => s.startsWith('A '))).toBe(true);
+  });
+
+  it('plans alone, as before, for a job with no planId', async () => {
+    // A job queued before planId existed must still run.
+    const store = memoryStore();
+    const { runBatch, planCalls } = build([planOf('A', 20)], store);
+
+    const cells = await runBatch(batch(0, { planId: undefined }));
+
+    expect(cells.length).toBeGreaterThan(0);
+    expect(planCalls()).toBe(1);
+    expect(store.get).not.toHaveBeenCalled();
+    expect(store.set).not.toHaveBeenCalled();
+  });
+
+  it('never touches the store for a request of one batch', async () => {
+    const store = memoryStore();
+    const { runBatch } = build([planOf('A', 10)], store);
+
+    await runBatch(batch(0, { batchCount: 1, totalCount: 10 }));
+
+    expect(store.get).not.toHaveBeenCalled();
+    expect(store.set).not.toHaveBeenCalled();
+  });
+
+  it('plans alone and still finishes when the store cannot be read', async () => {
+    const store: Store = {
+      data: new Map(),
+      get: jest.fn(() => Promise.reject(new Error('wug lorp'))),
+      set: jest.fn(),
+    };
+    const { runBatch, planCalls } = build([planOf('A', 20)], store);
+
+    const cells = await runBatch(batch(0));
+
+    expect(cells.length).toBeGreaterThan(0);
+    expect(planCalls()).toBe(1);
+  });
+
+  it('plans alone when there is no store at all', async () => {
+    // A unit test, a script, or any process without a running worker.
+    const { runBatch, planCalls } = build([planOf('A', 20)], null);
+
+    const cells = await runBatch(batch(0));
+
+    expect(cells.length).toBeGreaterThan(0);
+    expect(planCalls()).toBe(1);
+  });
+});

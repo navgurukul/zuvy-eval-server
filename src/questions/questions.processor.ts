@@ -169,6 +169,27 @@ const GENERATION_MARGIN_MIN = Math.max(
 const PLAN_CELLS_MAX = 60;
 
 /**
+ * How long a request's shared coverage plan is kept.
+ *
+ * A request finishes in minutes, and a failing job exhausts its five retries
+ * within a few more, so a day is a wide margin that still cleans up after
+ * itself. A job arriving after it has expired simply plans again.
+ */
+const SHARED_PLAN_TTL_SECONDS = 24 * 60 * 60;
+
+/** The two Redis commands the shared plan needs, so a test can fake them. */
+type CoveragePlanStore = {
+  get(key: string): Promise<string | null>;
+  set(
+    key: string,
+    value: string,
+    expiry: 'EX',
+    seconds: number,
+    mode: 'NX',
+  ): Promise<'OK' | null>;
+};
+
+/**
  * This batch's share of a plan covering the whole request.
  *
  * Contiguous rather than interleaved: a model asked to enumerate a subject
@@ -566,6 +587,52 @@ export class QuestionsProcessor extends WorkerHost {
     // model will hold together; the slice wraps when the plan runs short.
     const planSize = Math.min(totalCount, PLAN_CELLS_MAX);
 
+    const draft = () =>
+      this.draftCoveragePlan(
+        job,
+        topicName,
+        topicDescription,
+        existingTexts,
+        planSize,
+      );
+
+    const { cells, source } =
+      batchCount > 1
+        ? await this.sharedCoveragePlan(job, draft)
+        : { cells: await draft(), source: 'local' as const };
+
+    if (!cells.length) {
+      this.logger.warn(
+        `Job ${job.id}: could not read a coverage plan for topic "${topicName}"; ` +
+          `generating without one.`,
+      );
+      return [];
+    }
+
+    const how =
+      source === 'shared'
+        ? `using the request's shared plan of ${cells.length} cell(s)`
+        : source === 'new'
+          ? `planned ${cells.length} cell(s) and shared them with the request's other batches`
+          : `planned ${cells.length} cell(s)`;
+
+    const slice = sliceCoverage(cells, batchIndex, batchCount, count);
+    this.logger.log(
+      `Job ${job.id}: ${how} for topic "${topicName}" ` +
+        `across ${batchCount} batch(es); batch ${batchIndex + 1} takes ` +
+        `${slice.length}: ${slice.map((c) => `${c.subtopic}/${c.exercise}`).join('; ')}`,
+    );
+    return slice;
+  }
+
+  /** Asks the model for a coverage plan. Never throws; [] means "no plan". */
+  private async draftCoveragePlan(
+    job: Job<GenerateTopicBatchJobPayload, void, string>,
+    topicName: string,
+    topicDescription: string,
+    existingTexts: string[],
+    planSize: number,
+  ): Promise<CoverageCell[]> {
     const prompt = planCoveragePrompt({
       topic: topicName,
       topicDescription,
@@ -576,10 +643,9 @@ export class QuestionsProcessor extends WorkerHost {
       existingQuestions: existingTexts,
     });
 
-    let cells: CoverageCell[] = [];
     try {
       const response = await this.llmService.generateCompletion(prompt);
-      cells = parseCoveragePlan(response?.text);
+      return parseCoveragePlan(response?.text);
     } catch (err) {
       this.logger.warn(
         `Job ${job.id}: coverage planning failed for topic "${topicName}", ` +
@@ -588,22 +654,96 @@ export class QuestionsProcessor extends WorkerHost {
       );
       return [];
     }
+  }
 
-    if (!cells.length) {
-      this.logger.warn(
-        `Job ${job.id}: could not read a coverage plan for topic "${topicName}"; ` +
-          `generating without one.`,
-      );
-      return [];
+  /**
+   * One coverage plan for the whole request, shared by every batch in it.
+   *
+   * Each batch used to draft the request's plan itself and take its own slice.
+   * Two drafts of one topic are never the same list, so the slices of two
+   * different lists overlapped: a thirty-question request on trees had its
+   * first batch plan "apply a traversal to a given tree" and its second plan
+   * "apply a traversal to a tree diagram", and six of its first twenty planned
+   * questions landed on traversals. The duplicate checks were left cleaning up
+   * after a plan that should never have overlapped.
+   *
+   * Now the first batch to run drafts the plan and stores it, and every other
+   * batch of the request reads that same plan. Slices of one list are disjoint
+   * ranges by construction, so two batches cannot be handed the same cell.
+   *
+   * Stored in Redis, which BullMQ already holds a connection to, under the
+   * request's planId and only if no plan is there yet, so two batches racing
+   * cannot both store one: the loser reads the winner's. Kept for a day,
+   * which outlasts every retry a job can make. An empty draft is not stored,
+   * so a failed draft does not stop the next batch from trying.
+   *
+   * Never fails a job. With no planId - a job enqueued before this existed -
+   * no Redis, or any Redis error, the batch plans for itself exactly as it
+   * did before.
+   */
+  private async sharedCoveragePlan(
+    job: Job<GenerateTopicBatchJobPayload, void, string>,
+    draft: () => Promise<CoverageCell[]>,
+  ): Promise<{ cells: CoverageCell[]; source: 'shared' | 'new' | 'local' }> {
+    const planId = job.data.planId?.trim();
+    const store = planId ? await this.planStore() : null;
+    if (!planId || !store) {
+      return { cells: await draft(), source: 'local' };
     }
 
-    const slice = sliceCoverage(cells, batchIndex, batchCount, count);
-    this.logger.log(
-      `Job ${job.id}: planned ${cells.length} cell(s) for topic "${topicName}" ` +
-        `across ${batchCount} batch(es); batch ${batchIndex + 1} takes ` +
-        `${slice.length}: ${slice.map((c) => `${c.subtopic}/${c.exercise}`).join('; ')}`,
-    );
-    return slice;
+    const key = `${process.env.BULLMQ_PREFIX || 'zuvy-eval'}:coverage-plan:${planId}`;
+    const warn = (what: string, err: unknown) =>
+      this.logger.warn(
+        `Job ${job.id}: could not ${what} the shared coverage plan, planning for this ` +
+          `batch alone: ${err instanceof Error ? err.message : String(err)}`,
+      );
+
+    try {
+      const stored = parseCoveragePlan(await store.get(key));
+      if (stored.length) return { cells: stored, source: 'shared' };
+    } catch (err) {
+      warn('read', err);
+      return { cells: await draft(), source: 'local' };
+    }
+
+    const cells = await draft();
+    if (!cells.length) return { cells, source: 'local' };
+
+    try {
+      const stored = await store.set(
+        key,
+        JSON.stringify({ plan: cells }),
+        'EX',
+        SHARED_PLAN_TTL_SECONDS,
+        'NX',
+      );
+      if (stored === null) {
+        // Another batch stored its draft first. Use that one, so every slice
+        // of the request still comes from a single list.
+        const theirs = parseCoveragePlan(await store.get(key));
+        if (theirs.length) return { cells: theirs, source: 'shared' };
+      }
+    } catch (err) {
+      warn('store', err);
+      return { cells, source: 'local' };
+    }
+
+    return { cells, source: 'new' };
+  }
+
+  /**
+   * The Redis connection BullMQ already holds for this worker, or null when
+   * there is no running worker - in a unit test, say. Separate so a test can
+   * replace it with an in-memory store.
+   */
+  private async planStore(): Promise<CoveragePlanStore | null> {
+    try {
+      const worker = this.worker;
+      if (!worker) return null;
+      return (await worker.client) as unknown as CoveragePlanStore;
+    } catch {
+      return null;
+    }
   }
 
   private async solveIndependently(

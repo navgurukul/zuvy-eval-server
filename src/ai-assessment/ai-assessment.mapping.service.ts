@@ -1,9 +1,11 @@
 import {
   BadRequestException,
+  HttpException,
   Inject,
   Injectable,
   Logger,
   NotFoundException,
+  ServiceUnavailableException,
 } from '@nestjs/common';
 import { NodePgDatabase } from 'drizzle-orm/node-postgres';
 import { and, asc, eq, ilike } from 'drizzle-orm';
@@ -57,9 +59,8 @@ export class AiAssessmentMappingService {
       };
     }
 
-    const queryVector = await this.helpers.buildScopedQueryVector(
-      assessment,
-      topicNames,
+    const queryVector = await this.atStage(aiAssessmentId, 'embedding', () =>
+      this.helpers.buildScopedQueryVector(assessment, topicNames),
     );
 
     return this.db.transaction(async (tx) => {
@@ -71,11 +72,16 @@ export class AiAssessmentMappingService {
       const { commonPerSet, uniquePerSet, neededTotal } =
         this.helpers.calculateSetSizes(totalQuestions, isBaseline);
 
-      const scopedIds = await this.helpers.searchTopicScoped(
-        queryVector,
-        topicNames,
-        neededTotal,
-        ctx.orgId,
+      // A failure here throws out of the transaction, which rolls back the
+      // clearExistingSets above - so a failed remap leaves the assessment's
+      // existing sets exactly as they were, never deleted and unreplaced.
+      const scopedIds = await this.atStage(aiAssessmentId, 'vector search', () =>
+        this.helpers.searchTopicScoped(
+          queryVector,
+          topicNames,
+          neededTotal,
+          ctx.orgId,
+        ),
       );
 
       if (scopedIds.length === 0) {
@@ -119,6 +125,46 @@ export class AiAssessmentMappingService {
         uniquePerSet,
       );
     });
+  }
+
+  /**
+   * Runs one step of mapping that depends on an outside service, and turns a
+   * failure into an error that says which step it was.
+   *
+   * Mapping calls OpenAI to embed the assessment and the vector store to find
+   * its questions. Either can fail for reasons this service cannot fix - a
+   * rejected key, a rate limit, a missing collection or index, a network
+   * blip - and those errors are not HttpExceptions, so they reached the client
+   * as a bare "Internal server error" with nothing to say what had broken.
+   *
+   * The full error goes to the log under [map-questions]. The client gets a
+   * 503 naming the step, but not the raw message: provider errors can echo
+   * part of an API key back. HttpExceptions - a 404 for an assessment with no
+   * matching questions, say - are already meaningful and pass through as is.
+   */
+  private async atStage<T>(
+    aiAssessmentId: number,
+    stage: string,
+    run: () => Promise<T>,
+  ): Promise<T> {
+    try {
+      return await run();
+    } catch (err) {
+      if (err instanceof HttpException) throw err;
+      this.logger.error(
+        `[map-questions] assessment=${aiAssessmentId} stage=${stage} failed: ` +
+          (err instanceof Error ? err.message : String(err)),
+        err instanceof Error ? err.stack : undefined,
+      );
+      throw new ServiceUnavailableException({
+        statusCode: 503,
+        aiAssessmentId,
+        stage,
+        message:
+          `Mapping failed at the ${stage} step: a service it depends on returned an ` +
+          `error. Details are in the server log under [map-questions].`,
+      });
+    }
   }
 
   // ─── Instructor preview ────────────────────────────────────────────

@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   Controller,
   Get,
   Post,
@@ -51,6 +52,30 @@ import { AiAssessmentMappingService } from './ai-assessment.mapping.service';
 import { VectorService } from 'src/vector/vector.service';
 import { ExplainQuestionDto } from './dto/explain-question.dto';
 import { QuestionExplanationService } from './question-explanation.service';
+
+/**
+ * An assessment id from a request, or a 400.
+ *
+ * This app registers no global ValidationPipe, so the @IsInt() on the DTO
+ * never runs and whatever the client sent reaches the query untouched. A value
+ * Postgres cannot read as an integer - "abc", 1.5, an object - then fails
+ * inside the database and comes back as a 500, when it is a bad request.
+ *
+ * Numeric strings are accepted. With no pipe they have always worked, so a
+ * client may well be sending them, and rejecting them now would break it.
+ */
+export function parseAssessmentId(value: unknown): number {
+  const id =
+    typeof value === 'number'
+      ? value
+      : typeof value === 'string' && value.trim() !== ''
+        ? Number(value)
+        : NaN;
+  if (!Number.isInteger(id) || id <= 0) {
+    throw new BadRequestException('aiAssessmentId must be a positive integer');
+  }
+  return id;
+}
 
 @ApiTags('AI Assessment')
 @ApiBearerAuth('JWT-auth')
@@ -576,7 +601,7 @@ export class AiAssessmentController {
     @Req() req: Request & { user?: { orgId?: number | string } },
   ) {
     return this.aiAssessmentMappingService.mapQuestionsForAssessment(
-      dto.aiAssessmentId,
+      parseAssessmentId(dto?.aiAssessmentId),
       {
         orgId: resolveOrgId(req),
         authorization: req.headers?.authorization,
@@ -607,10 +632,9 @@ export class AiAssessmentController {
     @Param('id') id: string,
     @Req() req: Request & { user?: { orgId?: number | string } },
   ) {
-    const aiAssessmentId = Number(id);
-    if (Number.isNaN(aiAssessmentId)) {
-      throw new HttpException('Invalid assessment id', HttpStatus.BAD_REQUEST);
-    }
+    // Number.isNaN alone let 0, negatives and 1.5 through; 1.5 then failed in
+    // Postgres as a 500.
+    const aiAssessmentId = parseAssessmentId(id);
     return this.aiAssessmentMappingService.mapQuestionsForAssessment(
       aiAssessmentId,
       {

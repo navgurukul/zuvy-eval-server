@@ -46,6 +46,12 @@ export const SET_DEFINITIONS = [
 export class AiAssessmentMappingHelpers {
   private readonly logger = new Logger(AiAssessmentMappingHelpers.name);
 
+  /**
+   * Settles once the topic index has been confirmed this process; cleared on
+   * failure so the next mapping tries again rather than giving up for good.
+   */
+  private topicIndexReady: Promise<void> | null = null;
+
   constructor(
     @Inject(DRIZZLE_DB) private readonly db: NodePgDatabase,
     private readonly embeddingsService: EmbeddingsService,
@@ -240,6 +246,37 @@ export class AiAssessmentMappingHelpers {
       .filter((id) => Number.isFinite(id));
   }
 
+  /**
+   * Makes sure the QUESTIONS collection can be filtered by topic.
+   *
+   * Mapping is the only search in the service that filters, and it filters on
+   * `topic`. Qdrant Cloud refuses a filter on a field with no payload index -
+   * "Index required but not found for topic" - and that index was only ever
+   * created by a manual, one-time admin endpoint. The indexer creates the
+   * collection itself but never its indexes, so a collection that was ever
+   * recreated could not be filtered at all, and every mapping failed with a
+   * bare 500 while generation, whose searches use no filter, kept working.
+   *
+   * Creating the index is idempotent and fast on a collection this size, so
+   * doing it before the first filtered search makes the problem impossible to
+   * reintroduce. It never fails the request: if it cannot be confirmed, the
+   * search runs anyway and either works or fails with its own error.
+   */
+  async ensureTopicFilterIndex(): Promise<void> {
+    if (!this.topicIndexReady) {
+      this.topicIndexReady = this.vectorService
+        .createPayloadIndex(QDRANT_QUESTIONS_COLLECTION, 'topic', 'keyword')
+        .catch((err) => {
+          this.topicIndexReady = null;
+          this.logger.warn(
+            `Could not confirm the "topic" index on ${QDRANT_QUESTIONS_COLLECTION}; ` +
+              `searching anyway: ${err instanceof Error ? err.message : String(err)}`,
+          );
+        });
+    }
+    return this.topicIndexReady;
+  }
+
   /** Search QUESTIONS collection evenly across topic names (no domain filter). */
   async searchTopicScoped(
     queryVector: number[],
@@ -247,6 +284,7 @@ export class AiAssessmentMappingHelpers {
     neededTotal: number,
     orgId?: number,
   ): Promise<number[]> {
+    await this.ensureTopicFilterIndex();
     return this.searchEvenlyByTopics(
       queryVector,
       topicNames,

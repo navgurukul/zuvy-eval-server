@@ -164,4 +164,10 @@ export interface GenerateTopicBatchJobPayload {
   batchCount?: number;
   /** Questions the whole request asked for, across all its batches. */
   totalCount?: number;
+  /**
+   * Shared by every batch of one topic in one request, so they all slice the
+   * same coverage plan instead of each drafting its own. Optional: a job
+   * without one plans for itself, as jobs did before it existed.
+   */
+  planId?: string;
 }

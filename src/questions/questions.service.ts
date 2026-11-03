@@ -1,3 +1,4 @@
+import { randomUUID } from 'crypto';
 import { BadRequestException, Injectable } from '@nestjs/common';
 import { InjectQueue } from '@nestjs/bullmq';
 import { Queue } from 'bullmq';
@@ -113,6 +114,11 @@ export class QuestionsService {
           )
         : null;
 
+      // One per topic in this request, so every batch of the topic slices the
+      // same coverage plan. Without it each batch drafted its own plan, and
+      // slices of different drafts overlapped.
+      const planId = randomUUID();
+
       for (let i = 0; i < numBatches; i++) {
         const countForThisJob = batchSizes[i];
         jobs.push({
@@ -125,6 +131,8 @@ export class QuestionsService {
           batchCount: numBatches,
           totalCount: count,
           ...perTopicCtx,
+          // After the spread, so nothing in the topic context can replace it.
+          planId,
         });
       }
     }

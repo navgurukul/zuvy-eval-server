@@ -159,4 +159,50 @@ describe('QuestionsService', () => {
     expect(jobPayload.topicName).toBe('HTML & CSS');
     expect(jobPayload.orgId).toBe(1);
   });
+
+  /**
+   * Every batch of one topic carries the same planId, so they all slice one
+   * shared coverage plan instead of each drafting its own. Two topics, or two
+   * separate requests, must never share one: their plans are about different
+   * things, or were asked for separately.
+   */
+  describe('planId', () => {
+    const request = (...topics: Array<[string, number]>) =>
+      ({
+        numberOfQuestions: topics.reduce((sum, [, n]) => sum + n, 0),
+        topicConfigurations: topics.map(([topicName, totalQuestions]) => ({
+          topicName,
+          topicDescription: 'wug',
+          totalQuestions,
+        })),
+      }) as GenerateQuestionsDto;
+
+    it('is shared by every batch of one topic', () => {
+      const jobs = service.expandPayloadToJobs(request(['Trees', 30]), 1);
+
+      expect(jobs).toHaveLength(3);
+      expect(jobs[0].planId).toMatch(/^[0-9a-f-]{36}$/);
+      expect(new Set(jobs.map((j) => j.planId)).size).toBe(1);
+    });
+
+    it('differs between topics in one request', () => {
+      const jobs = service.expandPayloadToJobs(
+        request(['Trees', 20], ['Graphs', 20]),
+        1,
+      );
+      const ids = (topic: string) =>
+        new Set(jobs.filter((j) => j.topic === topic).map((j) => j.planId));
+
+      expect(ids('Trees').size).toBe(1);
+      expect(ids('Graphs').size).toBe(1);
+      expect([...ids('Trees')][0]).not.toBe([...ids('Graphs')][0]);
+    });
+
+    it('differs between two requests for the same topic', () => {
+      const first = service.expandPayloadToJobs(request(['Trees', 20]), 1);
+      const second = service.expandPayloadToJobs(request(['Trees', 20]), 1);
+
+      expect(first[0].planId).not.toBe(second[0].planId);
+    });
+  });
 });
